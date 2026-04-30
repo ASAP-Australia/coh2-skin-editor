@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Button } from '@/components/ui/button'
 import { isSupported, pickInstall } from '@/lib/coh2-fs'
+import { defaultInstallPath, detectOS, osLabel } from '@/lib/ux'
 
 interface Props {
   onConnected: (handle: FileSystemDirectoryHandle) => void
@@ -13,6 +13,8 @@ export default function ConnectScreen({ onConnected }: Props) {
   const [supported, setSupported] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const os = detectOS()
+  const expectedPath = defaultInstallPath(os)
 
   useEffect(() => { setSupported(isSupported()) }, [])
 
@@ -65,41 +67,39 @@ export default function ConnectScreen({ onConnected }: Props) {
           </div>
         )}
 
-        <Button
+        <button
           disabled={!supported || busy}
           onClick={connect}
-          className="w-full rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-strong)] text-black font-semibold h-11"
+          style={{ background: 'oklch(0.66 0.180 45)' }}
+          className="w-full rounded-xl text-black font-semibold h-11 text-[14px]
+                     hover:brightness-110 transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {busy ? 'Waiting for permission…' : 'Connect CoH2 install'}
-        </Button>
+        </button>
 
-        <details className="mt-6 text-[12px] text-[var(--color-text-3)]">
-          <summary className="cursor-pointer hover:text-[var(--color-text-2)] select-none">
-            Where is my CoH2 install folder?
-          </summary>
-          <div className="mt-3 leading-relaxed">
-            <p>The most reliable choice: the Steam app folder for CoH2.</p>
-            <ul className="mt-2 space-y-1">
-              <li>
-                <span className="text-[var(--color-text-2)]">Windows:</span>{' '}
-                <code className="text-[10px] bg-black/30 rounded px-1 py-0.5">
-                  …\Steam\steamapps\common\Company of Heroes 2\
-                </code>
-              </li>
-              <li>
-                <span className="text-[var(--color-text-2)]">Linux/Steam Deck:</span>{' '}
-                <code className="text-[10px] bg-black/30 rounded px-1 py-0.5">
-                  …/Steam/steamapps/common/Company of Heroes 2/
-                </code>
-              </li>
-              <li>
-                <span className="text-[var(--color-text-2)]">Mac (Proton/Wine):</span>{' '}
-                <code className="text-[10px] bg-black/30 rounded px-1 py-0.5">
-                  …/SteamLibrary/steamapps/common/Company of Heroes 2/
-                </code>
-              </li>
-            </ul>
+        <div className="mt-4 px-3 py-2.5 rounded-lg bg-black/30 border border-white/5">
+          <div className="text-[10px] uppercase tracking-[1.5px] text-[var(--color-text-3)] font-medium mb-1.5">
+            On {osLabel(os)}, look here
           </div>
+          <code className="text-[10px] text-[var(--color-text-2)] block break-all leading-relaxed">
+            {expectedPath}
+          </code>
+        </div>
+
+        <details className="mt-3 text-[11px] text-[var(--color-text-3)]">
+          <summary className="cursor-pointer hover:text-[var(--color-text-2)] select-none">
+            Other operating systems
+          </summary>
+          <ul className="mt-2 space-y-1.5">
+            {(['win', 'linux', 'mac'] as const).filter(o => o !== os).map(o => (
+              <li key={o}>
+                <span className="text-[var(--color-text-2)]">{osLabel(o)}:</span>{' '}
+                <code className="text-[10px] bg-black/30 rounded px-1 py-0.5 break-all">
+                  {defaultInstallPath(o)}
+                </code>
+              </li>
+            ))}
+          </ul>
         </details>
       </div>
     </div>

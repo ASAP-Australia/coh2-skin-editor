@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button'
 import { downloadProject, getOrInitVehicle, readProjectFile, type Coh2SkinProject, type Decal, type DecalType } from '@/lib/project'
 import type { VehicleSpec } from '@/lib/vehicles'
 import { buildDutchBrigadeDemo } from '@/lib/demo-project'
+import ImageLibrary from './ImageLibrary'
+import { defaultModsPath, detectOS, osLabel } from '@/lib/ux'
 
 type MenuId = 'view' | 'decals' | 'reference' | 'export'
 
@@ -23,6 +25,9 @@ interface Props {
   clearDecals: () => void
   onDisconnect: () => void
   overlayCanvas: HTMLCanvasElement | null
+  toast: (msg: string, kind?: 'info' | 'success' | 'error') => void
+  pendingImageId: string | null
+  setPendingImageId: (id: string | null) => void
 }
 
 /** Top-left menu bar with four dropdowns. Only one menu open at a time;
@@ -163,7 +168,7 @@ function DecalsPanel(p: Props & { activeDecal: Decal | null }) {
     <Panel>
       <Section label="Place decal">
         <div className="grid grid-cols-3 gap-1.5">
-          {(['off','shield','number','name','kills','cross'] as const).map(t => (
+          {(['off','shield','number','name','kills','cross','image'] as const).map(t => (
             <button key={t}
               onClick={() => p.setPlaceMode(t)}
               className={`px-2 py-2 rounded-lg text-[11px] font-medium transition
@@ -175,10 +180,25 @@ function DecalsPanel(p: Props & { activeDecal: Decal | null }) {
         </div>
         {p.placeMode !== 'off' && (
           <div className="mt-2 text-[10px] text-[var(--color-text-2)] leading-relaxed">
-            Click on the tank to drop a {p.placeMode}. Hover preview shows where it will land.
+            Click on the tank to drop a {p.placeMode}. Hover shows where it will land.
           </div>
         )}
       </Section>
+
+      {p.placeMode === 'image' && (
+        <Section label="Custom image">
+          <ImageLibrary project={p.project} setProject={p.setProject}
+            onImageReady={(id) => { p.setPendingImageId(id) }}
+            toast={p.toast}
+          />
+          {p.pendingImageId && p.project.images[p.pendingImageId] && (
+            <div className="mt-2 text-[10px] text-[var(--color-text-2)]">
+              Active: <span className="text-white">{p.project.images[p.pendingImageId].name}</span>
+              {' — '}click on the tank to drop.
+            </div>
+          )}
+        </Section>
+      )}
 
       <Section label={`Placed (${veh.decals.length})`}>
         <div className="max-h-32 overflow-y-auto space-y-1 text-[10px] font-mono">
@@ -213,11 +233,16 @@ function ActiveDecalControls({ p, d }: { p: Props & { activeDecal: Decal | null 
     <Section label={`Edit ${cap(d.type)}`}>
       <Slider label="Rotation" suffix="°" value={d.rot} min={-180} max={180} step={5}
               onChange={v => p.updateDecal(d.id, { rot: v })} />
-      <Slider label="Size" suffix="px" value={d.size} min={20} max={400} step={2}
+      <Slider label="Size" suffix="px" value={d.size} min={20} max={500} step={2}
               onChange={v => p.updateDecal(d.id, { size: v })} />
       {d.type === 'kills' && (
         <Slider label="Kill rings" suffix="" value={d.kills ?? 8} min={1} max={60} step={1}
                 onChange={v => p.updateDecal(d.id, { kills: v })} />
+      )}
+      {d.type === 'image' && (
+        <Slider label="Opacity" suffix="%" value={Math.round((d.opacity ?? 1) * 100)}
+                min={5} max={100} step={5}
+                onChange={v => p.updateDecal(d.id, { opacity: v / 100 })} />
       )}
       {(d.type === 'number' || d.type === 'name') && (
         <input
@@ -323,11 +348,21 @@ function ExportPanel(p: Props) {
         <Button size="sm" variant="secondary" className="w-full rounded-lg" onClick={onSavePng}>
           Download {p.vehicle.id}_{p.season}.png
         </Button>
-        <p className="text-[10px] text-[var(--color-text-3)] mt-2 leading-relaxed">
-          Drops the live composited diffuse so you can hand it to the
-          existing Python pipeline (<code>tools/sync_skins_to_modproject.sh</code>)
-          to rebuild the SGA. Future commit ships in-browser SGA writing.
-        </p>
+      </Section>
+
+      <Section label={`Drop the SGA here on ${osLabel(detectOS())}`}>
+        <code className="text-[10px] block break-all bg-black/30 rounded px-2 py-1.5 text-[var(--color-text-2)] leading-relaxed border border-white/5">
+          {defaultModsPath(detectOS())}
+        </code>
+        <button
+          onClick={() => {
+            navigator.clipboard?.writeText(defaultModsPath(detectOS()))
+            p.toast('Path copied', 'success')
+          }}
+          className="mt-1.5 text-[10px] text-[var(--color-accent)] hover:text-orange-300"
+        >
+          Copy path to clipboard ↗
+        </button>
       </Section>
     </Panel>
   )

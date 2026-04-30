@@ -3,12 +3,15 @@ import Viewport from './Viewport'
 import TopMenu from './TopMenu'
 import PackIconCard from './PackIconCard'
 import FactionNav from './FactionNav'
+import { useToasts } from './Toasts'
 import { VEHICLES } from '@/lib/vehicles'
 import {
   type Coh2SkinProject, type Decal, type DecalType,
   newProject, getOrInitVehicle, persistActive, loadActive,
+  addImageFromFile,
 } from '@/lib/project'
 import { paintDecals, type RenderContext } from '@/lib/decal-painter'
+import { relTime } from '@/lib/ux'
 
 interface Props {
   root: FileSystemDirectoryHandle
@@ -16,6 +19,7 @@ interface Props {
 }
 
 export default function Editor({ root, onDisconnect }: Props) {
+  const { api: toast, node: toastNode } = useToasts()
   const [project, setProject] = useState<Coh2SkinProject>(() => loadActive() ?? newProject('My Skin Pack'))
   const [season, setSeason] = useState<'summer' | 'winter'>('summer')
   const [vehicleId, setVehicleId] = useState<string>(project.lastVehicleId ?? 'tiger')
@@ -23,6 +27,13 @@ export default function Editor({ root, onDisconnect }: Props) {
   const [placeMode, setPlaceMode] = useState<DecalType | 'off'>('off')
   const [activeDecalId, setActiveDecalId] = useState<number | null>(null)
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null)
+  const [pendingImageId, setPendingImageId] = useState<string | null>(null)
+  /** Tick once a second so the "saved Xs ago" indicator updates live. */
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => (n + 1) % 1_000_000), 1000)
+    return () => clearInterval(t)
+  }, [])
 
   const vehicle = useMemo(() => VEHICLES.find(v => v.id === vehicleId) ?? VEHICLES[0], [vehicleId])
   const veh = useMemo(() => getOrInitVehicle(project, vehicle.id), [project, vehicle.id])
@@ -48,6 +59,7 @@ export default function Editor({ root, onDisconnect }: Props) {
       defaultTac: vehicle.defaultTac,
       vehicleName: veh.name ?? '',
       tac: veh.tac ?? vehicle.defaultTac,
+      images: project.images ?? {},
     }
     paintDecals(renderCtx, veh.decals, activeDecalId)
     // Hover preview — translucent ghost of the next-place decal
@@ -81,11 +93,14 @@ export default function Editor({ root, onDisconnect }: Props) {
     updateProject(p => {
       const v = getOrInitVehicle(p, vehicle.id)
       const newId = (v.decals.reduce((m, d) => Math.max(m, d.id), 0) ?? 0) + 1
-      v.decals.push({
+      const d: Decal = {
         id: newId, type: placeMode as DecalType, x, y, rot: 0,
         size: defaultSize(placeMode),
         kills: placeMode === 'kills' ? 8 : undefined,
-      })
+        imageId: placeMode === 'image' ? (pendingImageId ?? undefined) : undefined,
+        opacity: placeMode === 'image' ? 1 : undefined,
+      }
+      v.decals.push(d)
       p.lastVehicleId = vehicle.id
       setActiveDecalId(newId)
     })
@@ -128,6 +143,53 @@ export default function Editor({ root, onDisconnect }: Props) {
     })
   }, [placeMode, hover])
 
+  // Whole-document drag & drop — accepts:
+  //   • image files     → import to library, prep image-place mode
+  //   • .coh2skin files → load project (with confirm)
+  useEffect(() => {
+    const onDragOver = (e: DragEvent) => {
+      const types = Array.from(e.dataTransfer?.items ?? []).map(i => i.kind)
+      if (types.includes('file')) e.preventDefault()
+    }
+    const onDrop = async (e: DragEvent) => {
+      const files = Array.from(e.dataTransfer?.files ?? [])
+      if (files.length === 0) return
+      e.preventDefault()
+      for (const f of files) {
+        if (f.name.toLowerCase().endsWith('.coh2skin') || f.type === 'application/json') {
+          try {
+            const text = await f.text()
+            const obj = JSON.parse(text)
+            if (obj?.magic === 'coh2-skin-project') {
+              if (Object.keys(project.vehicles).length === 0 ||
+                  confirm(`Replace current project with "${obj.packName}"?`)) {
+                setProject(obj)
+                toast.push(`Loaded ${obj.packName}`, 'success')
+              }
+              return
+            }
+          } catch {/* fall through to image handler */}
+        }
+        if (f.type.startsWith('image/')) {
+          const copy = structuredClone(project)
+          const id = await addImageFromFile(copy, f)
+          setProject(copy)
+          setPendingImageId(id)
+          setPlaceMode('image')
+          setActiveMenu('decals')
+          toast.push(`Imported ${f.name} — click on the tank to place`, 'success')
+          return
+        }
+      }
+    }
+    document.addEventListener('dragover', onDragOver)
+    document.addEventListener('drop', onDrop)
+    return () => {
+      document.removeEventListener('dragover', onDragOver)
+      document.removeEventListener('drop', onDrop)
+    }
+  }, [project, toast])
+
   return (
     <div className="min-h-dvh w-full relative overflow-hidden">
       <Viewport
@@ -159,6 +221,9 @@ export default function Editor({ root, onDisconnect }: Props) {
         clearDecals={clearDecals}
         onDisconnect={onDisconnect}
         overlayCanvas={overlayCanvasRef.current}
+        toast={toast.push}
+        pendingImageId={pendingImageId}
+        setPendingImageId={setPendingImageId}
       />
 
       <PackIconCard
@@ -176,6 +241,13 @@ export default function Editor({ root, onDisconnect }: Props) {
           updateProject(p => { p.lastVehicleId = id })
         }}
       />
+
+      {/* Auto-save indicator — bottom-right, subtle */}
+      <div className="absolute bottom-2 right-4 z-30 text-[10px] text-[var(--color-text-3)] font-mono pointer-events-none">
+        ✓ saved {relTime(project.modifiedAt)}
+      </div>
+
+      {toastNode}
     </div>
   )
 }

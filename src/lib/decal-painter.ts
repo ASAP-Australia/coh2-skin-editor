@@ -8,7 +8,7 @@
  * `decal_anchors.json` stores.
  */
 
-import type { Decal, DecalType, Palette } from './project'
+import type { CustomImage, Decal, DecalType, Palette } from './project'
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D
@@ -20,6 +20,26 @@ export interface RenderContext {
   vehicleName: string
   /** Current tac (project override or vehicle default). */
   tac: string
+  /** Custom image library — keyed by id. */
+  images: Record<string, CustomImage>
+}
+
+/** Decoded HTMLImageElement cache, keyed by image id. We hand out the
+ *  cached element synchronously when available; first call kicks off
+ *  decode and triggers `onReady` once it lands so the caller can repaint. */
+const imageCache = new Map<string, HTMLImageElement>()
+const imageDecoding = new Set<string>()
+
+export function getCachedImage(img: CustomImage, onReady: () => void): HTMLImageElement | null {
+  const cached = imageCache.get(img.id)
+  if (cached?.complete) return cached
+  if (imageDecoding.has(img.id)) return null
+  imageDecoding.add(img.id)
+  const el = new Image()
+  el.onload = () => { imageCache.set(img.id, el); imageDecoding.delete(img.id); onReady() }
+  el.onerror = () => { imageDecoding.delete(img.id) }
+  el.src = img.dataUrl
+  return null
 }
 
 export function paintDecals(rc: RenderContext, decals: Decal[], activeId: number | null) {
@@ -38,14 +58,41 @@ export function paintDecals(rc: RenderContext, decals: Decal[], activeId: number
   }
 }
 
-function drawByType(rc: RenderContext, d: Decal) {
+function drawByType(rc: RenderContext, d: Decal): void {
   switch (d.type) {
-    case 'shield':  return drawShield(rc, d.size)
-    case 'number':  return drawNumber(rc, d, d.text ?? rc.tac)
-    case 'name':    return drawName(rc, d, d.text ?? rc.vehicleName)
-    case 'kills':   return drawKills(rc, d, d.kills ?? 8)
-    case 'cross':   return drawBalkenkreuz(rc, d.size)
+    case 'shield':  drawShield(rc, d.size); return
+    case 'number':  drawNumber(rc, d, d.text ?? rc.tac); return
+    case 'name':    drawName(rc, d, d.text ?? rc.vehicleName); return
+    case 'kills':   drawKills(rc, d, d.kills ?? 8); return
+    case 'cross':   drawBalkenkreuz(rc, d.size); return
+    case 'image':   drawImage(rc, d); return
   }
+}
+
+/** Custom image decal — base64-decoded from project.images, painted with
+ *  rotation, size, and per-decal opacity. */
+function drawImage(rc: RenderContext, d: Decal) {
+  if (!d.imageId) return
+  const meta = rc.images[d.imageId]
+  if (!meta) return
+  const el = getCachedImage(meta, () => {/* repaint hook is handled by caller */})
+  if (!el) {
+    // Placeholder while image decodes
+    rc.ctx.fillStyle = 'rgba(255,102,0,0.2)'
+    rc.ctx.fillRect(-d.size/2, -d.size/2, d.size, d.size)
+    rc.ctx.strokeStyle = '#ff6600'
+    rc.ctx.lineWidth = 2
+    rc.ctx.strokeRect(-d.size/2, -d.size/2, d.size, d.size)
+    return
+  }
+  // Aspect-preserve: longest edge = d.size
+  const ar = meta.width / meta.height
+  const w = ar >= 1 ? d.size : d.size * ar
+  const h = ar >= 1 ? d.size / ar : d.size
+  const op = d.opacity ?? 1
+  rc.ctx.globalAlpha *= op
+  rc.ctx.drawImage(el, -w/2, -h/2, w, h)
+  rc.ctx.globalAlpha /= op
 }
 
 /** Procedural Brigade tricolour shield — heater shape, three bands. */
@@ -132,5 +179,6 @@ export function defaultSize(type: DecalType): number {
     case 'name':   return 56
     case 'kills':  return 200
     case 'cross':  return 100
+    case 'image':  return 200
   }
 }

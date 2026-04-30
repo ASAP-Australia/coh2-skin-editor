@@ -12,7 +12,7 @@
  *   - Loading from disk overwrites the active project after a confirm.
  */
 
-export type DecalType = 'shield' | 'number' | 'name' | 'kills' | 'cross'
+export type DecalType = 'shield' | 'number' | 'name' | 'kills' | 'cross' | 'image'
 export interface Decal {
   id: number
   type: DecalType
@@ -22,13 +22,30 @@ export interface Decal {
   /** Rotation in degrees (canvas rotation, applied in UV space). */
   rot: number
   /** Visual size; for text it's font px, for shield/cross it's edge px,
-   *  for kills it's the rings column width. */
+   *  for kills it's the rings column width, for image it's the longest edge. */
   size: number
   /** Per-decal text override (number, name, kills count). If null we use
    *  the project default for this vehicle. */
   text?: string | null
   /** Number of kill rings (kills decals only). */
   kills?: number
+  /** For image decals — references a CustomImage by id (we keep the actual
+   *  base64 bytes in p.images so multiple decals can share one source). */
+  imageId?: string
+  /** For image decals — opacity 0-1. */
+  opacity?: number
+}
+
+export interface CustomImage {
+  /** Stable id used by image-typed decals to reference this asset. */
+  id: string
+  /** User-friendly label shown in the library. */
+  name: string
+  /** Base64-encoded image (data: URL). PNG/JPG/SVG all work. */
+  dataUrl: string
+  /** Width / height in source pixels — handy for default sizing. */
+  width: number
+  height: number
 }
 
 export interface VehicleProject {
@@ -72,6 +89,9 @@ export interface Coh2SkinProject {
   lastVehicleId: string | null
   /** Optional ISO timestamp for ordering / display. */
   modifiedAt: string
+  /** Custom decal-image library. Persists with the project so loaded
+   *  projects bring their decal artwork along. */
+  images: Record<string, CustomImage>
 }
 
 const STORAGE_KEY = 'coh2-skin-active-project'
@@ -94,7 +114,37 @@ export function newProject(packName = 'My Skin Pack'): Coh2SkinProject {
     palette: { ...DEFAULT_PALETTE },
     lastVehicleId: null,
     modifiedAt: new Date().toISOString(),
+    images: {},
   }
+}
+
+/** Add an image to the library. Returns the new image id. */
+export async function addImageFromFile(p: Coh2SkinProject, file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((res, rej) => {
+    const r = new FileReader()
+    r.onload = () => res(r.result as string)
+    r.onerror = () => rej(r.error)
+    r.readAsDataURL(file)
+  })
+  // Get image dimensions via Image()
+  const dims = await new Promise<{ w: number; h: number }>((res, rej) => {
+    const img = new Image()
+    img.onload = () => res({ w: img.naturalWidth, h: img.naturalHeight })
+    img.onerror = () => rej(new Error('Image failed to load'))
+    img.src = dataUrl
+  })
+  const id = 'img_' + Math.random().toString(36).slice(2, 10)
+  p.images[id] = {
+    id, name: file.name || 'pasted-image',
+    dataUrl, width: dims.w, height: dims.h,
+  }
+  return id
+}
+
+/** Decode a Blob from a clipboard event (paste) the same way as a file. */
+export async function addImageFromBlob(p: Coh2SkinProject, blob: Blob, name = 'pasted'): Promise<string> {
+  const file = new File([blob], name + (blob.type === 'image/png' ? '.png' : ''), { type: blob.type })
+  return addImageFromFile(p, file)
 }
 
 /** Ensure a vehicle entry exists in the project, returning it. */
