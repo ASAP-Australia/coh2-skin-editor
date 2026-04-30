@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { downloadProject, getOrInitVehicle, readProjectFile, type Coh2SkinProject, type Decal, type DecalType } from '@/lib/project'
 import type { VehicleSpec } from '@/lib/vehicles'
+import { buildDutchBrigadeDemo } from '@/lib/demo-project'
 
 type MenuId = 'view' | 'decals' | 'reference' | 'export'
 
@@ -307,6 +308,16 @@ function ExportPanel(p: Props) {
           </Button>
           <input ref={fileInputRef} type="file" accept=".coh2skin,.json" onChange={onLoad} className="hidden" />
         </div>
+        <Button size="sm" variant="ghost"
+                className="w-full mt-2 rounded-lg text-[var(--color-text-2)]"
+                onClick={() => {
+                  if (p.project.vehicles && Object.keys(p.project.vehicles).length > 0) {
+                    if (!confirm('Replace the current project with the Brigade Prinses Irene demo?')) return
+                  }
+                  p.setProject(buildDutchBrigadeDemo())
+                }}>
+          Load Dutch Brigade demo
+        </Button>
       </Section>
       <Section label="Vehicle texture (PNG)">
         <Button size="sm" variant="secondary" className="w-full rounded-lg" onClick={onSavePng}>
