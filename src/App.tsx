@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import ConnectScreen from '@/components/ConnectScreen'
+import SmokeTest from '@/components/SmokeTest'
 import { loadSavedHandle } from '@/lib/coh2-fs'
 
 /**
@@ -35,34 +36,32 @@ export default function App() {
   return <Editor root={installRoot} onDisconnect={() => setInstallRoot(null)} />
 }
 
-/** Stub — the real editor surface (viewport, decal tray, faction nav, etc.)
- *  drops in here as separate components in subsequent commits. For now we
- *  just confirm the install is connected and show what we found. */
+/** Smoke-test stage — proves the SGA + RGM pipeline end-to-end by loading
+ *  the Tiger from the user's installed ArtHigh.sga and rendering it in
+ *  Three.js. Replaced with the real editor surface in the next commits. */
 function Editor({ root, onDisconnect }: {
   root: FileSystemDirectoryHandle
   onDisconnect: () => void
 }) {
   return (
-    <div className="min-h-dvh grid place-items-center px-6">
-      <div className="max-w-md w-full glass-2 rounded-[var(--radius-panel)] p-8 shadow-[var(--shadow-glass)]">
-        <div className="text-[10px] uppercase tracking-[2px] text-[var(--color-accent)] font-semibold mb-2">
-          Connected
+    <div className="min-h-dvh px-6 py-10 flex flex-col items-center gap-6">
+      <header className="max-w-3xl w-full flex items-center justify-between">
+        <div>
+          <div className="text-[10px] uppercase tracking-[2px] text-[var(--color-accent)] font-semibold">
+            Connected — {root.name}
+          </div>
+          <h1 className="text-xl font-semibold tracking-tight">
+            Company of Heroes 2 — community skin editor
+          </h1>
         </div>
-        <h1 className="text-xl font-semibold tracking-tight mb-3">
-          {root.name}
-        </h1>
-        <p className="text-[13px] text-[var(--color-text-2)] leading-relaxed mb-4">
-          Your CoH2 install is connected. Mesh + texture loading pipeline is
-          being wired in — once the SGA reader and RGM loader land, this
-          screen becomes the actual viewport with decal placement.
-        </p>
         <button
           onClick={onDisconnect}
           className="text-[11px] text-[var(--color-text-3)] hover:text-[var(--color-text-1)] underline"
         >
-          Disconnect / pick a different folder
+          Disconnect
         </button>
-      </div>
+      </header>
+      <SmokeTest root={root} />
     </div>
   )
 }
