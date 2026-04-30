@@ -161,11 +161,8 @@ export default function Editor({ root, onDisconnect }: Props) {
             const text = await f.text()
             const obj = JSON.parse(text)
             if (obj?.magic === 'coh2-skin-project') {
-              if (Object.keys(project.vehicles).length === 0 ||
-                  confirm(`Replace current project with "${obj.packName}"?`)) {
-                setProject(obj)
-                toast.push(`Loaded ${obj.packName}`, 'success')
-              }
+              setProject(obj)
+              toast.push(`Loaded ${obj.packName} (previous saved in browser)`, 'success')
               return
             }
           } catch {/* fall through to image handler */}

@@ -336,10 +336,12 @@ function ExportPanel(p: Props) {
         <Button size="sm" variant="ghost"
                 className="w-full mt-2 rounded-lg text-[var(--color-text-2)]"
                 onClick={() => {
-                  if (p.project.vehicles && Object.keys(p.project.vehicles).length > 0) {
-                    if (!confirm('Replace the current project with the Brigade Prinses Irene demo?')) return
-                  }
+                  // Always replace — current project is auto-saved to
+                  // localStorage already, and the user can hit Save .coh2skin
+                  // to download it first. Toast confirms the swap.
+                  const had = Object.keys(p.project.vehicles).length > 0
                   p.setProject(buildDutchBrigadeDemo())
+                  p.toast(had ? 'Replaced with Brigade demo · previous in localStorage' : 'Brigade demo loaded', 'success')
                 }}>
           Load Dutch Brigade demo
         </Button>

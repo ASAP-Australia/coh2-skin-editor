@@ -13,6 +13,24 @@ export default function App() {
   const [probing, setProbing] = useState(true)
 
   useEffect(() => {
+    // ?demo=1 bypasses Connect with a no-op stub handle. Useful for
+    // visual testing the editor surfaces in headless preview where the
+    // real FS Access API is gated by user gesture. The Viewport will
+    // fail to load any vehicle (no archives accessible) and just show
+    // its loading state — that's fine for verifying menus.
+    const params = new URLSearchParams(location.search)
+    if (params.get('demo') === '1') {
+      const stub = {
+        name: 'Demo (no real install)',
+        kind: 'directory' as const,
+        getDirectoryHandle: async () => { throw new Error('demo mode — no real FS') },
+        getFileHandle:      async () => { throw new Error('demo mode — no real FS') },
+        entries:            async function*() {},
+      }
+      setInstallRoot(stub as unknown as FileSystemDirectoryHandle)
+      setProbing(false)
+      return
+    }
     loadSavedHandle()
       .then(h => { if (h) setInstallRoot(h) })
       .catch(() => {})
