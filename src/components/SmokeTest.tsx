@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { locateArchives } from '@/lib/coh2-fs'
 import { SgaArchive } from '@/lib/sga'
 import { parseRgm, type RgmMesh } from '@/lib/rgm'
+import { decodeRgt, rgtToCompressedTexture } from '@/lib/rgt'
 
 interface Props { root: FileSystemDirectoryHandle }
 
@@ -20,6 +21,8 @@ export default function SmokeTest({ root }: Props) {
     textureSets: number
     materials: number
     totalTris: number
+    diffuseFound?: boolean
+    diffuseSize?: string
   } | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
@@ -82,10 +85,32 @@ export default function SmokeTest({ root }: Props) {
         key.position.set(5, 8, 6)
         scene.add(key)
 
-        // Build a parent group for everything
+        // Try to load the diffuse texture (tiger_dif.rgt) from the same archive.
+        // CoH2's TSET names are backslash-paths inside the archive (e.g.
+        // "art\\armies\\german\\vehicles\\tiger\\tiger_dif"). Append ".rgt".
+        const difTset = model.textureSets.find(t => /tiger_dif$/i.test(t))
+        let diffuse: THREE.Texture | null = null
+        if (difTset) {
+          setStatus(`loading diffuse texture: ${difTset.split(/[\\/]/).pop()}`)
+          const path = difTset.replace(/\\/g, '/').toLowerCase() + '.rgt'
+          const rgtBytes = await sga.readByPath(path)
+          if (rgtBytes) {
+            try {
+              const rgt = decodeRgt(rgtBytes)
+              diffuse = rgtToCompressedTexture(rgt)
+              setStats(s => s ? { ...s, diffuseFound: true, diffuseSize: `${rgt.width}×${rgt.height} ${rgt.fourCC}` } : s)
+            } catch (texErr) {
+              console.warn('[smoke] texture decode failed', texErr)
+            }
+          }
+        }
+
         const group = new THREE.Group()
         const mat = new THREE.MeshStandardMaterial({
-          color: 0x9aa18b, metalness: 0.1, roughness: 0.85, flatShading: true,
+          map: diffuse,
+          color: diffuse ? 0xffffff : 0x9aa18b,
+          metalness: 0.05, roughness: 0.85,
+          flatShading: false,
         })
         for (const sub of model.meshes) {
           const mesh = new THREE.Mesh(sub.geometry, mat)
@@ -138,6 +163,7 @@ export default function SmokeTest({ root }: Props) {
             <Stat label="Total triangles" value={stats.totalTris.toLocaleString()} />
             <Stat label="Texture sets" value={stats.textureSets.toString()} />
             <Stat label="Materials" value={stats.materials.toString()} />
+            <Stat label="Diffuse" value={stats.diffuseSize ?? (stats.diffuseFound === false ? 'not found' : 'untextured')} />
           </div>
         )}
       </div>
