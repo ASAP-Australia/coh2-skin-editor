@@ -68,12 +68,17 @@ export default function FactionNav({ project, currentId, onPick }: Props) {
                    [&::-webkit-scrollbar-track]:bg-transparent">
         {list.map(v => {
           const isActive = v.id === currentId
-          const dirty = (project.vehicles[v.id]?.decals?.length ?? 0) > 0
+          const decalCount = project.vehicles[v.id]?.decals?.length ?? 0
+          const dirty = decalCount > 0
+          // Tooltip explains the small badges so they're not mystery glyphs
+          const title = `${v.displayName} · default tactical # ${v.defaultTac}` +
+            (dirty ? ` · ${decalCount} decal${decalCount === 1 ? '' : 's'} placed` : ' · no decals yet')
           return (
             <button
               key={v.id}
               data-id={v.id}
               onClick={() => onPick(v.id)}
+              title={title}
               className={`relative px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap shrink-0 transition
                 border ${isActive
                   ? 'bg-[var(--color-accent)] text-black border-[var(--color-accent)]'
@@ -83,7 +88,8 @@ export default function FactionNav({ project, currentId, onPick }: Props) {
               <span className={`ml-1.5 px-1 py-0.5 rounded text-[9px] tabular-nums
                 ${isActive ? 'bg-black/25' : 'bg-black/40 text-[var(--color-text-3)]'}`}>{v.defaultTac}</span>
               {dirty && (
-                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-orange-400 shadow-[0_0_4px_#fb923c]" />
+                <span title={`${decalCount} decal${decalCount === 1 ? '' : 's'} on this vehicle`}
+                      className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-orange-400 shadow-[0_0_4px_#fb923c]" />
               )}
             </button>
           )
