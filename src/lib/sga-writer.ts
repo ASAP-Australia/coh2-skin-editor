@@ -77,8 +77,21 @@ export interface BuildSgaOptions {
 export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
   const { archiveName, files: input } = opts
 
-  // ----- Sort files by path so directory grouping is contiguous -----
-  const files = [...input].sort((a, b) => a.path.localeCompare(b.path))
+  // ----- Sort files into the four canonical Workshop drives + by path -----
+  // CoH2 Workshop packs split assets across four logical drives based on
+  // top-level path prefix (verified against SS Totenkopf). Within each
+  // drive, files are sorted by path so the folder records stay contiguous.
+  const driveOf = (p: string): 0 | 1 | 2 | 3 => {
+    if (p.startsWith('attrib/'))  return 0
+    if (p.startsWith('english/') || p.startsWith('locale/')) return 1
+    if (p.endsWith('.info'))      return 2
+    return 3
+  }
+  const files = [...input].sort((a, b) => {
+    const da = driveOf(a.path), db = driveOf(b.path)
+    if (da !== db) return da - db
+    return a.path.localeCompare(b.path)
+  })
 
   // ----- Compress every payload up front so we know data_pos / lengths -----
   type PreparedFile = {
@@ -118,16 +131,26 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
     runningDataLen += stored.length
   }
 
-  // ----- Build the names section + a path→offset map -----
-  // We emit one entry per unique folder (grouped) + the basename of every file.
-  const uniqueFolders: string[] = []
+  // ----- Build folder list with explicit drive ownership -----
+  // Each folder record carries its owning drive index. Folders are sorted
+  // by drive first so each drive owns a contiguous range of folder records.
+  const folderEntries: { folder: string; drive: number }[] = []
   {
-    const seen = new Set<string>()
+    const seen = new Set<string>()  // key = drive + '\0' + folder
     for (const p of prepared) {
-      if (!seen.has(p.folder)) { seen.add(p.folder); uniqueFolders.push(p.folder) }
+      const di = driveOf(p.path)
+      const k = di + '\0' + p.folder
+      if (!seen.has(k)) {
+        seen.add(k)
+        folderEntries.push({ folder: p.folder, drive: di })
+      }
     }
-    uniqueFolders.sort()
+    folderEntries.sort((a, b) => {
+      if (a.drive !== b.drive) return a.drive - b.drive
+      return a.folder.localeCompare(b.folder)
+    })
   }
+  const uniqueFolders = folderEntries.map(e => e.folder)
   // Names section: emit each folder's full path, then each file's basename.
   // Each entry is NUL-terminated. We track byte offsets relative to the start
   // of the names section so the TOC can index into them.
@@ -177,10 +200,43 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
     crc32: p.crc32,
   }))
 
+  // ----- Build the four canonical drive records -----
+  // Each drive owns a contiguous range of folders + files (the input arrays
+  // are sorted by drive). We compute these ranges from the explicit drive
+  // index attached to each folderEntries / prepared record.
+  const driveAliases = ['attrib', 'locale', 'info', 'data']
+  const driveRanges = driveAliases.map((alias, idx) => {
+    let folderFirst = -1, folderLast = -1, fileFirst = -1, fileLast = -1
+    for (let f = 0; f < folderEntries.length; f++) {
+      if (folderEntries[f].drive === idx) {
+        if (folderFirst < 0) folderFirst = f
+        folderLast = f + 1
+      }
+    }
+    for (let f = 0; f < prepared.length; f++) {
+      const di = driveOf(prepared[f].path)
+      if (di === idx) {
+        if (fileFirst < 0) fileFirst = f
+        fileLast = f + 1
+      }
+    }
+    return {
+      alias,
+      folderFirst: folderFirst < 0 ? 0 : folderFirst,
+      folderLast: folderLast < 0 ? 0 : folderLast,
+      fileFirst: fileFirst < 0 ? 0 : fileFirst,
+      fileLast: fileLast < 0 ? 0 : fileLast,
+      rootFolder: folderFirst < 0 ? 0 : folderFirst,
+    }
+  })
+
   // ----- Lay out the TOC with the correct offsets -----
-  // toc layout: [tocHeader=32][drive_def×1=148][folder_defs][file_defs][names]
-  const tocHeaderSize = 32
-  const driveDefsSize = 148
+  // toc layout: [tocHeader=40][drive_defs×4=592][folder_defs][file_defs][names]
+  // The 40-byte header has two extra u32s after the 8 we read in sga.ts.
+  // From real Workshop packs they appear to be a hash_table_pos + block_size
+  // pair; we set them to (0, 0) which CoH2's loader tolerates.
+  const tocHeaderSize = 40
+  const driveDefsSize = driveRanges.length * 148
   const folderDefsSize = folderRecords.length * 20
   const fileDefsSize = fileRecords.length * 30
   const namesSize = namesBytes.length
@@ -217,26 +273,32 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
   const tocBytes = new Uint8Array(headerSize)
   const tocView = new DataView(tocBytes.buffer)
 
-  // TOC header
+  // TOC header (40 bytes)
   tocView.setUint32( 0, drivePos, true)
-  tocView.setUint32( 4, 1, true)              // 1 drive
+  tocView.setUint32( 4, driveRanges.length, true)
   tocView.setUint32( 8, folderPos, true)
   tocView.setUint32(12, folderRecords.length, true)
   tocView.setUint32(16, filePos, true)
   tocView.setUint32(20, fileRecords.length, true)
   tocView.setUint32(24, namePos, true)
-  tocView.setUint32(28, fileRecords.length + folderRecords.length, true)  // "name count" (entries)
+  tocView.setUint32(28, fileRecords.length + folderRecords.length, true)
+  tocView.setUint32(32, 0, true)              // unknown — hash table pos? (0 OK)
+  tocView.setUint32(36, 0, true)              // unknown — block size?     (0 OK)
 
-  // Drive record (148 bytes)
-  // alias "data", name "data" — matches every Workshop pack we sampled
-  const aliasBytes = enc.encode('data')
-  tocBytes.set(aliasBytes, drivePos)
-  tocBytes.set(aliasBytes, drivePos + 64)
-  tocView.setUint32(drivePos + 128, 0, true)                     // folder_first
-  tocView.setUint32(drivePos + 132, folderRecords.length, true)  // folder_last
-  tocView.setUint32(drivePos + 136, 0, true)                     // file_first
-  tocView.setUint32(drivePos + 140, fileRecords.length, true)    // file_last
-  tocView.setUint32(drivePos + 144, 0, true)                     // root_folder
+  // 4 drive records (148 bytes each), in canonical order:
+  //   attrib / locale / info / data
+  for (let i = 0; i < driveRanges.length; i++) {
+    const o = drivePos + i * 148
+    const dr = driveRanges[i]
+    const aliasBytes = enc.encode(dr.alias)
+    tocBytes.set(aliasBytes, o)
+    tocBytes.set(aliasBytes, o + 64)
+    tocView.setUint32(o + 128, dr.folderFirst, true)
+    tocView.setUint32(o + 132, dr.folderLast, true)
+    tocView.setUint32(o + 136, dr.fileFirst, true)
+    tocView.setUint32(o + 140, dr.fileLast, true)
+    tocView.setUint32(o + 144, dr.rootFolder, true)
+  }
 
   // Folder records
   for (let i = 0; i < folderRecords.length; i++) {
