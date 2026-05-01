@@ -265,6 +265,7 @@ export default function Editor({ root, onDisconnect }: Props) {
           toast={toast.push}
           pendingImageId={pendingImageId}
           setPendingImageId={setPendingImageId}
+          installRoot={root}
         />
 
         <PackIconCard

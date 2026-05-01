@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { downloadProject, getOrInitVehicle, readProjectFile, type Coh2SkinProject, type Decal, type DecalType } from '@/lib/project'
 import type { VehicleSpec } from '@/lib/vehicles'
 import { buildDutchBrigadeDemo } from '@/lib/demo-project'
 import ImageLibrary from './ImageLibrary'
 import { defaultModsPath, detectOS, osLabel } from '@/lib/ux'
+import { exportSkinPack, type ExportProgress } from '@/lib/mod-export'
 
 type MenuId = 'view' | 'decals' | 'reference' | 'export'
 
@@ -28,6 +29,9 @@ interface Props {
   toast: (msg: string, kind?: 'info' | 'success' | 'error') => void
   pendingImageId: string | null
   setPendingImageId: (id: string | null) => void
+  /** Install root handle — needed by the SGA exporter to read vanilla
+   *  diffuses for compositing. */
+  installRoot: FileSystemDirectoryHandle
 }
 
 /** Top-left menu bar with four dropdowns. Only one menu open at a time;
@@ -346,13 +350,17 @@ function ExportPanel(p: Props) {
           Load Dutch Brigade demo
         </Button>
       </Section>
+      <Section label="Build skin pack (.sga)">
+        <ExportSkinPackButton p={p} />
+      </Section>
+
       <Section label="Vehicle texture (PNG)">
         <Button size="sm" variant="secondary" className="w-full rounded-lg" onClick={onSavePng}>
           Download {p.vehicle.id}_{p.season}.png
         </Button>
       </Section>
 
-      <Section label={`Drop the SGA here on ${osLabel(detectOS())}`}>
+      <Section label={`Drop the .sga here on ${osLabel(detectOS())}`}>
         <code className="text-[10px] block break-all bg-black/30 rounded px-2 py-1.5 text-[var(--color-text-2)] leading-relaxed border border-white/5">
           {defaultModsPath(detectOS())}
         </code>
@@ -371,3 +379,59 @@ function ExportPanel(p: Props) {
 }
 
 function cap(s: string) { return s[0].toUpperCase() + s.slice(1) }
+
+/** "Build skin pack" — kicks off the full SGA export pipeline. Streams
+ *  progress in-line so the user sees per-vehicle compositing happen. */
+function ExportSkinPackButton({ p }: { p: Props }) {
+  const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState<ExportProgress | null>(null)
+
+  const editedCount = Object.values(p.project.vehicles)
+    .filter(v => (v.decals?.length ?? 0) > 0).length
+
+  const onClick = async () => {
+    if (busy) return
+    setBusy(true); setProgress({ phase: 'init', message: 'Starting…' })
+    try {
+      const result = await exportSkinPack(p.installRoot, p.project, ev => setProgress(ev))
+      // Trigger download
+      const blob = new Blob([result.bytes as BlobPart], { type: 'application/octet-stream' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = result.filename
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      p.toast(`Exported ${result.filename} (${result.textureCount} vehicles)`, 'success')
+      setProgress(null)
+    } catch (err: any) {
+      p.toast(err?.message ?? 'Export failed', 'error')
+      setProgress(null)
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div>
+      <Button size="sm" disabled={busy || editedCount === 0}
+              className="w-full rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-strong)] text-black font-semibold disabled:opacity-50"
+              onClick={onClick}>
+        {busy ? 'Exporting…' : `Export ${editedCount} vehicle${editedCount === 1 ? '' : 's'} → .sga`}
+      </Button>
+      {progress && (
+        <div className="mt-2 text-[10px] text-[var(--color-text-2)] leading-relaxed">
+          <div className="font-medium text-white">{progress.message}</div>
+          {progress.total ? (
+            <div className="mt-1.5 h-1 rounded-full bg-white/10 overflow-hidden">
+              <div className="h-full bg-[var(--color-accent)] transition-all"
+                   style={{ width: `${(progress.current ?? 0) / progress.total * 100}%` }} />
+            </div>
+          ) : null}
+        </div>
+      )}
+      {editedCount === 0 && !busy && (
+        <p className="mt-2 text-[10px] text-[var(--color-text-3)] leading-relaxed">
+          Place at least one decal on a vehicle to enable export.
+        </p>
+      )}
+    </div>
+  )
+}
