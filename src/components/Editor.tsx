@@ -35,6 +35,46 @@ export default function Editor({ root, onDisconnect }: Props) {
     return () => clearInterval(t)
   }, [])
 
+  // Idle-fade the chrome so the tank takes over when the user is just
+  // orbiting. Mouse movement / interaction wakes it up; 4s without
+  // activity fades to 35% opacity. Pressing F or H also force-hides.
+  const [chromeVisible, setChromeVisible] = useState(true)
+  const [chromeForcedHidden, setChromeForcedHidden] = useState(false)
+  useEffect(() => {
+    let timer: number | undefined
+    const wake = () => {
+      setChromeVisible(true)
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => setChromeVisible(false), 4000)
+    }
+    wake()
+    document.addEventListener('mousemove', wake)
+    document.addEventListener('keydown', wake)
+    document.addEventListener('click', wake)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('mousemove', wake)
+      document.removeEventListener('keydown', wake)
+      document.removeEventListener('click', wake)
+    }
+  }, [])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'f' || e.key === 'F' || e.key === 'h' || e.key === 'H') {
+        // Don't intercept if the user is editing a text field
+        const t = e.target as HTMLElement
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return
+        setChromeForcedHidden(v => !v)
+      } else if (e.key === 'Escape') {
+        setChromeForcedHidden(false)
+        setActiveMenu(null)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+  const showChrome = chromeVisible && !chromeForcedHidden
+
   const vehicle = useMemo(() => VEHICLES.find(v => v.id === vehicleId) ?? VEHICLES[0], [vehicleId])
   const veh = useMemo(() => getOrInitVehicle(project, vehicle.id), [project, vehicle.id])
 
@@ -201,48 +241,63 @@ export default function Editor({ root, onDisconnect }: Props) {
         onHover={onHover}
       />
 
-      <TopMenu
-        active={activeMenu}
-        setActive={setActiveMenu}
-        project={project}
-        setProject={setProject}
-        vehicle={vehicle}
-        season={season}
-        setSeason={setSeason}
-        placeMode={placeMode}
-        setPlaceMode={setPlaceMode}
-        activeDecalId={activeDecalId}
-        setActiveDecalId={setActiveDecalId}
-        updateDecal={updateDecal}
-        removeDecal={removeDecal}
-        clearDecals={clearDecals}
-        onDisconnect={onDisconnect}
-        overlayCanvas={overlayCanvasRef.current}
-        toast={toast.push}
-        pendingImageId={pendingImageId}
-        setPendingImageId={setPendingImageId}
-      />
+      {/* Chrome-fade wrapper: everything inside fades away when the user is
+          idle / has hit F to focus on the tank. Pointer events ignore the
+          dimmed state so a wake-up movement still hits a button cleanly. */}
+      <div className={`contents transition-opacity duration-300 ${showChrome ? 'opacity-100' : 'opacity-0'}`}>
+        <TopMenu
+          active={activeMenu}
+          setActive={setActiveMenu}
+          project={project}
+          setProject={setProject}
+          vehicle={vehicle}
+          season={season}
+          setSeason={setSeason}
+          placeMode={placeMode}
+          setPlaceMode={setPlaceMode}
+          activeDecalId={activeDecalId}
+          setActiveDecalId={setActiveDecalId}
+          updateDecal={updateDecal}
+          removeDecal={removeDecal}
+          clearDecals={clearDecals}
+          onDisconnect={onDisconnect}
+          overlayCanvas={overlayCanvasRef.current}
+          toast={toast.push}
+          pendingImageId={pendingImageId}
+          setPendingImageId={setPendingImageId}
+        />
 
-      <PackIconCard
-        packName={project.packName}
-        diffuseCanvas={baseDiffuseRef.current}
-        palette={project.palette}
-      />
+        <PackIconCard
+          packName={project.packName}
+          diffuseCanvas={baseDiffuseRef.current}
+          palette={project.palette}
+        />
 
-      <FactionNav
-        project={project}
-        currentId={vehicle.id}
-        onPick={(id) => {
-          setVehicleId(id)
-          setActiveDecalId(null)
-          updateProject(p => { p.lastVehicleId = id })
-        }}
-      />
+        <FactionNav
+          project={project}
+          currentId={vehicle.id}
+          onPick={(id) => {
+            setVehicleId(id)
+            setActiveDecalId(null)
+            updateProject(p => { p.lastVehicleId = id })
+          }}
+        />
 
-      {/* Auto-save indicator — bottom-right, subtle */}
-      <div className="absolute bottom-2 right-4 z-30 text-[10px] text-[var(--color-text-3)] font-mono pointer-events-none">
-        ✓ saved {relTime(project.modifiedAt)}
+        {/* Auto-save indicator — bottom-right, subtle */}
+        <div className="absolute bottom-2 right-4 z-30 text-[10px] text-[var(--color-text-3)] font-mono pointer-events-none">
+          <kbd className="px-1 py-0.5 mr-2 rounded bg-white/5 border border-white/10 text-[9px]">F</kbd>
+          focus mode · ✓ saved {relTime(project.modifiedAt)}
+        </div>
       </div>
+
+      {/* Persistent — never dims. Toast notifications + a 'wake' affordance
+          so the user knows the chrome is just hidden, not gone. */}
+      {!showChrome && (
+        <div
+          className="absolute inset-0 cursor-default"
+          onMouseMove={() => setChromeVisible(true)}
+        />
+      )}
 
       {toastNode}
     </div>

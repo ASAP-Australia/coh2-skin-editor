@@ -55,50 +55,49 @@
   --shadow-pop:   0 24px 64px rgb(0 0 0 / 0.55), 0 1px 0 rgb(255 255 255 / 0.06) inset;
 }
 
-/* Backdrop blur recipes — exposed as utilities */
+/* Backdrop blur recipes — Apple glass language.
+ *  HIG / Vision Pro reference notes:
+ *    - blur ≥ 30px (Apple uses 30-50px) — anything less reads "web frosted",
+ *      not the soft deeply-lensed Apple aesthetic
+ *    - saturate(150–200%) keeps the blurred backdrop vivid, not muddy
+ *    - 0.5px hairline strokes at low alpha — never thicker than 1px
+ *    - inset top-edge highlight (mimics light hitting a curved bevel), not
+ *      a heavy outset shadow which screams "early-2010s flat material"
+ *    - glass on glass: keep blur radii distinct so layering reads cleanly
+ */
 @utility glass-1 {
   background-color: var(--color-glass-1);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid var(--color-stroke-1);
+  backdrop-filter: blur(32px) saturate(160%);
+  -webkit-backdrop-filter: blur(32px) saturate(160%);
+  border: 0.5px solid var(--color-stroke-1);
+  box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.05);
 }
 @utility glass-2 {
   background-color: var(--color-glass-2);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid var(--color-stroke-2);
+  backdrop-filter: blur(36px) saturate(180%);
+  -webkit-backdrop-filter: blur(36px) saturate(180%);
+  border: 0.5px solid var(--color-stroke-2);
+  box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.06);
 }
 @utility glass-3 {
   background-color: var(--color-glass-3);
-  backdrop-filter: blur(28px) saturate(200%);
-  -webkit-backdrop-filter: blur(28px) saturate(200%);
-  border: 1px solid var(--color-stroke-3);
+  backdrop-filter: blur(44px) saturate(200%);
+  -webkit-backdrop-filter: blur(44px) saturate(200%);
+  border: 0.5px solid var(--color-stroke-3);
+  box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.08);
 }
 
-/* Body baseline */
+/* Body baseline — pure dark, no coloured ambient light. The 3D viewport
+ * is the visual subject; the chrome is glass over near-black. */
 html, body, #root { height: 100%; }
 body {
-  background: var(--color-app-bg-deep);
+  background: #0a0b0e;   /* near-black with a hint of cool — Apple-ish */
   color: var(--color-text-1);
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
                'Inter', system-ui, sans-serif;
   font-feature-settings: 'cv11', 'ss01', 'kern';
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-}
-
-/* Always-on subtle ambient gradient behind the app to give the glass
-   something interesting to refract — like the iOS lock-screen wallpaper
-   bleeding through Control Center. */
-body::before {
-  content: '';
-  position: fixed; inset: -10vmax;
-  z-index: -1;
-  background:
-    radial-gradient(ellipse at 20% 0%,  oklch(0.45 0.20 30  / 0.40), transparent 50%),
-    radial-gradient(ellipse at 100% 100%, oklch(0.45 0.20 260 / 0.30), transparent 50%),
-    radial-gradient(ellipse at 0% 100%, oklch(0.45 0.20 320 / 0.20), transparent 60%);
-  filter: blur(80px);
 }
 
 @theme inline {

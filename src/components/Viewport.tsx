@@ -72,6 +72,14 @@ export default function Viewport({ root, vehicle, overlayCanvas, onModelLoaded, 
     ground.rotation.x = -Math.PI / 2
     scene.add(ground)
 
+    // 3D reference grid — gives the viewport a sense of scale + a subtle
+    // technical/CAD aesthetic that draws the eye to the tank in the centre.
+    const grid = new THREE.GridHelper(40, 40, 0x2a2d33, 0x1a1d23)
+    ;(grid.material as THREE.Material).transparent = true
+    ;(grid.material as THREE.Material).opacity = 0.55
+    grid.position.y = 0.01
+    scene.add(grid)
+
     let raf = 0
     const tick = () => {
       raf = requestAnimationFrame(tick)
@@ -255,6 +263,15 @@ export default function Viewport({ root, vehicle, overlayCanvas, onModelLoaded, 
         onClick={e => { const uv = pickUV(e); if (uv) onPick?.(uv) }}
         onMouseMove={e => { onHover?.(pickUV(e)) }}
         onMouseLeave={() => onHover?.(null)}
+      />
+      {/* Edge vignette — focuses the eye on the centred model. Pointer-events
+          off so it never blocks clicks or hover-pick on the canvas. */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            'radial-gradient(ellipse at center, transparent 35%, rgba(8,9,12,0.35) 75%, rgba(8,9,12,0.65) 100%)',
+        }}
       />
       {(loading || err) && (
         <div className="absolute inset-0 grid place-items-center pointer-events-none">

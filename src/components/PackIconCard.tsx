@@ -40,15 +40,15 @@ export default function PackIconCard({ packName, diffuseCanvas, palette }: Props
   }, [diffuseCanvas, palette])
 
   return (
-    <div className="absolute top-4 right-4 z-10 glass-2 rounded-2xl px-3 py-2.5 flex items-center gap-3 shadow-[var(--shadow-glass)]">
+    <div className="absolute top-4 right-4 z-10 glass-2 rounded-xl px-2.5 py-2 flex items-center gap-2.5 shadow-[var(--shadow-glass)]"
+         title={packName}>
       <canvas ref={canvasRef} width={64} height={64}
-              className="block w-16 h-16 rounded-md border border-white/10" />
-      <div className="min-w-0 max-w-[200px]">
-        <div className="text-[9px] uppercase tracking-[1.5px] text-[var(--color-text-3)] font-semibold">
+              className="block w-12 h-12 rounded-md border border-white/10" />
+      <div className="min-w-0 max-w-[180px] leading-tight pr-1">
+        <div className="text-[8px] uppercase tracking-[1.5px] text-[var(--color-text-3)] font-semibold">
           In-game preview
         </div>
-        <div className="text-[13px] text-white font-semibold truncate">{packName}</div>
-        <div className="text-[10px] text-[var(--color-text-2)]">Skin · CoH2</div>
+        <div className="text-[12px] text-white font-semibold truncate">{packName}</div>
       </div>
     </div>
   )
