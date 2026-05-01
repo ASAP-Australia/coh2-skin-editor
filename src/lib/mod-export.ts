@@ -67,6 +67,32 @@ function rgmPathFor(vehicleId: string): string | null {
   return `art/armies/${v.faction}/vehicles/${v.id}/${v.id}.rgm`
 }
 
+/** SGA archives most likely to contain the diffuse RGTs for a given faction. */
+function factionSgaCandidates(faction: string): string[] {
+  switch (faction) {
+    case 'german':       return ['ArtGermanEF.sga', 'ArtArmies.sga', 'ArtHigh.sga']
+    case 'west_german':  return ['ArtWestGerman.sga', 'ArtHighXP1.sga', 'ArtArmies.sga']
+    case 'soviet':       return ['ArtSovietEF.sga', 'ArtArmies.sga', 'ArtHigh.sga']
+    case 'aef':          return ['ArtAEFSkins.sga', 'ArtAEF.sga', 'ArtHighXP1.sga']
+    case 'british':      return ['ArtBritish.sga', 'ArtHighXP2.sga']
+    default:             return ['ArtArmies.sga', 'ArtHigh.sga']
+  }
+}
+
+/** Filename aliases — CoH2 names a handful of textures differently from the
+ *  entity directory (e.g. elefant/elefant_hull_dif.rgt, panther_ausf_g/
+ *  panther_dif.rgt). The export pipeline tries each candidate in order. */
+function textureBaseNamesFor(vehicleId: string): string[] {
+  const aliases: Record<string, string[]> = {
+    elefant:               ['elefant_hull', 'elefant'],
+    ostwind_flak_panzer:   ['ostwind', 'ostwind_flak_panzer'],
+    sdkfz_222:             ['sdkfz221', 'sdkfz_222'],
+    panther_ausf_g:        ['panther', 'panther_ausf_g'],
+    halftrack:             ['halftrack', 'halftrack_sdkfz_251'],
+  }
+  return aliases[vehicleId] ?? [vehicleId]
+}
+
 export interface ExportProgress {
   phase: 'init' | 'composite' | 'pack' | 'done' | 'error'
   message: string
@@ -97,11 +123,17 @@ async function composeVehicleDiffuse(
   const vSpec = VEHICLES.find(v => v.id === vehicleId)
   if (!vSpec) return null
 
-  // Find the RGM in any of the standard art SGAs
-  const candidates = ['ArtHigh.sga', 'ArtArmies.sga', 'ArtHighXP1.sga', 'ArtHighXP2.sga', 'ArtAEF.sga']
+  // The diffuse RGT lives in a faction-specific SGA in CoH2's install layout.
+  // ArtGermanEF / ArtWestGerman / ArtSovietEF / ArtAEFSkins / ArtBritish are
+  // the per-faction texture archives; ArtHigh / ArtArmies hold the *meshes*.
+  // For ~4 vehicles the texture file basename differs from the entity id
+  // (e.g. elefant/<elefant_hull>_dif.rgt). Try each candidate basename.
+  const sgaCandidates = factionSgaCandidates(vSpec.faction)
+  const baseNames = textureBaseNamesFor(vSpec.id)
   let sga: SgaArchive | null = null
-  let rgmBytes: Uint8Array | null = null
-  for (const sgaName of candidates) {
+  let rgtBytes: Uint8Array | null = null
+  let usedBase = vSpec.id
+  outer: for (const sgaName of sgaCandidates) {
     let a = archives.cache.get(sgaName)
     if (!a) {
       try {
@@ -110,18 +142,13 @@ async function composeVehicleDiffuse(
         archives.cache.set(sgaName, a)
       } catch { continue }
     }
-    const b = await a.readByPath(rgmPathFor(vehicleId)!)
-    if (b) { sga = a; rgmBytes = b; break }
+    for (const base of baseNames) {
+      const difPath = `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/${base}_dif.rgt`
+      const b = await a.readByPath(difPath)
+      if (b) { sga = a; rgtBytes = b; usedBase = base; break outer }
+    }
   }
-  if (!sga || !rgmBytes) return null
-
-  // The RGM lists its texture sets — find the diffuse and read its RGT
-  // (We could parse the RGM here for the exact TSET path, but for the export
-  //  pipeline we use the canonical convention which works for every vanilla
-  //  vehicle: art/armies/<faction>/vehicles/<id>/<id>_dif.rgt)
-  const difPath = `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/${vSpec.id}_dif.rgt`
-  const rgtBytes = await sga.readByPath(difPath)
-  if (!rgtBytes) return null
+  if (!sga || !rgtBytes) return null
 
   const rgt = decodeRgt(rgtBytes)
   const baseCanvas = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
