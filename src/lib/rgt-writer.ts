@@ -31,8 +31,21 @@
 import { deflate } from 'pako'
 import { encodeBc3 } from './bc-encode'
 
+export interface RgtOptions {
+  /** When false, store the top mip as raw BC3 bytes (no zlib). This produces a
+   *  deterministic, content-independent byte length — required for the key-pool
+   *  patch workflow where the TOC must stay byte-identical across all user skins. */
+  compress?: boolean
+}
+
 /** Build a complete .rgt byte stream from an HTML canvas. */
-export function canvasToRgt(canvas: HTMLCanvasElement, internalName: string): Uint8Array {
+export function canvasToRgt(
+  canvas: HTMLCanvasElement,
+  internalName: string,
+  options?: RgtOptions,
+): Uint8Array {
+  const compress = options?.compress ?? true
+
   // 1. Get RGBA pixels
   const ctx = canvas.getContext('2d')!
   const { width, height } = canvas
@@ -45,19 +58,22 @@ export function canvasToRgt(canvas: HTMLCanvasElement, internalName: string): Ui
   //    the rest with empty entries pointing at zero-length zlib streams,
   //    matching the mip count CoH2 expects (computed as ceil(log2(max))+1).
   const mipCount = Math.floor(Math.log2(Math.max(width, height))) + 1
-  // zlib-compress the top mip
-  const topCompressed = deflate(dxt, { level: 6 })
-  // Empty zlib stream for the smaller mips (a bare 2-byte header + checksum)
+
+  // Top mip: compressed or raw depending on options
+  const topData: Uint8Array = compress ? deflate(dxt, { level: 6 }) : dxt
+  // Empty placeholder for smaller mips
   const emptyZ = deflate(new Uint8Array(0), { level: 6 })
+  const emptyRaw = new Uint8Array(0)
+  const emptySlot = compress ? emptyZ : emptyRaw
 
   // Concatenate: smallest mip first … largest mip last (the rgt.ts reader
   // walks them in order and uses the LAST as the top mip). For the empty
   // mips we still emit a stream so byte-offset arithmetic is consistent.
   const mips: { unc: number; cmp: Uint8Array }[] = []
   for (let i = 0; i < mipCount - 1; i++) {
-    mips.push({ unc: 0, cmp: emptyZ })
+    mips.push({ unc: 0, cmp: emptySlot })
   }
-  mips.push({ unc: dxt.length, cmp: topCompressed })
+  mips.push({ unc: dxt.length, cmp: topData })
 
   // 4. Build chunk payloads
   // TFMT: width, height, ?, ?, format=15 (DXT5 in CoH2 codebase), ?, ?, byte

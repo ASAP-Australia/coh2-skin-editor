@@ -20,6 +20,7 @@ const DB_NAME = 'coh2-skin-editor'
 const DB_VER = 1
 const STORE = 'handles'
 const KEY_INSTALL = 'coh2-install'
+const KEY_MODS    = 'coh2-mods'
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -80,6 +81,85 @@ export async function pickInstall(): Promise<FileSystemDirectoryHandle | null> {
   })
   await idbSet(KEY_INSTALL, handle)
   return handle
+}
+
+/** Returns the saved mods/skins handle (with write permission verified)
+ *  or null if none / permission revoked. */
+export async function loadSavedModsHandle(): Promise<FileSystemDirectoryHandle | null> {
+  const handle = await idbGet<FileSystemDirectoryHandle>(KEY_MODS)
+  if (!handle) return null
+  const status = await (handle as any).queryPermission?.({ mode: 'readwrite' })
+  if (status !== 'granted') {
+    const re = await (handle as any).requestPermission?.({ mode: 'readwrite' })
+    if (re !== 'granted') return null
+  }
+  return handle
+}
+
+/** Prompt the user to pick their CoH2 mods folder (we want
+ *  `…/Documents/My Games/Company of Heroes 2/mods/skins/`). Asks for write
+ *  permission so the app can install built skin packs in-place. */
+export async function pickModsFolder(): Promise<FileSystemDirectoryHandle | null> {
+  if (!isSupported()) {
+    throw new Error('File System Access API not available — use Chrome, Edge, or another Chromium-based browser.')
+  }
+  const handle: FileSystemDirectoryHandle = await (globalThis as any).showDirectoryPicker({
+    id: 'coh2-mods',
+    mode: 'readwrite',
+    startIn: 'documents',
+  })
+  await idbSet(KEY_MODS, handle)
+  return handle
+}
+
+/** Walk down to (and create if missing) a sub-directory, returning its handle. */
+export async function ensureSubdir(
+  root: FileSystemDirectoryHandle,
+  ...names: string[]
+): Promise<FileSystemDirectoryHandle> {
+  let cur = root
+  for (const n of names) {
+    cur = await cur.getDirectoryHandle(n, { create: true })
+  }
+  return cur
+}
+
+/** Write `bytes` to `<dir>/<name>`, overwriting any existing file. */
+export async function writeFile(
+  dir: FileSystemDirectoryHandle,
+  name: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const fh = await dir.getFileHandle(name, { create: true })
+  // The TS lib type for createWritable is sometimes missing. Cast to any.
+  const w = await (fh as any).createWritable()
+  await w.write(bytes)
+  await w.close()
+}
+
+/** One-shot helper: install a built `.sga` into `<modsRoot>/skins/<id>.sga`.
+ *  `id` MUST be a decimal u64 (no hex), because CoH2's engine scans the
+ *  skins folder with the printf pattern `%I64u.sga` and silently ignores
+ *  anything that doesn't match. If the user picked a parent folder (e.g.
+ *  `mods/`) we'll descend into `skins/`; if they picked `skins/` directly
+ *  we write straight in. */
+export async function installSkinPack(
+  modsRoot: FileSystemDirectoryHandle,
+  numericId: string,
+  bytes: Uint8Array,
+): Promise<{ path: string }> {
+  if (!/^\d+$/.test(numericId)) {
+    throw new Error(`installSkinPack: id must be a decimal u64 (got "${numericId}") — engine won't scan non-numeric SGAs.`)
+  }
+  let target = modsRoot
+  let descended = ''
+  try {
+    target = await modsRoot.getDirectoryHandle('skins')
+    descended = 'skins/'
+  } catch {/* user already picked skins/ — write here */}
+  const filename = `${numericId}.sga`
+  await writeFile(target, filename, bytes)
+  return { path: `${descended}${filename}` }
 }
 
 /** Walk a directory tree. Yields { path, file } for every file. */

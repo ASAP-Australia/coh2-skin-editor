@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "publish-skin": "python3 tools/publish.py",
+    "test-export": "npx tsx tools/test-export.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",

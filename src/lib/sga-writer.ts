@@ -35,8 +35,8 @@
  *     files    30 bytes each:
  *                4   name_pos
  *                4   data_pos       (rel to data_pos in file header)
- *                4   length         (uncompressed)
- *                4   store_length   (compressed)
+ *                4   store_length   (compressed on-disk size)
+ *                4   length         (uncompressed size)
  *                4   modified_seconds
  *                1   verification
  *                1   storage   (0 raw, 1/2 zlib-deflated)
@@ -240,7 +240,8 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
   const folderDefsSize = folderRecords.length * 20
   const fileDefsSize = fileRecords.length * 30
   const namesSize = namesBytes.length
-  const headerSize = tocHeaderSize + driveDefsSize + folderDefsSize + fileDefsSize + namesSize
+  const sigBlockSize = 140  // Workshop skin SGAs always have a 140-byte sig block
+  const headerSize = tocHeaderSize + driveDefsSize + folderDefsSize + fileDefsSize + namesSize + sigBlockSize
 
   // Offsets are RELATIVE TO HEADER START (which the reader takes as 0
   // when iterating). header_pos in the reader is `152` (file header size),
@@ -282,8 +283,22 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
   tocView.setUint32(20, fileRecords.length, true)
   tocView.setUint32(24, namePos, true)
   tocView.setUint32(28, fileRecords.length + folderRecords.length, true)
-  tocView.setUint32(32, 0, true)              // unknown — hash table pos? (0 OK)
-  tocView.setUint32(36, 0, true)              // unknown — block size?     (0 OK)
+  // Final two u32s of the 40-byte TOC header:
+  //
+  //   TOC[32]: sig_offset — byte offset WITHIN the TOC where the RSA signature
+  //            block begins. Game archives (Art*/Sound* etc.) set this to
+  //            headerSize (= no signature; engine skips verification). Workshop
+  //            skin packs set this to the end of the names section, then
+  //            append 80–188 bytes of RSA ciphertext. Without Relic's private
+  //            key we cannot generate a valid signature block, so we match the
+  //            game-archive convention (sig_offset = headerSize). The engine
+  //            rejects skin packs in ugc/referenced/ without a valid sig with
+  //            "not unsigned". Locally-installed test packs may need workshop
+  //            publication to acquire a valid signed blob from Relic's service.
+  //   TOC[36]: page_size. ALWAYS 0x00040000 (262144 = 256 KB) on every pack.
+  const sigOffset = tocHeaderSize + driveDefsSize + folderDefsSize + fileDefsSize + namesSize
+  tocView.setUint32(32, sigOffset, true)      // sig_offset = end of names → 140-byte sig block follows
+  tocView.setUint32(36, 0x00040000, true)     // 256 KB page size
 
   // 4 drive records (148 bytes each), in canonical order:
   //   attrib / locale / info / data
@@ -317,8 +332,8 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
     const f = fileRecords[i]
     tocView.setUint32(o,      f.namePos, true)
     tocView.setUint32(o + 4,  f.dataPos, true)
-    tocView.setUint32(o + 8,  f.length, true)
-    tocView.setUint32(o + 12, f.storeLength, true)
+    tocView.setUint32(o + 8,  f.storeLength, true)   // compressed on-disk size
+    tocView.setUint32(o + 12, f.length, true)         // uncompressed size
     tocView.setUint32(o + 16, 0, true)              // modified_seconds = 0
     tocBytes[o + 20] = 0                             // verification = 0
     tocBytes[o + 21] = f.storage                     // storage type

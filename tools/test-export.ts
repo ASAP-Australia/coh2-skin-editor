@@ -10,10 +10,14 @@
  * `~/.local/share/Steam/steamapps/compatdata/231430/.../mods/skins/`.
  *
  * Usage:
- *   npm exec tsx tools/test-export.ts \
+ *   # via env vars (recommended — npm strips unknown --flags before tsx sees them)
+ *   COH2_INSTALL=~/.local/share/Steam/steamapps/common/Company\ of\ Heroes\ 2 \
+ *     OUT=/tmp/pack.sga npx tsx tools/test-export.ts
+ *
+ *   # or via CLI args after a `--` so npm doesn't eat them
+ *   npx tsx tools/test-export.ts -- \
  *     --install ~/.local/share/Steam/steamapps/common/Company\ of\ Heroes\ 2 \
- *     --project demo \
- *     --out /tmp/test-pack.sga
+ *     --out /tmp/pack.sga
  */
 
 import * as fs from 'node:fs'
@@ -54,11 +58,13 @@ import { type Coh2SkinProject } from '../src/lib/project'
 
 function arg(flag: string, fallback?: string): string {
   const i = process.argv.indexOf(flag)
-  if (i < 0) return fallback ?? ''
-  return process.argv[i + 1] ?? ''
+  if (i >= 0) return process.argv[i + 1] ?? ''
+  return fallback ?? ''
 }
-const INSTALL = arg('--install', '/home/jflessenkemper/.local/share/Steam/steamapps/common/Company of Heroes 2')
-const OUT = arg('--out', '/tmp/test-pack.sga')
+// CLI args win, then env vars, then a sensible default. npm strips unknown
+// --flags so prefer the env-var or `--` form documented at the top.
+const INSTALL = arg('--install', process.env.COH2_INSTALL || '/home/jflessenkemper/.local/share/Steam/steamapps/common/Company of Heroes 2')
+const OUT = arg('--out', process.env.OUT || '/tmp/test-pack.sga')
 
 // ---------------------------------------------------------------------------
 // Demo project (with extra creative decals to exercise every code path)
@@ -169,13 +175,37 @@ async function compositeVehicle(
     : vSpec.faction === 'aef' ? ['ArtAEFSkins.sga', 'ArtAEF.sga']
     : vSpec.faction === 'british' ? ['ArtBritish.sga'] : ['ArtArmies.sga']
   // Filename aliases — a few entities use different basenames on disk
-  const aliases: Record<string, string[]> = {
+  // sourceAliases: ordered list of basenames to try when reading from the game archive
+  const sourceAliases: Record<string, string[]> = {
     elefant: ['elefant_hull', 'elefant'],
     ostwind_flak_panzer: ['ostwind', 'ostwind_flak_panzer'],
     sdkfz_222: ['sdkfz221', 'sdkfz_222'],
     panther_ausf_g: ['panther', 'panther_ausf_g'],
   }
-  const baseNames = aliases[vSpec.id] ?? [vSpec.id]
+  // outputBasename: the filename the game expects inside the skin folder
+  const outputBasename: Record<string, string> = {
+    elefant: 'elefant_hull',
+    ostwind_flak_panzer: 'ostwind',
+    sdkfz_222: 'sdkfz221',
+    panther_ausf_g: 'panther',
+    halftrack: 'halftrack',
+    sdkfz_250: 'sdkfz250',
+    king_tiger_sdkfz_182: 'kingtiger',
+    puma_sdkfz_234: 'puma',
+    jagdtiger: 'jagdtiger',
+    jagdpanzer_iv_sdkfz_162: 'jagdpanzer_iv',
+    panzer_ii_luchs_sdkfz_123: 'luchs',
+    panzer_iv_sdkfz_ausf_i: 'panzeriv',
+    m4a3e8_sherman_easy_8: 'm4a3e8_sherman',
+    m4a3_sherman_76mm: 'm4a3_sherman_76',
+    m4a1_sherman_calliope: 'm4a1_calliope',
+    m10_tank_destroyer: 'm10',
+    m36_tank_destroyer: 'm36',
+    m15a1_aa_halftrack: 'm15_aa_halftrack',
+    sherman_firefly: 'firefly',
+  }
+  const baseNames = sourceAliases[vSpec.id] ?? [vSpec.id]
+  const outBase = outputBasename[vSpec.id] ?? vSpec.id
   let sga: SgaArchive | null = null
   let rgtBytes: Uint8Array | null = null
   outer: for (const sgaName of sgaCandidates) {
@@ -209,7 +239,7 @@ async function compositeVehicle(
     images: project.images ?? {},
   }
   paintDecals(renderCtx, veh.decals, null)
-  return { canvas: out, difTset: `art\\armies\\${vSpec.faction}\\vehicles\\${vSpec.id}\\${vSpec.id}_dif` }
+  return { canvas: out, difTset: `art\\armies\\${vSpec.faction}\\vehicles\\${vSpec.id}\\${outBase}_dif`, outBase }
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +253,11 @@ const main = async () => {
   const project = buildTestProject()
   const cache = new Map<string, SgaArchive>()
   const newGuid = freshGuid()
+  // Numeric u64 pack ID — what the engine scans for as `%I64u.sga` in
+  // mods\skins\. Matches freshPackId() in src/lib/mod-export.ts.
+  const numericId = String(Date.now() * 1000 + Math.floor(Math.random() * 1000))
   console.log(`mod guid:   ${newGuid}`)
+  console.log(`pack id:    ${numericId}  (engine-scannable filename)`)
   console.log(`pack name:  ${project.packName}`)
   console.log()
   const sgaFiles: SgaInputFile[] = []
@@ -243,7 +277,7 @@ const main = async () => {
     const rgtBytes = canvasToRgt(c.canvas as unknown as HTMLCanvasElement, c.difTset)
     for (const season of ['summer', 'winter'] as const) {
       sgaFiles.push({
-        path: `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/skins/${newGuid}_${season}/${vSpec.id}_dif.rgt`,
+        path: `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/skins/${newGuid}_${season}/${c.outBase}_dif.rgt`,
         bytes: rgtBytes, compress: false,
       })
     }
@@ -280,6 +314,8 @@ const main = async () => {
   fs.writeFileSync(OUT, Buffer.from(sgaBytes))
   const mb = (sgaBytes.length / 1024 / 1024).toFixed(2)
   console.log(`\n✓ Wrote ${OUT}  (${mb} MB, ${sgaBytes.length} bytes)`)
+  console.log(`\nTo install for CoH2, copy as <numericId>.sga (engine scans %I64u.sga only):`)
+  console.log(`  cp ${OUT} "$HOME/.steam/steam/steamapps/compatdata/231430/pfx/drive_c/users/steamuser/Documents/My Games/Company of Heroes 2/mods/skins/${numericId}.sga"`)
 }
 
 main().catch(err => { console.error(err); process.exit(1) })

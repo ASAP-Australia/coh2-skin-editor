@@ -12,6 +12,8 @@ import {
 } from '@/lib/project'
 import { paintDecals, type RenderContext } from '@/lib/decal-painter'
 import { relTime } from '@/lib/ux'
+import { SgaArchive } from '@/lib/sga'
+import { generateCamo, type CamoPreset } from '@/lib/camo-generator'
 
 interface Props {
   root: FileSystemDirectoryHandle
@@ -23,8 +25,18 @@ export default function Editor({ root, onDisconnect }: Props) {
   const [project, setProject] = useState<Coh2SkinProject>(() => loadActive() ?? newProject('My Skin Pack'))
   const [season, setSeason] = useState<'summer' | 'winter'>('summer')
   const [vehicleId, setVehicleId] = useState<string>(project.lastVehicleId ?? 'tiger')
-  const [activeMenu, setActiveMenu] = useState<'view' | 'decals' | 'reference' | 'export' | null>(null)
+  const [activeMenu, setActiveMenu] = useState<'view' | 'decals' | 'reference' | 'export' | 'parts' | 'camo' | 'scene' | null>(null)
   const [placeMode, setPlaceMode] = useState<DecalType | 'off'>('off')
+  // Exploded parts view
+  const [parts, setParts] = useState<string[]>([])
+  const [selectedPart, setSelectedPart] = useState<string | null>(null)
+  const [explodeAll, setExplodeAll] = useState(false)
+  // Environment / skybox
+  const [envArchive, setEnvArchive] = useState<SgaArchive | null>(null)
+  const [envName, setEnvName] = useState('mission_06')
+  // Camo state — stored separately from project (not persisted, preview only)
+  const [camoPreset, setCamoPreset] = useState<CamoPreset | null>(null)
+  const [camoPrompt, setCamoPrompt] = useState('')
   const [activeDecalId, setActiveDecalId] = useState<number | null>(null)
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null)
   const [pendingImageId, setPendingImageId] = useState<string | null>(null)
@@ -86,6 +98,24 @@ export default function Editor({ root, onDisconnect }: Props) {
     overlayCanvasRef.current = c
   }
   const baseDiffuseRef = useRef<HTMLCanvasElement | null>(null)
+
+  // Apply camo to the base diffuse canvas
+  const applyCamo = useCallback((preset: CamoPreset) => {
+    const cv = overlayCanvasRef.current
+    if (!cv) return
+    const tmp = document.createElement('canvas')
+    tmp.width = tmp.height = 2048
+    generateCamo(tmp, preset)
+    const ctx = cv.getContext('2d')!
+    ctx.clearRect(0, 0, 2048, 2048)
+    ctx.drawImage(tmp, 0, 0)
+    // Also paint over baseDiffuse ref so it persists through repaint
+    if (baseDiffuseRef.current) {
+      const bctx = baseDiffuseRef.current.getContext('2d')
+      if (bctx) { bctx.clearRect(0, 0, 2048, 2048); bctx.drawImage(tmp, 0, 0) }
+    }
+    setCamoPreset(preset)
+  }, [])
 
   // Repaint whenever the project / vehicle / hover changes
   const repaint = useCallback(() => {
@@ -239,6 +269,13 @@ export default function Editor({ root, onDisconnect }: Props) {
         }}
         onPick={addDecal}
         onHover={onHover}
+        onReconnect={onDisconnect}
+        onPartsLoaded={setParts}
+        selectedPart={selectedPart}
+        explodeAll={explodeAll}
+        season={season}
+        envArchive={envArchive}
+        envName={envName}
       />
 
       {/* Chrome-fade wrapper: everything inside fades away when the user is
@@ -266,6 +303,19 @@ export default function Editor({ root, onDisconnect }: Props) {
           pendingImageId={pendingImageId}
           setPendingImageId={setPendingImageId}
           installRoot={root}
+          parts={parts}
+          selectedPart={selectedPart}
+          setSelectedPart={setSelectedPart}
+          explodeAll={explodeAll}
+          setExplodeAll={setExplodeAll}
+          envArchive={envArchive}
+          setEnvArchive={setEnvArchive}
+          envName={envName}
+          setEnvName={setEnvName}
+          camoPrompt={camoPrompt}
+          setCamoPrompt={setCamoPrompt}
+          camoPreset={camoPreset}
+          onApplyCamo={applyCamo}
         />
 
         <PackIconCard

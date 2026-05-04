@@ -5,3 +5,11 @@ dist
 .env
 .env.*
 !.env.example
+tools/templates/*.sga
+tools/templates/signed/
+public/keys/*.sga
+public/keys/manifest.json
+tools/templates/*.sga
+tools/templates/signed/
+public/keys/*.sga
+public/keys/manifest.json

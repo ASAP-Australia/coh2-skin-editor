@@ -59,12 +59,25 @@ export function freshModGuid(): string {
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
 }
 
-/** Map the project's vehicle id → on-disk SGA path + faction folder used by
- *  CoH2's skin-pack convention. */
-function rgmPathFor(vehicleId: string): string | null {
-  const v = VEHICLES.find(x => x.id === vehicleId)
-  if (!v) return null
-  return `art/armies/${v.faction}/vehicles/${v.id}/${v.id}.rgm`
+/** Generate a fresh numeric pack ID for use as the on-disk filename.
+ *
+ *  CoH2's engine scans `mods/skins/` for `%I64u.sga` (i.e. unsigned 64-bit
+ *  decimal integer + .sga). Anything else — including hex-GUID filenames —
+ *  is silently ignored. We pick a value that:
+ *    - Is a valid u64 (so the printf scan matches).
+ *    - Sits well above the highest live Steam Workshop file ID (~5×10^9 in
+ *      late 2025) but well below 2^53 so it round-trips through JS Number.
+ *    - Is unlikely to collide with any concurrently-installed Workshop
+ *      subscription (Workshop won't allocate IDs in this range any time
+ *      soon — Workshop file-ID counter increments by 1 per upload).
+ *
+ *  We use a millisecond timestamp × 1000 + random salt → ~16 decimal digits,
+ *  values around 1.7×10^15 today. Comfortably out of Workshop range and
+ *  always unique per export. */
+export function freshPackId(): string {
+  const now = Date.now()                         // ms since epoch (~1.7e12)
+  const salt = Math.floor(Math.random() * 1000)  // 0..999
+  return String(now * 1000 + salt)               // ~1.7e15
 }
 
 /** SGA archives most likely to contain the diffuse RGTs for a given faction. */
@@ -102,8 +115,17 @@ export interface ExportProgress {
 
 export interface ExportResult {
   bytes: Uint8Array
+  /** Suggested download filename. Engine ignores this — it scans on
+   *  `<numericId>.sga` only (see freshPackId()). Use `numericId` when
+   *  installing in-place. */
   filename: string
+  /** Internal 32-hex GUID — woven into RGT subdir names, .info filename,
+   *  and the .ucs locale strings. Independent of the on-disk filename. */
   modGuid: string
+  /** Numeric u64 pack ID — the filename CoH2's engine actually scans for
+   *  (`%I64u.sga` printf pattern in mods\\skins\\). Always use this when
+   *  writing the SGA into the user's mods folder. */
+  numericId: string
   textureCount: number
 }
 
@@ -132,7 +154,6 @@ async function composeVehicleDiffuse(
   const baseNames = textureBaseNamesFor(vSpec.id)
   let sga: SgaArchive | null = null
   let rgtBytes: Uint8Array | null = null
-  let usedBase = vSpec.id
   outer: for (const sgaName of sgaCandidates) {
     let a = archives.cache.get(sgaName)
     if (!a) {
@@ -145,7 +166,7 @@ async function composeVehicleDiffuse(
     for (const base of baseNames) {
       const difPath = `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/${base}_dif.rgt`
       const b = await a.readByPath(difPath)
-      if (b) { sga = a; rgtBytes = b; usedBase = base; break outer }
+      if (b) { sga = a; rgtBytes = b; break outer }
     }
   }
   if (!sga || !rgtBytes) return null
@@ -217,6 +238,150 @@ function rewriteInfo(buf: Uint8Array, packName: string, packDesc: string): Uint8
   return new TextEncoder().encode(text)
 }
 
+// ---------------------------------------------------------------------------
+// Output basename aliases (mirrors build-template.ts OUTPUT_BASENAME)
+// ---------------------------------------------------------------------------
+const OUTPUT_BASENAME: Record<string, string> = {
+  elefant:               'elefant_hull',
+  ostwind_flak_panzer:   'ostwind',
+  sdkfz_222:             'sdkfz221',
+  panther_ausf_g:        'panther',
+  halftrack:             'halftrack',
+  sdkfz_250:             'sdkfz250',
+  king_tiger_sdkfz_182:  'kingtiger',
+  puma_sdkfz_234:        'puma',
+  jagdtiger:             'jagdtiger',
+  jagdpanzer_iv_sdkfz_162: 'jagdpanzer_iv',
+  panzer_ii_luchs_sdkfz_123: 'luchs',
+  panzer_iv_sdkfz_ausf_i: 'panzeriv',
+  m4a3e8_sherman_easy_8: 'm4a3e8_sherman',
+  m4a3_sherman_76mm:     'm4a3_sherman_76',
+  m4a1_sherman_calliope: 'm4a1_calliope',
+  m10_tank_destroyer:    'm10',
+  m36_tank_destroyer:    'm36',
+  m15a1_aa_halftrack:    'm15_aa_halftrack',
+  sherman_firefly:       'firefly',
+}
+function outputBasename(vehicleId: string): string {
+  return OUTPUT_BASENAME[vehicleId] ?? vehicleId
+}
+
+// ---------------------------------------------------------------------------
+// Manifest types (mirrors build-manifest.ts output)
+// ---------------------------------------------------------------------------
+interface ManifestRgtEntry {
+  offset: number
+  length: number
+  storeLength: number
+  storage: number
+}
+interface ManifestKey {
+  id: string
+  guid: string
+  file: string
+  rgtFiles: Record<string, ManifestRgtEntry>
+}
+interface Manifest {
+  version: number
+  keys: ManifestKey[]
+}
+
+/** Check whether a signed key pool is available in the app's static assets. */
+export async function hasKeyPool(): Promise<boolean> {
+  const base = (import.meta as any).env?.BASE_URL ?? '/'
+  try {
+    const r = await fetch(`${base}keys/manifest.json`, { method: 'HEAD' })
+    return r.ok
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Export using pre-signed key-pool SGAs.
+ *
+ * Fetches a signed template SGA, overwrites each vehicle's RGT data in-place,
+ * and returns the patched bytes. The RSA signature (which covers the TOC only,
+ * not the data section) stays valid because the TOC is never modified.
+ */
+export async function patchExport(
+  root: FileSystemDirectoryHandle,
+  project: Coh2SkinProject,
+  onProgress: (p: ExportProgress) => void,
+): Promise<ExportResult> {
+  const base = (import.meta as any).env?.BASE_URL ?? '/'
+
+  onProgress({ phase: 'init', message: 'Loading key manifest…' })
+  const manifestResp = await fetch(`${base}keys/manifest.json`)
+  if (!manifestResp.ok) throw new Error('Key manifest not found — falling back to unsigned export')
+  const manifest: Manifest = await manifestResp.json()
+  if (!manifest.keys?.length) throw new Error('Key manifest is empty')
+
+  // Pick the first available key
+  const key = manifest.keys[0]
+
+  onProgress({ phase: 'init', message: `Fetching signed template (${key.file})…` })
+  const sgaResp = await fetch(`${base}keys/${key.file}`)
+  if (!sgaResp.ok) throw new Error(`Failed to fetch key SGA: HTTP ${sgaResp.status}`)
+  const sgaBytes = new Uint8Array(await sgaResp.arrayBuffer())
+
+  onProgress({ phase: 'init', message: 'Locating CoH2 archives…' })
+  const archHandle = await locateArchives(root)
+  if (!archHandle) throw new Error('Could not locate CoH2/Archives folder under the install handle.')
+
+  const archives = { handle: archHandle, cache: new Map<string, SgaArchive>() }
+  const vehicleIds = Object.keys(project.vehicles).filter(id => (project.vehicles[id]?.decals?.length ?? 0) > 0)
+  if (vehicleIds.length === 0) {
+    throw new Error('Project has no vehicles with decals. Add at least one decal first.')
+  }
+
+  let textureCount = 0
+
+  for (let i = 0; i < vehicleIds.length; i++) {
+    const id = vehicleIds[i]
+    onProgress({ phase: 'composite', message: `Compositing ${id}`, current: i + 1, total: vehicleIds.length })
+
+    const composed = await composeVehicleDiffuse(root, project, id, archives)
+    if (!composed) continue
+
+    const vSpec = VEHICLES.find(v => v.id === id)
+    if (!vSpec) continue
+    const baseName = outputBasename(id)
+    const difTset = `art\\armies\\${vSpec.faction}\\vehicles\\${id}\\${baseName}_dif`
+
+    // Generate fixed-size RGT (compress:false → deterministic BC3 byte length)
+    const rgtBytes = canvasToRgt(composed.canvas, difTset, { compress: false })
+
+    // Overwrite both summer and winter slots in the template
+    for (const season of ['summer', 'winter'] as const) {
+      const sgaPath = `art/armies/${vSpec.faction}/vehicles/${id}/skins/${key.guid}_${season}/${baseName}_dif.rgt`
+      const entry = key.rgtFiles[sgaPath]
+      if (!entry) {
+        console.warn(`patchExport: no manifest entry for ${sgaPath}`)
+        continue
+      }
+      if (rgtBytes.length !== entry.length) {
+        throw new Error(
+          `RGT size mismatch for ${id} ${season}: generated ${rgtBytes.length}, expected ${entry.length}. ` +
+          'Template may have been built with a different version of the RGT writer.'
+        )
+      }
+      sgaBytes.set(rgtBytes, entry.offset)
+    }
+    textureCount++
+  }
+
+  const numericId = freshPackId()
+  onProgress({ phase: 'done', message: 'Done', current: vehicleIds.length, total: vehicleIds.length })
+  return {
+    bytes: sgaBytes,
+    filename: `${numericId}.sga`,
+    modGuid: key.guid,
+    numericId,
+    textureCount,
+  }
+}
+
 /** Top-level export. Streams progress events to the UI. */
 export async function exportSkinPack(
   root: FileSystemDirectoryHandle,
@@ -231,6 +396,7 @@ export async function exportSkinPack(
   const tmpl = await fetchTemplate()
 
   const newGuid = freshModGuid()
+  const numericId = freshPackId()
   const archives = { handle: archHandle, cache: new Map<string, SgaArchive>() }
 
   // Composite each vehicle's diffuse + decals
@@ -285,12 +451,13 @@ export async function exportSkinPack(
   onProgress({ phase: 'done', message: 'Done', current: vehicleIds.length, total: vehicleIds.length })
   return {
     bytes: sgaBytes,
-    filename: `${slug(project.packName)}_${newGuid.slice(0, 8)}.sga`,
+    // Numeric filename so the engine actually picks it up. The display name
+    // is preserved inside the .info — only the on-disk filename has to be
+    // numeric for `mods\\skins\\` scanning to match.
+    filename: `${numericId}.sga`,
     modGuid: newGuid,
+    numericId,
     textureCount: vehicleIds.length,
   }
 }
 
-function slug(s: string) {
-  return s.replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 32) || 'skinpack'
-}

@@ -22,7 +22,8 @@
  *
  * Then drive defs (148 bytes each: 64s alias, 64s name, 5×u32 ranges),
  * folder defs (20 bytes each: name_pos, folder_first, folder_last, file_first, file_last),
- * file defs (30 bytes each: 5×u32 + 2×u8 + 2×u32 — see FileDef interface),
+ * file defs (30 bytes each: namePos, dataPos, storeLength (compressed), length (uncompressed),
+ *            mod_time, verification, storage, crc, hash_pos — see FileDef interface),
  * names (concatenated NUL-terminated).
  *
  * File payloads at `data_pos + fileDef.dataPos` are zlib-deflated when
@@ -142,8 +143,8 @@ export class SgaArchive {
       files.push({
         namePos: toc.getUint32(o, true),
         dataPos: toc.getUint32(o + 4, true),
-        length: toc.getUint32(o + 8, true),
-        storeLength: toc.getUint32(o + 12, true),
+        storeLength: toc.getUint32(o + 8, true),  // compressed on-disk size
+        length: toc.getUint32(o + 12, true),       // uncompressed size
         // 4 bytes mod_time (skipped at offset +16)
         // 1 byte verification at +20, 1 byte storage at +21
         storage: tocBytes[o + 21],
@@ -204,12 +205,23 @@ export class SgaArchive {
   }
 
   private folderForFile(fileIndex: number): string {
+    // SGA folders form a hierarchy; root/drive folders cover the whole file
+    // range and child folders cover subranges. We want the SMALLEST range
+    // (= most specific = leaf folder), not the first match. Picking the
+    // first match returns the root drive folder, so paths come back as
+    // just "tiger.rgm" instead of "art/armies/german/vehicles/tiger/tiger.rgm".
+    let bestRange = Infinity
+    let bestName = ''
     for (const fld of this.folders) {
       if (fld.fileFirst <= fileIndex && fileIndex < fld.fileLast) {
-        return this.nameAtOffset.get(fld.namePos) ?? ''
+        const range = fld.fileLast - fld.fileFirst
+        if (range < bestRange) {
+          bestRange = range
+          bestName = this.nameAtOffset.get(fld.namePos) ?? ''
+        }
       }
     }
-    return ''
+    return bestName
   }
 
   private async readFile(f: FileDef): Promise<Uint8Array> {
