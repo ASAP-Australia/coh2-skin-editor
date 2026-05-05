@@ -78,11 +78,14 @@ function detectCoh2Path(): string | null {
 let mainWindow: BrowserWindow | null = null
 
 function createWindow() {
+  const headless = !!process.env.HEADLESS_SCREENSHOT
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 960,
     minHeight: 600,
+    show: !headless,            // hide for screenshots, capture via webContents.capturePage()
+    paintWhenInitiallyHidden: true,
     frame: false,
     transparent: false,
     backgroundColor: '#0d0d0f',
@@ -140,10 +143,49 @@ function createWindow() {
   if (process.env.NODE_ENV === 'development') {
     // In dev, Vite serves under the same base path it would for GitHub
     // Pages — load the explicit URL so we don't follow a 302 first.
-    mainWindow.loadURL('http://localhost:5173/coh2-skin-editor/')
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
+    // In screenshot mode (HEADLESS_SCREENSHOT_BYPASS=1) force ConnectScreen
+    // so the WebGL Viewport doesn't mount — useful when the host has no GPU.
+    const url = process.env.HEADLESS_SCREENSHOT_BYPASS
+      ? 'http://localhost:5173/coh2-skin-editor/?screenshot=1'
+      : 'http://localhost:5173/coh2-skin-editor/'
+    mainWindow.loadURL(url)
+    if (!process.env.HEADLESS_SCREENSHOT) {
+      mainWindow.webContents.openDevTools({ mode: 'detach' })
+    }
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
+  }
+
+  // HEADLESS_SCREENSHOT=/path/to/out.png → wait for first paint, capture, quit.
+  // Useful in CI / sandboxed sessions where the host's screenshot tool can't
+  // see the Electron window. Uses Electron's own webContents.capturePage()
+  // which works regardless of the windowing system.
+  if (process.env.HEADLESS_SCREENSHOT) {
+    const outPath = process.env.HEADLESS_SCREENSHOT
+    const delayMs = Number(process.env.HEADLESS_DELAY_MS ?? '6000')
+    const grab = async () => {
+      console.log('[screenshot] grabbing…')
+      try {
+        const img = await mainWindow!.webContents.capturePage()
+        const buf = img.toPNG()
+        fs.writeFileSync(outPath, buf)
+        const { width, height } = img.getSize()
+        console.log(`[screenshot] wrote ${outPath} (${width}x${height}, ${buf.length} bytes)`)
+      } catch (e) {
+        console.error('[screenshot] failed', e)
+      } finally {
+        app.quit()
+      }
+    }
+    // Fire on first paint OR after a hard timeout, whichever comes first.
+    let grabbed = false
+    const fire = () => { if (!grabbed) { grabbed = true; grab() } }
+    mainWindow.webContents.on('did-finish-load', () => {
+      console.log(`[screenshot] did-finish-load — waiting ${delayMs}ms for paint`)
+      setTimeout(fire, delayMs)
+    })
+    // Hard fallback if did-finish-load never fires
+    setTimeout(fire, delayMs + 15000)
   }
 
   mainWindow.on('closed', () => { mainWindow = null })

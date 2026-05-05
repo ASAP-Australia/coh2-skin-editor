@@ -21,6 +21,11 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    // ?screenshot=1 forces ConnectScreen (no WebGL viewport mounted) for
+    // headless captures via Electron's webContents.capturePage().
+    const sParams = new URLSearchParams(location.search)
+    if (sParams.get('screenshot') === '1') { setProbing(false); return }
+
     // In Electron: auto-detect CoH2 install; no user gesture required.
     if (isElectron()) {
       detectInstallPath().then(p => {
