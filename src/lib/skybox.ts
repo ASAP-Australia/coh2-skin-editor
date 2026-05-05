@@ -108,15 +108,16 @@ function proceduralSkyFace(
 }
 
 /** Build a procedural cube-texture sky for demo mode. Uses warm summer or
- *  cool overcast palettes depending on season. */
-export function proceduralSkybox(season: 'summer' | 'winter'): THREE.CubeTexture {
+ *  cool overcast palettes depending on season. CubeTextures need real
+ *  HTMLImageElements (not canvases), so we go canvas → dataURL → Image. */
+export async function proceduralSkybox(season: 'summer' | 'winter'): Promise<THREE.CubeTexture> {
   const palette = season === 'summer'
     ? { zenith: '#3a6090', horizon: '#c9a880', ground: '#5a4a3a' }
     : { zenith: '#5a6878', horizon: '#a8b0b8', ground: '#5a6068' }
   const size = 512
   const side = (isTop = false, isBot = false) =>
     proceduralSkyFace(size, palette.zenith, palette.horizon, palette.ground, isTop, isBot)
-  const cube = new THREE.CubeTexture([
+  const faces = await Promise.all([
     canvasToImage(side()),                  // px
     canvasToImage(side()),                  // nx
     canvasToImage(side(true)),              // py (top)
@@ -124,15 +125,19 @@ export function proceduralSkybox(season: 'summer' | 'winter'): THREE.CubeTexture
     canvasToImage(side()),                  // pz
     canvasToImage(side()),                  // nz
   ])
+  const cube = new THREE.CubeTexture(faces)
   cube.colorSpace = THREE.SRGBColorSpace
   cube.needsUpdate = true
   return cube
 }
 
-function canvasToImage(c: HTMLCanvasElement): HTMLImageElement {
-  const img = new Image()
-  img.src = c.toDataURL('image/png')
-  return img
+function canvasToImage(c: HTMLCanvasElement): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = reject
+    img.src = c.toDataURL('image/png')
+  })
 }
 
 /** Procedural ground texture — terrain-coloured noise so demo mode has a

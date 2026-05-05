@@ -225,8 +225,8 @@ export default function Viewport({
     const run = async () => {
       // Skybox
       const cubeTex = envArchive
-        ? (await loadSkybox(envArchive, envName)) ?? proceduralSkybox(season)
-        : proceduralSkybox(season)
+        ? (await loadSkybox(envArchive, envName)) ?? (await proceduralSkybox(season))
+        : await proceduralSkybox(season)
       if (!cancelled && sceneRef.current) {
         sceneRef.current.background = cubeTex
       }
@@ -261,7 +261,53 @@ export default function Viewport({
     let cancelled = false
     setLoading(true); setErr(null)
 
+    // Detect demo mode by the stub handle's name (set in App.tsx).
+    const isDemo = root?.name === 'Demo (no real install)'
+
+    const buildPlaceholderTank = () => {
+      // Block-out tank silhouette so demo mode reads as "tank-shaped" — the
+      // actual model loads once the user connects their CoH2 install.
+      const scene = sceneRef.current!
+      const oldGroup = meshGroupRef.current
+      if (oldGroup) {
+        scene.remove(oldGroup)
+        oldGroup.traverse(o => { if ((o as THREE.Mesh).geometry) (o as THREE.Mesh).geometry.dispose() })
+      }
+      const group = new THREE.Group()
+      const matBody = new THREE.MeshStandardMaterial({ color: 0x6e6a55, metalness: 0.1, roughness: 0.85 })
+      const matTreads = new THREE.MeshStandardMaterial({ color: 0x2a2823, metalness: 0.05, roughness: 0.95 })
+      // Hull
+      const hull = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.9, 1.8), matBody)
+      hull.position.y = 0.85; group.add(hull)
+      // Turret
+      const turret = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.6, 1.4), matBody)
+      turret.position.y = 1.6; group.add(turret)
+      // Barrel
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.4, 16), matBody)
+      barrel.rotation.z = Math.PI / 2
+      barrel.position.set(2.0, 1.7, 0); group.add(barrel)
+      // Tracks
+      for (const z of [-1.0, 1.0]) {
+        const track = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.5, 0.4), matTreads)
+        track.position.set(0, 0.35, z); group.add(track)
+      }
+      group.position.y = 0.4
+      scene.add(group)
+      meshGroupRef.current = group
+      submeshMapsRef.current = new Map()
+      origPosRef.current = new Map()
+      targetPosRef.current = new Map()
+      explodeProgressRef.current = 1
+      onPartsLoaded?.([])
+      onModelLoaded?.({ meshes: [], textureSets: [], materials: new Map() } as any, null)
+    }
+
     const run = async () => {
+      if (isDemo) {
+        buildPlaceholderTank()
+        setLoading(false)
+        return
+      }
       try {
         const archives = await locateArchives(root)
         if (!archives) throw new Error('Archives folder not found.')
