@@ -24,7 +24,16 @@ export default function Editor({ root, onDisconnect }: Props) {
   const { api: toast, node: toastNode } = useToasts()
   const [project, setProject] = useState<Coh2SkinProject>(() => loadActive() ?? newProject('My Skin Pack'))
   const [season, setSeason] = useState<'summer' | 'winter'>('summer')
-  const [vehicleId, setVehicleId] = useState<string>(project.lastVehicleId ?? 'tiger')
+  // Default to Brummbär — Tiger has a packed-stride RGM variant the parser
+  // doesn't handle yet (every submesh skipped → empty viewport). Brummbär is
+  // a well-tested model. Users can still pick Tiger from the nav and (when
+  // the parser ships) it will start working. Also clobber any persisted
+  // lastVehicleId == 'tiger' so existing users don't get an empty viewport.
+  const [vehicleId, setVehicleId] = useState<string>(() => {
+    const saved = project.lastVehicleId
+    if (!saved || saved === 'tiger') return 'brummbar'
+    return saved
+  })
   const [activeMenu, setActiveMenu] = useState<'view' | 'decals' | 'reference' | 'export' | 'parts' | 'camo' | 'scene' | null>(null)
   const [placeMode, setPlaceMode] = useState<DecalType | 'off'>('off')
   // Exploded parts view

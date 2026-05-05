@@ -1,19 +1,16 @@
 /**
  * TitleBar — custom frameless-window chrome for Electron.
  *
- * Two pieces:
- *  • A thin (8 px) drag strip at the very top, full-width, so the user can
- *    grab the window from anywhere across the top edge. It's invisible but
- *    catches drags via -webkit-app-region: drag.
- *  • A glass pill in the top-right with three traffic-light buttons
- *    (minimize / maximize / close — Linux/Windows order). Buttons opt out
- *    of the drag region so clicks land on them; the pill's background is
- *    draggable too so you can grab it directly.
+ * Distinct-from-Apple design: rectangular glass buttons with always-visible
+ * icons, sized for hit-testing on Linux/Windows. Each button is its own
+ * pill-rounded chip inside the parent glass strip. Hover deepens the
+ * background; the close button gets a red wash. No traffic-light circles.
  *
- * Hover state reveals macOS-style glyphs inside each circle (− / ⇱ / ×) so
- * the action is clear without a separate label. When running in a browser
- * (`isElectron() === false`) the component renders nothing — no stray pill
- * appears on the GitHub Pages build.
+ * Layout:
+ *  • Thin (8 px) full-width drag strip at the very top — invisible drag handle.
+ *  • Glass strip top-right hosting three buttons: minimize, maximize, close.
+ *
+ * On the web build (`isElectron() === false`) the component renders nothing.
  */
 
 import { useEffect, useState } from 'react'
@@ -22,7 +19,6 @@ import { isElectron } from '@/lib/native-fs'
 export default function TitleBar() {
   const inElectron = isElectron()
   const [maximized, setMaximized] = useState(false)
-  const [hovered, setHovered] = useState<'min' | 'max' | 'close' | null>(null)
 
   useEffect(() => {
     if (!inElectron) return
@@ -46,121 +42,123 @@ export default function TitleBar() {
   }
   const close = () => window.electronAPI?.windowClose()
 
-  // Show glyphs only when the user hovers the pill — matches macOS Big Sur+
-  // traffic-light behaviour. Render glyphs on every button when *any*
-  // button is hovered (so the user can read all three options).
-  const anyHovered = hovered !== null
-
   return (
     <>
-      {/* Thin drag strip — full width across the top. 8 px high so it's a
-          comfortable drag target without eating clicks from anything below. */}
+      {/* Thin draggable strip across the top — pointer-events still pass to
+          the buttons because the buttons are positioned in their own layer. */}
       <div
-        className="fixed top-0 left-0 right-0 h-2 z-[9998] pointer-events-auto"
+        className="fixed top-0 left-0 right-0 h-2 z-[9998]"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       />
 
-      {/* Glass pill — top-right, sits flush to top so OS-style alignment
-          reads cleanly. Drags via the pill bg; buttons opt out. */}
+      {/* Glass strip with three rectangular buttons. Drag region applies to
+          the strip itself (gaps between buttons), buttons opt out so clicks
+          land on them. Double-click on the strip toggles maximize, like
+          most desktop title bars. */}
       <div
-        className="fixed top-2 right-3 z-[9999] flex items-center gap-1.5 glass-2 rounded-pill px-2.5 py-1.5 shadow-[var(--shadow-glass)]"
-        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        className="fixed top-2.5 right-3 z-[9999] flex items-center gap-0.5 rounded-xl p-0.5 shadow-[var(--shadow-glass)]"
+        style={{
+          WebkitAppRegion: 'drag',
+          // Explicit dark backdrop instead of pure backdrop-blur so the
+          // titlebar reads consistently when the 3D viewport behind it is
+          // bright (e.g. Sky shader at noon).
+          background: 'rgba(20, 22, 28, 0.78)',
+          backdropFilter: 'blur(20px) saturate(140%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+          border: '0.5px solid rgba(255, 255, 255, 0.08)',
+        } as React.CSSProperties}
         onDoubleClick={maximize}
       >
-        {/* Linux / Windows order: minimize, maximize, close (left → right) */}
-        <TrafficLight
-          color="yellow"
-          label="Minimize"
-          glyph="min"
-          show={anyHovered}
-          onClick={minimize}
-          onHover={h => setHovered(h ? 'min' : null)}
-        />
-        <TrafficLight
-          color="green"
-          label={maximized ? 'Restore' : 'Maximize'}
-          glyph={maximized ? 'restore' : 'max'}
-          show={anyHovered}
-          onClick={maximize}
-          onHover={h => setHovered(h ? 'max' : null)}
-        />
-        <TrafficLight
-          color="red"
-          label="Close"
-          glyph="close"
-          show={anyHovered}
-          onClick={close}
-          onHover={h => setHovered(h ? 'close' : null)}
-        />
+        {/* Linux/Windows order: minimize, maximize, close (left → right) */}
+        <ChromeButton variant="default" label="Minimize" onClick={minimize}>
+          <MinimizeGlyph />
+        </ChromeButton>
+        <ChromeButton variant="default" label={maximized ? 'Restore' : 'Maximize'} onClick={maximize}>
+          {maximized ? <RestoreGlyph /> : <MaximizeGlyph />}
+        </ChromeButton>
+        <ChromeButton variant="close" label="Close" onClick={close}>
+          <CloseGlyph />
+        </ChromeButton>
       </div>
     </>
   )
 }
 
-interface TrafficLightProps {
-  color: 'red' | 'yellow' | 'green'
+interface ChromeButtonProps {
   label: string
-  glyph: 'close' | 'min' | 'max' | 'restore'
-  show: boolean
+  variant: 'default' | 'close'
   onClick: () => void
-  onHover: (hovered: boolean) => void
+  children: React.ReactNode
 }
 
-function TrafficLight({ color, label, glyph, show, onClick, onHover }: TrafficLightProps) {
-  const bg =
-    color === 'red'    ? 'bg-red-500/95 hover:bg-red-400'
-    : color === 'yellow' ? 'bg-yellow-400/95 hover:bg-yellow-300'
-                         : 'bg-green-500/95 hover:bg-green-400'
+function ChromeButton({ label, variant, onClick, children }: ChromeButtonProps) {
+  // Close uses a red hover wash so destruction reads at a glance, but the
+  // resting state is glass-tinted not coloured — matches the rest of the chrome.
+  const hover =
+    variant === 'close'
+      ? 'hover:bg-red-500/85 hover:text-white'
+      : 'hover:bg-white/15 hover:text-white'
 
   return (
     <button
       onClick={onClick}
-      onMouseEnter={() => onHover(true)}
-      onMouseLeave={() => onHover(false)}
       title={label}
       aria-label={label}
-      className={`relative w-3 h-3 rounded-full ${bg} active:scale-90 transition-all focus:outline-none grid place-items-center`}
+      className={`
+        grid place-items-center
+        w-9 h-7 rounded-lg
+        text-[var(--color-text-2)]
+        transition-colors duration-150
+        active:scale-[0.94]
+        focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40
+        ${hover}
+      `}
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
     >
-      {/* Glyph fades in when any button in the group is hovered. The dark
-          colour mimics macOS — the glyph is the *negative* of the dot. */}
-      <span
-        className={`pointer-events-none transition-opacity duration-100 ${show ? 'opacity-80' : 'opacity-0'}`}
-        style={{ color: 'rgba(0, 0, 0, 0.7)' }}
-        aria-hidden
-      >
-        <Glyph kind={glyph} />
-      </span>
+      {children}
     </button>
   )
 }
 
-function Glyph({ kind }: { kind: 'close' | 'min' | 'max' | 'restore' }) {
-  const stroke = 'currentColor'
-  switch (kind) {
-    case 'close':
-      return (
-        <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
-          <path d="M2 2 L8 8 M8 2 L2 8" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-      )
-    case 'min':
-      return (
-        <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
-          <path d="M2 5 H8" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-      )
-    case 'max':
-      return (
-        <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
-          <path d="M3 3 H7 V7 H3 Z" stroke={stroke} strokeWidth="1.2" />
-        </svg>
-      )
-    case 'restore':
-      return (
-        <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
-          <path d="M3 4 H7 V8 H3 Z M5 4 V2 H9 V6 H7" stroke={stroke} strokeWidth="1" />
-        </svg>
-      )
-  }
+// ---------------------------------------------------------------------------
+// Glyphs — flat 1.5 px stroke, currentColor. 12px so they read clearly
+// against the 36×28 button.
+// ---------------------------------------------------------------------------
+
+function MinimizeGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+         strokeWidth="1.4" strokeLinecap="round">
+      <path d="M2.5 6 H9.5" />
+    </svg>
+  )
+}
+
+function MaximizeGlyph() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+         strokeWidth="1.3">
+      <rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1.2" />
+    </svg>
+  )
+}
+
+function RestoreGlyph() {
+  // Two stacked rounded rectangles — the canonical "windowed" / restore icon.
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+         strokeWidth="1.2">
+      <rect x="2" y="3.6" width="6.4" height="6.4" rx="1" />
+      <path d="M4 3.6 V2.6 A 0.8 0.8 0 0 1 4.8 1.8 H10 A 0.2 0.2 0 0 1 10.2 2 V7.2 A 0.8 0.8 0 0 1 9.4 8 H8.4" />
+    </svg>
+  )
+}
+
+function CloseGlyph() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+         strokeWidth="1.5" strokeLinecap="round">
+      <path d="M3 3 L9 9 M9 3 L3 9" />
+    </svg>
+  )
 }

@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { Sky } from 'three/examples/jsm/objects/Sky.js'
 import { locateArchives } from '@/lib/coh2-fs'
 import { SgaArchive } from '@/lib/sga'
 import { parseRgm, type RgmModel } from '@/lib/rgm'
 import { decodeRgt, rgtToCompressedTexture } from '@/lib/rgt'
 import { bcToCanvas } from '@/lib/bc-decode'
 import { rgmPath, type VehicleSpec } from '@/lib/vehicles'
-import { loadSkybox, loadGroundTexture, proceduralSkybox, proceduralGroundTexture } from '@/lib/skybox'
+// (skybox helpers retained in lib/ for reference but no longer used — Three.Sky drives the backdrop)
 
 interface LightingPreset {
   ambientColor: number; ambientIntensity: number
@@ -73,13 +74,15 @@ function isDestroyedMesh(name: string): boolean {
 
 export default function Viewport({
   root, vehicle, overlayCanvas, onModelLoaded, onPick, onHover, onReconnect,
-  onPartsLoaded, selectedPart, explodeAll, season, envArchive, envName,
+  onPartsLoaded, selectedPart, explodeAll, season,
+  envArchive: _envArchive, envName: _envName,
   showDestroyed = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef    = useRef<HTMLCanvasElement>(null)
   const sceneRef     = useRef<THREE.Scene | null>(null)
   const cameraRef    = useRef<THREE.PerspectiveCamera | null>(null)
+  const controlsRef  = useRef<OrbitControls | null>(null)
   const meshGroupRef = useRef<THREE.Group | null>(null)
   const baseTextureRef   = useRef<THREE.Texture | null>(null)
   const overlayTexRef    = useRef<THREE.CanvasTexture | null>(null)
@@ -90,6 +93,8 @@ export default function Viewport({
   const fillRef          = useRef<THREE.DirectionalLight | null>(null)
   const groundMeshRef    = useRef<THREE.Mesh | null>(null)
   const groundMatRef     = useRef<THREE.MeshStandardMaterial | null>(null)
+  const skyRef           = useRef<Sky | null>(null)
+  const pmremRef         = useRef<THREE.PMREMGenerator | null>(null)
 
   // Explode animation state
   const submeshMapsRef   = useRef<Map<string, THREE.Mesh>>(new Map())
@@ -117,6 +122,7 @@ export default function Viewport({
     const controls = new OrbitControls(camera, canvasRef.current)
     controls.enableDamping = true
     controls.target.set(0, 1.2, 0)
+    controlsRef.current = controls
 
     // Lights — refs so we can update them when season changes
     const ambient = new THREE.AmbientLight(0xffffff, 0.55)
@@ -133,22 +139,63 @@ export default function Viewport({
     fillRef.current = fill
     scene.add(fill)
 
-    // Ground plane — replaced by terrain texture when env archive is loaded
-    const groundGeo = new THREE.PlaneGeometry(40, 40, 1, 1)
+    // Realistic procedural sky — Three's Sky shader (Preetham/Hosek-Wilkie
+    // atmospheric scattering). Looks far better than a gradient cubemap.
+    const sky = new Sky()
+    sky.scale.setScalar(450000)
+    const skySun = new THREE.Vector3()
+    const skyUniforms = sky.material.uniforms
+    // Tuned for a calmer, deeper-blue daytime sky — the previous default
+    // (rayleigh 1.5, turbidity 8, low sun) put a lot of bright haze around
+    // the horizon which then washed-out the glassmorphic chrome that uses
+    // backdrop-blur. Higher rayleigh + cooler params keep the upper hemisphere
+    // saturated blue and the horizon a soft warm haze rather than full white.
+    skyUniforms.turbidity.value      = 4
+    skyUniforms.rayleigh.value       = 3
+    skyUniforms.mieCoefficient.value = 0.005
+    skyUniforms.mieDirectionalG.value= 0.7
+    // Higher sun = darker, more saturated background, less haze in viewport
+    const phi   = THREE.MathUtils.degToRad(90 - 65)   // elevation 65°
+    const theta = THREE.MathUtils.degToRad(180)       // azimuth
+    skySun.setFromSphericalCoords(1, phi, theta)
+    skyUniforms.sunPosition.value.copy(skySun)
+    scene.add(sky)
+    skyRef.current = sky
+
+    // PMREM-baked environment so the model picks up sky reflections / IBL
+    const pmremGen = new THREE.PMREMGenerator(renderer)
+    pmremRef.current = pmremGen
+    const envSceneForPmrem = new THREE.Scene()
+    const envSky = new Sky()
+    envSky.scale.setScalar(450000)
+    envSky.material.uniforms.turbidity.value       = skyUniforms.turbidity.value
+    envSky.material.uniforms.rayleigh.value        = skyUniforms.rayleigh.value
+    envSky.material.uniforms.mieCoefficient.value  = skyUniforms.mieCoefficient.value
+    envSky.material.uniforms.mieDirectionalG.value = skyUniforms.mieDirectionalG.value
+    envSky.material.uniforms.sunPosition.value.copy(skySun)
+    envSceneForPmrem.add(envSky)
+    scene.environment = pmremGen.fromScene(envSceneForPmrem).texture
+
+    // Ground — large, gently coloured plane. No procedural noise — clean
+    // PBR material so the tank reads as the visual subject. The skybox
+    // tints it via env lighting, so don't fight it with a strong colour.
+    const groundGeo = new THREE.PlaneGeometry(200, 200, 1, 1)
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x12141a, metalness: 0, roughness: 0.95,
-      transparent: true, opacity: 0.7,
+      color: 0x4a463c, metalness: 0, roughness: 1.0,
     })
     groundMatRef.current = groundMat
     const ground = new THREE.Mesh(groundGeo, groundMat)
     ground.rotation.x = -Math.PI / 2
+    ground.receiveShadow = true
     groundMeshRef.current = ground
     scene.add(ground)
 
-    const grid = new THREE.GridHelper(40, 40, 0x2a2d33, 0x1a1d23)
+    // Subtle contact-shadow grid only — helps spatial reading without the
+    // "techy" look of a full grid helper.
+    const grid = new THREE.GridHelper(60, 30, 0x000000, 0x000000)
     ;(grid.material as THREE.Material).transparent = true
-    ;(grid.material as THREE.Material).opacity = 0.55
-    grid.position.y = 0.01
+    ;(grid.material as THREE.Material).opacity = 0.10
+    grid.position.y = 0.005
     scene.add(grid)
 
     let raf = 0
@@ -209,49 +256,16 @@ export default function Viewport({
       fillRef.current.color.setHex(p.fillColor)
       fillRef.current.intensity = p.fillIntensity
     }
-    if (sceneRef.current) {
-      sceneRef.current.fog = new THREE.Fog(p.fogColor, p.fogNear, p.fogFar)
-    }
+    // No fog — the Sky shader handles atmospheric falloff. Clamp to null
+    // in case a previous run left a fog instance on the scene.
+    if (sceneRef.current) sceneRef.current.fog = null
   }, [season])
 
-  // =========================================================================
-  // Env archive → skybox + ground texture (procedural fallback when no
-  // archive is loaded, so demo mode still shows a battlefield-ish backdrop)
-  // =========================================================================
-  useEffect(() => {
-    if (!sceneRef.current) return
-    let cancelled = false
-
-    const run = async () => {
-      // Skybox
-      const cubeTex = envArchive
-        ? (await loadSkybox(envArchive, envName)) ?? (await proceduralSkybox(season))
-        : await proceduralSkybox(season)
-      if (!cancelled && sceneRef.current) {
-        sceneRef.current.background = cubeTex
-      }
-
-      // Ground texture
-      const groundCanvas = envArchive
-        ? (await loadGroundTexture(envArchive, season)) ?? proceduralGroundTexture(season)
-        : proceduralGroundTexture(season)
-      if (!cancelled && groundCanvas && groundMatRef.current) {
-        const tex = new THREE.CanvasTexture(groundCanvas)
-        tex.wrapS = tex.wrapT = THREE.RepeatWrapping
-        tex.repeat.set(12, 12)
-        tex.colorSpace = THREE.SRGBColorSpace
-        tex.anisotropy = 4
-        groundMatRef.current.map = tex
-        groundMatRef.current.color.setHex(0xffffff)
-        groundMatRef.current.opacity = 1
-        groundMatRef.current.transparent = false
-        groundMatRef.current.needsUpdate = true
-      }
-    }
-    run()
-    return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [envArchive, envName, season])
+  // Env archive override is intentionally disabled — the Three.Sky shader
+  // and the clean PBR ground look better than the CoH2 sky/terrain RGTs
+  // pulled from ArtEnvironment.sga (which were the source of the "weird
+  // ground texture" complaint). Keeping the archive plumbing in place so
+  // the env switcher in TopMenu still wires up; just no longer applied.
 
   // =========================================================================
   // Load vehicle model
@@ -354,7 +368,25 @@ export default function Viewport({
         const difTset = candidates[0]
         if (difTset) {
           const path = difTset.replace(/\\/g, '/').toLowerCase() + '.rgt'
-          const rgtBytes = await sga.readByPath(path)
+          // Try the SGA that held the RGM first (most common), then fall
+          // through to every other candidate. CoH2 splits some vehicles —
+          // mesh in ArtHigh.sga, diffuse in ArtArmies.sga.
+          let rgtBytes = await sga.readByPath(path)
+          if (!rgtBytes) {
+            for (const sgaName of sgaCandidates) {
+              try {
+                const fh = await archives.getFileHandle(sgaName)
+                const file = await fh.getFile()
+                const a = await SgaArchive.open(file)
+                const b = await a.readByPath(path)
+                if (b) {
+                  console.log('[viewport] diffuse', path, '← fallback', sgaName, b.length, 'bytes')
+                  rgtBytes = b
+                  break
+                }
+              } catch {/* ignore */}
+            }
+          }
           if (rgtBytes) {
             try {
               const rgt = decodeRgt(rgtBytes)
@@ -416,15 +448,42 @@ export default function Viewport({
           origPos.set(sub.name, new THREE.Vector3(0, 0, 0))
         }
 
+        // Auto-fit: scale model so longest axis = ~5 units, centre it
+        // horizontally, and rest its tracks ON the ground (bbox.min.y = 0).
         const box = new THREE.Box3().setFromObject(group)
         const size = box.getSize(new THREE.Vector3())
         const longest = Math.max(size.x, size.y, size.z)
         const scale = longest > 0.0001 ? 5 / longest : 0.01
         group.scale.setScalar(scale)
-        const center = box.getCenter(new THREE.Vector3()).multiplyScalar(scale)
-        group.position.sub(center)
-        group.position.y = 1.2
+        // Recompute box AFTER scaling so we can correctly place it on the ground
+        const scaledBox = new THREE.Box3().setFromObject(group)
+        const scaledCenter = scaledBox.getCenter(new THREE.Vector3())
+        // Centre X/Z, then push the bottom of the bbox down to y=0
+        group.position.x = -scaledCenter.x
+        group.position.z = -scaledCenter.z
+        group.position.y = -scaledBox.min.y
         scene.add(group)
+
+        // Recentre orbit camera target on the model's actual centre so the
+        // user orbits around the tank, not a hardcoded point in space.
+        const finalBox = new THREE.Box3().setFromObject(group)
+        const finalCenter = finalBox.getCenter(new THREE.Vector3())
+        const finalSize = finalBox.getSize(new THREE.Vector3())
+        if (controlsRef.current) {
+          controlsRef.current.target.copy(finalCenter)
+          controlsRef.current.update()
+        }
+        // Pull camera back to frame the bounding sphere, with a comfortable margin
+        if (cameraRef.current) {
+          const radius = finalSize.length() * 0.5
+          const fovRad = (cameraRef.current.fov * Math.PI) / 180
+          const dist = (radius / Math.sin(fovRad / 2)) * 1.15
+          // Maintain 3/4 viewing angle: front-right + slightly elevated
+          const dir = new THREE.Vector3(1, 0.55, 1).normalize()
+          cameraRef.current.position.copy(finalCenter).addScaledVector(dir, dist)
+          cameraRef.current.lookAt(finalCenter)
+          cameraRef.current.updateProjectionMatrix()
+        }
         meshGroupRef.current = group
         submeshMapsRef.current = submeshMap
         origPosRef.current = origPos

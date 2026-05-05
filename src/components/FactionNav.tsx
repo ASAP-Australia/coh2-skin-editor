@@ -85,8 +85,6 @@ export default function FactionNav({ project, currentId, onPick }: Props) {
                   : 'bg-white/5 text-[var(--color-text-2)] border-white/5 hover:bg-white/10 hover:text-white'}`}
             >
               {v.displayName}
-              <span className={`ml-1.5 px-1 py-0.5 rounded text-[9px] tabular-nums
-                ${isActive ? 'bg-black/25' : 'bg-black/40 text-[var(--color-text-3)]'}`}>{v.defaultTac}</span>
               {dirty && (
                 <span title={`${decalCount} decal${decalCount === 1 ? '' : 's'} on this vehicle`}
                       className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-orange-400 shadow-[0_0_4px_#fb923c]" />
