@@ -40,7 +40,7 @@ export default function PackIconCard({ packName, diffuseCanvas, palette }: Props
   }, [diffuseCanvas, palette])
 
   return (
-    <div className="absolute top-4 right-4 z-10 glass-2 rounded-xl px-2.5 py-2 flex items-center gap-2.5 shadow-[var(--shadow-glass)]"
+    <div className="pack-icon-card absolute top-4 right-4 z-10 glass-2 rounded-xl px-2.5 py-2 flex items-center gap-2.5 shadow-[var(--shadow-glass)]"
          title={packName}>
       <canvas ref={canvasRef} width={64} height={64}
               className="block w-12 h-12 rounded-md border border-white/10" />

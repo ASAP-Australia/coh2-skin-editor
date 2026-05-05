@@ -14,6 +14,12 @@ export default function App() {
   const [installRoot, setInstallRoot] = useState<FileSystemDirectoryHandle | null>(null)
   const [probing, setProbing] = useState(true)
 
+  // Mark body so CSS can shift top-anchored chrome below the TitleBar pill.
+  useEffect(() => {
+    if (isElectron()) document.body.classList.add('is-electron')
+    return () => document.body.classList.remove('is-electron')
+  }, [])
+
   useEffect(() => {
     // In Electron: auto-detect CoH2 install; no user gesture required.
     if (isElectron()) {

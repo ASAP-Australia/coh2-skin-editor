@@ -87,6 +87,17 @@
   box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.08);
 }
 
+/* When running in Electron the custom titlebar pill occupies the top-right
+ * corner (~y 8 → 36, ~80 px wide). Shift the right-side chrome down + the
+ * left-side TopMenu down by the same amount so nothing overlaps the pill
+ * or sits under the 8 px draggable strip at the very top of the window.
+ *
+ * On the web build (no `is-electron` class) these rules do nothing, so the
+ * GitHub Pages layout is unchanged. */
+body.is-electron .pack-icon-card        { top: 2.75rem; }   /* was 1rem */
+body.is-electron .intact-wrecked-toggle { top: 6.25rem; }   /* was 5rem */
+body.is-electron .top-menu-wrap         { top: 2.75rem; }   /* was 1rem */
+
 /* Body baseline — pure dark, no coloured ambient light. The 3D viewport
  * is the visual subject; the chrome is glass over near-black. */
 html, body, #root { height: 100%; }

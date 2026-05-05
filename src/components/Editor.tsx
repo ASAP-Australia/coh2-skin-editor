@@ -339,7 +339,7 @@ export default function Editor({ root, onDisconnect }: Props) {
 
         {/* Intact / destroyed variant toggle — small glass pill, top-right
             below the pack-icon card. Apple Control-Center style segmented. */}
-        <div className="absolute top-20 right-4 z-20 glass-2 rounded-pill p-0.5 flex items-center gap-0.5 shadow-[var(--shadow-glass)]">
+        <div className="intact-wrecked-toggle absolute top-20 right-4 z-20 glass-2 rounded-pill p-0.5 flex items-center gap-0.5 shadow-[var(--shadow-glass)]">
           <button
             onClick={() => setShowDestroyed(false)}
             className={`px-3 py-1 text-[10px] font-medium tracking-wide rounded-pill transition-all ${

@@ -138,7 +138,9 @@ function createWindow() {
 
   // ── Load ──────────────────────────────────────────────────────────────
   if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5173')
+    // In dev, Vite serves under the same base path it would for GitHub
+    // Pages — load the explicit URL so we don't follow a 302 first.
+    mainWindow.loadURL('http://localhost:5173/coh2-skin-editor/')
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
