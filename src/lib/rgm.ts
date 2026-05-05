@@ -317,10 +317,13 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
             normals[v * 3 + 1] = view.getFloat32(o + 4, true)
             normals[v * 3 + 2] = -view.getFloat32(o + 8, true)
           } else if (elt.format === 2) {
-            // Packed R8G8B8A8 — typically SNORM ((b/127.5)-1)
-            normals[v * 3 + 0] =  (p.vertexBuffer[o + 0] / 127.5) - 1
-            normals[v * 3 + 1] =  (p.vertexBuffer[o + 1] / 127.5) - 1
-            normals[v * 3 + 2] = -((p.vertexBuffer[o + 2] / 127.5) - 1)
+            // Packed R8G8B8A8_SNORM — bytes are 2's-complement signed int8.
+            // The Uint8Array gives values [0,255]; reinterpret as int8 by
+            // subtracting 256 from anything > 127, then divide by 127.
+            const snorm = (b: number) => (b > 127 ? b - 256 : b) / 127.0
+            normals[v * 3 + 0] =  snorm(p.vertexBuffer[o + 0])
+            normals[v * 3 + 1] =  snorm(p.vertexBuffer[o + 1])
+            normals[v * 3 + 2] = -snorm(p.vertexBuffer[o + 2])  // LH→RH: flip Z
           }
           break
         case SEMANTIC.TEXCOORD0:

@@ -94,6 +94,12 @@ export default function Viewport({
     if (!canvasRef.current) return
     const renderer = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: true, alpha: false })
     renderer.setPixelRatio(window.devicePixelRatio)
+    // Output in SRGB color space — without this Three.js renders in linear
+    // space and the result appears significantly darker than the source textures.
+    renderer.outputColorSpace = THREE.SRGBColorSpace
+    // Mild ACES filmic tone map keeps bright highlights from clipping.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.2
     const scene = new THREE.Scene()
     // Dark studio backdrop — near-black, slight cool tint. Replaces the
     // Three.Sky atmospheric shader which was bleeding bright sky into the
@@ -116,21 +122,28 @@ export default function Viewport({
     // form a 3-point: key (warm front-right), fill (cool front-left), rim
     // (cool back). No env map, no PMREM — keeps materials reading their
     // diffuse + normal maps cleanly without sky-tint washout.
-    const ambient = new THREE.HemisphereLight(0xa0b0c8, 0x202020, 0.50)
+    // Hemisphere provides the sky/ground ambient fill. The sky colour is a
+    // cool blue-grey (overcast European sky), the ground colour is a warm
+    // olive to simulate light bouncing off grass/earth. Relatively bright so
+    // the shadow side of the tank never goes full-black.
+    const ambient = new THREE.HemisphereLight(0xb0c0d0, 0x504030, 0.80)
     ambientRef.current = ambient as unknown as THREE.AmbientLight
     scene.add(ambient)
 
-    const sun = new THREE.DirectionalLight(0xfff1d6, 1.10)
+    // Key light — warm front-right, simulates European afternoon sun.
+    const sun = new THREE.DirectionalLight(0xfff4e0, 1.40)
     sun.position.set(5, 8, 5)
     sunRef.current = sun
     scene.add(sun)
 
-    const fill = new THREE.DirectionalLight(0x90a8c8, 0.40)
+    // Fill light — cool front-left, lifts the shadow-side faces.
+    const fill = new THREE.DirectionalLight(0x90a8c8, 0.65)
     fill.position.set(-6, 4, -3)
     fillRef.current = fill
     scene.add(fill)
 
-    const rim = new THREE.DirectionalLight(0xb0c4d8, 0.55)
+    // Rim / back light — separates the tank from the dark background.
+    const rim = new THREE.DirectionalLight(0xb0c4e0, 0.70)
     rim.position.set(-2, 2, -8)
     scene.add(rim)
 
@@ -195,16 +208,28 @@ export default function Viewport({
   }, [])
 
   // =========================================================================
-  // Season → lighting
+  // Season → lighting + ground color
   // =========================================================================
   useEffect(() => {
-    // Studio lighting is fixed — the season prop only affects which
-    // texture skin gets composited; we don't push lighting tints anymore
-    // because they were the main contributor to the "everything looks too
-    // bright/blue" complaint. If the user wants seasonal lighting later
-    // we can wire it back in.
-    void season  // kept in deps so future tints can hook in here
-    if (sceneRef.current) sceneRef.current.fog = null
+    // Summer: warm front-right key, neutral fills, dark earth ground.
+    // Winter: cooler blue-white sun (snow-sky bounce), brighter fill to
+    //         simulate snow-reflected light, pale grey ground.
+    if (!sunRef.current || !fillRef.current || !sceneRef.current) return
+    if (season === 'winter') {
+      sunRef.current.color.setHex(0xd8e8ff)   // cooler, snow-sky
+      sunRef.current.intensity = 1.20
+      fillRef.current.color.setHex(0xb0c8ff)  // blue-white bounce
+      fillRef.current.intensity = 0.75
+      if (groundMatRef.current) groundMatRef.current.color.setHex(0x9aabb8) // snowy pale
+      sceneRef.current.background = new THREE.Color(0x0d1016)  // slightly cooler dark
+    } else {
+      sunRef.current.color.setHex(0xfff4e0)   // warm summer key
+      sunRef.current.intensity = 1.40
+      fillRef.current.color.setHex(0x90a8c8)  // cool fill
+      fillRef.current.intensity = 0.65
+      if (groundMatRef.current) groundMatRef.current.color.setHex(0x1c1e22) // dark earth
+      sceneRef.current.background = new THREE.Color(0x0a0b0e)
+    }
   }, [season])
 
   // Env archive override is intentionally disabled — the Three.Sky shader
