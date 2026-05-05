@@ -11,7 +11,7 @@ import {
   addImageFromFile,
 } from '@/lib/project'
 import { paintDecals, type RenderContext } from '@/lib/decal-painter'
-import { relTime } from '@/lib/ux'
+// (relTime removed with bottom-right "saved Xs ago" indicator)
 import { SgaArchive } from '@/lib/sga'
 import { generateCamo, type CamoPreset } from '@/lib/camo-generator'
 
@@ -51,12 +51,7 @@ export default function Editor({ root, onDisconnect }: Props) {
   const [activeDecalId, setActiveDecalId] = useState<number | null>(null)
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null)
   const [pendingImageId, setPendingImageId] = useState<string | null>(null)
-  /** Tick once a second so the "saved Xs ago" indicator updates live. */
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    const t = setInterval(() => setTick(n => (n + 1) % 1_000_000), 1000)
-    return () => clearInterval(t)
-  }, [])
+  // (Per-second tick for the saved-ago indicator removed with the indicator.)
 
   // Idle-fade the chrome so the tank takes over when the user is just
   // orbiting. Mouse movement / interaction wakes it up; 4s without
@@ -371,11 +366,9 @@ export default function Editor({ root, onDisconnect }: Props) {
           </button>
         </div>
 
-        {/* Auto-save indicator — bottom-right, subtle */}
-        <div className="absolute bottom-2 right-4 z-30 text-[10px] text-[var(--color-text-3)] font-mono pointer-events-none">
-          <kbd className="px-1 py-0.5 mr-2 rounded bg-white/5 border border-white/10 text-[9px]">F</kbd>
-          focus mode · ✓ saved {relTime(project.modifiedAt)}
-        </div>
+        {/* Auto-save indicator removed at user request — was reading
+            as cluttering the dark viewport. Save state still happens via
+            the "saved Xs ago" line inside the View menu. */}
       </div>
 
       {/* Persistent — never dims. Toast notifications + a 'wake' affordance

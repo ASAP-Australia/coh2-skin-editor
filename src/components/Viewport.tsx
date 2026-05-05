@@ -1,37 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { Sky } from 'three/examples/jsm/objects/Sky.js'
 import { locateArchives } from '@/lib/coh2-fs'
 import { SgaArchive } from '@/lib/sga'
 import { parseRgm, type RgmModel } from '@/lib/rgm'
 import { decodeRgt, rgtToCompressedTexture } from '@/lib/rgt'
 import { bcToCanvas } from '@/lib/bc-decode'
 import { rgmPath, type VehicleSpec } from '@/lib/vehicles'
-// (skybox helpers retained in lib/ for reference but no longer used — Three.Sky drives the backdrop)
-
-interface LightingPreset {
-  ambientColor: number; ambientIntensity: number
-  sunColor: number; sunIntensity: number
-  sunElevation: number // degrees above horizon
-  fillColor: number; fillIntensity: number
-  fogColor: number; fogNear: number; fogFar: number
-}
-
-const LIGHTING: Record<'summer' | 'winter', LightingPreset> = {
-  summer: {
-    ambientColor: 0xd4b896, ambientIntensity: 0.55,
-    sunColor: 0xffeddd,    sunIntensity: 0.85, sunElevation: 45,
-    fillColor: 0x9eb4d1,   fillIntensity: 0.35,
-    fogColor: 0xc8b89a,    fogNear: 30, fogFar: 90,
-  },
-  winter: {
-    ambientColor: 0x9ab4cc, ambientIntensity: 0.50,
-    sunColor: 0xe8f0ff,     sunIntensity: 0.75, sunElevation: 20,
-    fillColor: 0x7090b0,    fillIntensity: 0.30,
-    fogColor: 0xc5d5e8,     fogNear: 25, fogFar: 75,
-  },
-}
+// Sky / PMREM env removed — they were washing the model to white. Studio
+// lighting only now (HemisphereLight + 3 directional lights) so diffuse
+// + normal maps read cleanly against a dark backdrop.
 
 interface Props {
   root: FileSystemDirectoryHandle
@@ -93,8 +71,7 @@ export default function Viewport({
   const fillRef          = useRef<THREE.DirectionalLight | null>(null)
   const groundMeshRef    = useRef<THREE.Mesh | null>(null)
   const groundMatRef     = useRef<THREE.MeshStandardMaterial | null>(null)
-  const skyRef           = useRef<Sky | null>(null)
-  const pmremRef         = useRef<THREE.PMREMGenerator | null>(null)
+  // (skyRef / pmremRef removed with Three.Sky)
 
   // Explode animation state
   const submeshMapsRef   = useRef<Map<string, THREE.Mesh>>(new Map())
@@ -115,9 +92,13 @@ export default function Viewport({
   // =========================================================================
   useEffect(() => {
     if (!canvasRef.current) return
-    const renderer = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: true, alpha: true })
+    const renderer = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: true, alpha: false })
     renderer.setPixelRatio(window.devicePixelRatio)
     const scene = new THREE.Scene()
+    // Dark studio backdrop — near-black, slight cool tint. Replaces the
+    // Three.Sky atmospheric shader which was bleeding bright sky into the
+    // backdrop-blur chrome and washing the model to white.
+    scene.background = new THREE.Color(0x0a0b0e)
     sceneRef.current = scene
 
     const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 200)
@@ -129,64 +110,35 @@ export default function Viewport({
     controls.target.set(0, 1.2, 0)
     controlsRef.current = controls
 
-    // Lights — refs so we can update them when season changes
-    const ambient = new THREE.AmbientLight(0xffffff, 0.55)
-    ambientRef.current = ambient
+    // ── Studio lighting (no IBL/env) ─────────────────────────────────────
+    // Hemisphere supplies a soft cool-from-above / warm-from-below ambient
+    // tint that fills the dark side of the model. Three directional lights
+    // form a 3-point: key (warm front-right), fill (cool front-left), rim
+    // (cool back). No env map, no PMREM — keeps materials reading their
+    // diffuse + normal maps cleanly without sky-tint washout.
+    const ambient = new THREE.HemisphereLight(0xa0b0c8, 0x202020, 0.50)
+    ambientRef.current = ambient as unknown as THREE.AmbientLight
     scene.add(ambient)
 
-    const sun = new THREE.DirectionalLight(0xffeddd, 0.85)
+    const sun = new THREE.DirectionalLight(0xfff1d6, 1.10)
     sun.position.set(5, 8, 5)
     sunRef.current = sun
     scene.add(sun)
 
-    const fill = new THREE.DirectionalLight(0x9eb4d1, 0.35)
-    fill.position.set(-5, 3, -4)
+    const fill = new THREE.DirectionalLight(0x90a8c8, 0.40)
+    fill.position.set(-6, 4, -3)
     fillRef.current = fill
     scene.add(fill)
 
-    // Realistic procedural sky — Three's Sky shader (Preetham/Hosek-Wilkie
-    // atmospheric scattering). Looks far better than a gradient cubemap.
-    const sky = new Sky()
-    sky.scale.setScalar(450000)
-    const skySun = new THREE.Vector3()
-    const skyUniforms = sky.material.uniforms
-    // Tuned for a calmer, deeper-blue daytime sky — the previous default
-    // (rayleigh 1.5, turbidity 8, low sun) put a lot of bright haze around
-    // the horizon which then washed-out the glassmorphic chrome that uses
-    // backdrop-blur. Higher rayleigh + cooler params keep the upper hemisphere
-    // saturated blue and the horizon a soft warm haze rather than full white.
-    skyUniforms.turbidity.value      = 4
-    skyUniforms.rayleigh.value       = 3
-    skyUniforms.mieCoefficient.value = 0.005
-    skyUniforms.mieDirectionalG.value= 0.7
-    // Higher sun = darker, more saturated background, less haze in viewport
-    const phi   = THREE.MathUtils.degToRad(90 - 65)   // elevation 65°
-    const theta = THREE.MathUtils.degToRad(180)       // azimuth
-    skySun.setFromSphericalCoords(1, phi, theta)
-    skyUniforms.sunPosition.value.copy(skySun)
-    scene.add(sky)
-    skyRef.current = sky
+    const rim = new THREE.DirectionalLight(0xb0c4d8, 0.55)
+    rim.position.set(-2, 2, -8)
+    scene.add(rim)
 
-    // PMREM-baked environment so the model picks up sky reflections / IBL
-    const pmremGen = new THREE.PMREMGenerator(renderer)
-    pmremRef.current = pmremGen
-    const envSceneForPmrem = new THREE.Scene()
-    const envSky = new Sky()
-    envSky.scale.setScalar(450000)
-    envSky.material.uniforms.turbidity.value       = skyUniforms.turbidity.value
-    envSky.material.uniforms.rayleigh.value        = skyUniforms.rayleigh.value
-    envSky.material.uniforms.mieCoefficient.value  = skyUniforms.mieCoefficient.value
-    envSky.material.uniforms.mieDirectionalG.value = skyUniforms.mieDirectionalG.value
-    envSky.material.uniforms.sunPosition.value.copy(skySun)
-    envSceneForPmrem.add(envSky)
-    scene.environment = pmremGen.fromScene(envSceneForPmrem).texture
-
-    // Ground — large, gently coloured plane. No procedural noise — clean
-    // PBR material so the tank reads as the visual subject. The skybox
-    // tints it via env lighting, so don't fight it with a strong colour.
+    // Ground — clean dark plane. Catches subtle shadows from the directional
+    // lights but doesn't compete with the model.
     const groundGeo = new THREE.PlaneGeometry(200, 200, 1, 1)
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x4a463c, metalness: 0, roughness: 1.0,
+      color: 0x1c1e22, metalness: 0, roughness: 1.0,
     })
     groundMatRef.current = groundMat
     const ground = new THREE.Mesh(groundGeo, groundMat)
@@ -246,23 +198,12 @@ export default function Viewport({
   // Season → lighting
   // =========================================================================
   useEffect(() => {
-    const p = LIGHTING[season]
-    if (ambientRef.current) {
-      ambientRef.current.color.setHex(p.ambientColor)
-      ambientRef.current.intensity = p.ambientIntensity
-    }
-    if (sunRef.current) {
-      const elev = (p.sunElevation * Math.PI) / 180
-      sunRef.current.position.set(Math.cos(elev) * 6, Math.sin(elev) * 8, 5)
-      sunRef.current.color.setHex(p.sunColor)
-      sunRef.current.intensity = p.sunIntensity
-    }
-    if (fillRef.current) {
-      fillRef.current.color.setHex(p.fillColor)
-      fillRef.current.intensity = p.fillIntensity
-    }
-    // No fog — the Sky shader handles atmospheric falloff. Clamp to null
-    // in case a previous run left a fog instance on the scene.
+    // Studio lighting is fixed — the season prop only affects which
+    // texture skin gets composited; we don't push lighting tints anymore
+    // because they were the main contributor to the "everything looks too
+    // bright/blue" complaint. If the user wants seasonal lighting later
+    // we can wire it back in.
+    void season  // kept in deps so future tints can hook in here
     if (sceneRef.current) sceneRef.current.fog = null
   }, [season])
 
@@ -458,6 +399,54 @@ export default function Viewport({
         }
         if (cancelled) return
 
+        // ── Normal map ─────────────────────────────────────────────────
+        // Same fallback strategy as the diffuse — try every candidate
+        // path across every cached SGA. Normal maps are stored in linear
+        // space (NOT sRGB), and we set normalScale below.
+        let normalTex: THREE.Texture | null = null
+        const nrmFallbackPaths = bases.flatMap(b => [
+          `${dirPath}${b}_nrm.rgt`,
+          `${dirPath}${b}_hull_nrm.rgt`,
+          `${dirPath}${b}_norm.rgt`,
+          `${dirPath}${b}_n.rgt`,
+        ])
+        // Filter destroyed/wreck variants — same patterns as the diffuse
+        // ranker so we don't accidentally bind the wrecked normal to the
+        // intact hull (which produces inverted shading on visible panels).
+        const nrmTsetPaths = (model.textureSets ?? [])
+          .filter(t => /_nrm$|_norm$/i.test(t) && !isDestroyedMesh(t))
+          .map(t => t.replace(/\\/g, '/').toLowerCase() + '.rgt')
+        // Hardcoded fallbacks come FIRST so we prefer
+        // `<vehicle>_hull_nrm.rgt` over an arbitrary textureSet entry.
+        const allNrmPaths = [...new Set([...nrmFallbackPaths, ...nrmTsetPaths])]
+
+        outerNrm: for (const tryPath of allNrmPaths) {
+          const direct = await sga.readByPath(tryPath)
+          let bytes = direct
+          if (!bytes) {
+            for (const sgaName of sgaCandidates) {
+              const a = await getArchive(sgaName)
+              if (!a) continue
+              const b = await a.readByPath(tryPath)
+              if (b) { bytes = b; break }
+            }
+          }
+          if (bytes) {
+            try {
+              const rgt = decodeRgt(bytes)
+              const cv = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
+              normalTex = new THREE.CanvasTexture(cv)
+              normalTex.flipY = true
+              normalTex.colorSpace = THREE.NoColorSpace
+              normalTex.wrapS = normalTex.wrapT = THREE.RepeatWrapping
+              normalTex.anisotropy = 4
+              console.log('[viewport] normal FOUND', tryPath, bytes.length, 'bytes')
+              break outerNrm
+            } catch {/* try next path */}
+          }
+        }
+        if (cancelled) return
+
         const scene = sceneRef.current!
         const oldGroup = meshGroupRef.current
         if (oldGroup) {
@@ -505,15 +494,13 @@ export default function Viewport({
         for (const sub of visible) {
           const mat = new THREE.MeshStandardMaterial({
             map: diffuse,
+            normalMap: normalTex,
             color: diffuse ? 0xffffff : 0x9aa18b,
             metalness: 0.05, roughness: 0.85,
-            // Cut env-map influence WAY down. With scene.environment set
-            // to the PMREM-baked Sky, default envMapIntensity=1 means the
-            // bright sky bleeds into every surface — a low-roughness tank
-            // ends up washed-out white. 0.25 gives subtle IBL ambient
-            // without drowning out the diffuse texture.
-            envMapIntensity: 0.25,
           })
+          // Mild normal-map intensity so panel-line/rivet detail reads
+          // without going CGI-rough.
+          if (normalTex) mat.normalScale = new THREE.Vector2(1.0, 1.0)
           const m = new THREE.Mesh(sub.geometry, mat)
           m.name = sub.name
           group.add(m)
@@ -546,13 +533,18 @@ export default function Viewport({
           controlsRef.current.target.copy(finalCenter)
           controlsRef.current.update()
         }
-        // Pull camera back to frame the bounding sphere, with a comfortable margin
+        // Pull camera back to frame the bounding sphere with a tight margin.
+        // 0.85× rather than 1.15× — earlier framing left ~30% empty space on
+        // every edge, making the tank read as a small thumbnail in a vast dark
+        // void. The user wants the tank to FILL the viewport.
         if (cameraRef.current) {
           const radius = finalSize.length() * 0.5
           const fovRad = (cameraRef.current.fov * Math.PI) / 180
-          const dist = (radius / Math.sin(fovRad / 2)) * 1.15
-          // Maintain 3/4 viewing angle: front-right + slightly elevated
-          const dir = new THREE.Vector3(1, 0.55, 1).normalize()
+          const dist = (radius / Math.sin(fovRad / 2)) * 0.85
+          // Slightly elevated 3/4 view, tracking the model's actual centre
+          // so the camera target sits on the tank's centre of mass not its
+          // hull bottom.
+          const dir = new THREE.Vector3(1, 0.45, 1).normalize()
           cameraRef.current.position.copy(finalCenter).addScaledVector(dir, dist)
           cameraRef.current.lookAt(finalCenter)
           cameraRef.current.updateProjectionMatrix()
