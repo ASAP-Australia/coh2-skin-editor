@@ -34,6 +34,8 @@ export default function Editor({ root, onDisconnect }: Props) {
   // Environment / skybox
   const [envArchive, setEnvArchive] = useState<SgaArchive | null>(null)
   const [envName, setEnvName] = useState('mission_06')
+  // Toggle between intact and destroyed/wrecked variants of the model.
+  const [showDestroyed, setShowDestroyed] = useState(false)
   // Camo state — stored separately from project (not persisted, preview only)
   const [camoPreset, setCamoPreset] = useState<CamoPreset | null>(null)
   const [camoPrompt, setCamoPrompt] = useState('')
@@ -276,6 +278,7 @@ export default function Editor({ root, onDisconnect }: Props) {
         season={season}
         envArchive={envArchive}
         envName={envName}
+        showDestroyed={showDestroyed}
       />
 
       {/* Chrome-fade wrapper: everything inside fades away when the user is
@@ -333,6 +336,31 @@ export default function Editor({ root, onDisconnect }: Props) {
             updateProject(p => { p.lastVehicleId = id })
           }}
         />
+
+        {/* Intact / destroyed variant toggle — small glass pill, top-right
+            below the pack-icon card. Apple Control-Center style segmented. */}
+        <div className="absolute top-20 right-4 z-20 glass-2 rounded-pill p-0.5 flex items-center gap-0.5 shadow-[var(--shadow-glass)]">
+          <button
+            onClick={() => setShowDestroyed(false)}
+            className={`px-3 py-1 text-[10px] font-medium tracking-wide rounded-pill transition-all ${
+              !showDestroyed
+                ? 'bg-white/15 text-white shadow-[inset_0_0.5px_0_rgb(255_255_255/0.15)]'
+                : 'text-[var(--color-text-3)] hover:text-[var(--color-text-2)]'
+            }`}
+            title="Show intact variant">
+            Intact
+          </button>
+          <button
+            onClick={() => setShowDestroyed(true)}
+            className={`px-3 py-1 text-[10px] font-medium tracking-wide rounded-pill transition-all ${
+              showDestroyed
+                ? 'bg-white/15 text-white shadow-[inset_0_0.5px_0_rgb(255_255_255/0.15)]'
+                : 'text-[var(--color-text-3)] hover:text-[var(--color-text-2)]'
+            }`}
+            title="Show wrecked / destroyed variant">
+            Wrecked
+          </button>
+        </div>
 
         {/* Auto-save indicator — bottom-right, subtle */}
         <div className="absolute bottom-2 right-4 z-30 text-[10px] text-[var(--color-text-3)] font-mono pointer-events-none">

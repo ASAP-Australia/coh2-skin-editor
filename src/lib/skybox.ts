@@ -62,6 +62,114 @@ function canvasToTexture(canvas: HTMLCanvasElement): THREE.Texture {
   return t
 }
 
+// ---------------------------------------------------------------------------
+// Procedural fallback — for demo mode / before the user connects their CoH2
+// install. Generates a gradient sky cube + a noise-based ground texture so
+// the viewport reads as "battlefield-ish" instead of plain black.
+// ---------------------------------------------------------------------------
+function proceduralSkyFace(
+  size: number,
+  zenith: string,
+  horizon: string,
+  ground: string,
+  isTop = false,
+  isBot = false,
+): HTMLCanvasElement {
+  const c = document.createElement('canvas')
+  c.width = c.height = size
+  const ctx = c.getContext('2d')!
+  if (isTop) {
+    ctx.fillStyle = zenith
+    ctx.fillRect(0, 0, size, size)
+    return c
+  }
+  if (isBot) {
+    ctx.fillStyle = ground
+    ctx.fillRect(0, 0, size, size)
+    return c
+  }
+  const grad = ctx.createLinearGradient(0, 0, 0, size)
+  grad.addColorStop(0,    zenith)
+  grad.addColorStop(0.55, horizon)
+  grad.addColorStop(1,    ground)
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, size, size)
+  // Soft cloud streaks for atmosphere
+  ctx.globalAlpha = 0.18
+  ctx.fillStyle = '#ffffff'
+  for (let i = 0; i < 6; i++) {
+    const y = Math.random() * size * 0.5
+    const w = size * (0.3 + Math.random() * 0.5)
+    const h = 4 + Math.random() * 8
+    ctx.fillRect(Math.random() * size - w / 2, y, w, h)
+  }
+  ctx.globalAlpha = 1
+  return c
+}
+
+/** Build a procedural cube-texture sky for demo mode. Uses warm summer or
+ *  cool overcast palettes depending on season. */
+export function proceduralSkybox(season: 'summer' | 'winter'): THREE.CubeTexture {
+  const palette = season === 'summer'
+    ? { zenith: '#3a6090', horizon: '#c9a880', ground: '#5a4a3a' }
+    : { zenith: '#5a6878', horizon: '#a8b0b8', ground: '#5a6068' }
+  const size = 512
+  const side = (isTop = false, isBot = false) =>
+    proceduralSkyFace(size, palette.zenith, palette.horizon, palette.ground, isTop, isBot)
+  const cube = new THREE.CubeTexture([
+    canvasToImage(side()),                  // px
+    canvasToImage(side()),                  // nx
+    canvasToImage(side(true)),              // py (top)
+    canvasToImage(side(false, true)),       // ny (bottom)
+    canvasToImage(side()),                  // pz
+    canvasToImage(side()),                  // nz
+  ])
+  cube.colorSpace = THREE.SRGBColorSpace
+  cube.needsUpdate = true
+  return cube
+}
+
+function canvasToImage(c: HTMLCanvasElement): HTMLImageElement {
+  const img = new Image()
+  img.src = c.toDataURL('image/png')
+  return img
+}
+
+/** Procedural ground texture — terrain-coloured noise so demo mode has a
+ *  proper "in-game" feel without bundling any CoH2 art. */
+export function proceduralGroundTexture(season: 'summer' | 'winter'): HTMLCanvasElement {
+  const size = 512
+  const c = document.createElement('canvas')
+  c.width = c.height = size
+  const ctx = c.getContext('2d')!
+  const base = season === 'summer' ? [86, 78, 50] : [120, 122, 125]   // [r,g,b]
+  const img = ctx.createImageData(size, size)
+  for (let i = 0; i < size * size; i++) {
+    const n = Math.random() * 28 - 14
+    img.data[i * 4 + 0] = Math.max(0, Math.min(255, base[0] + n))
+    img.data[i * 4 + 1] = Math.max(0, Math.min(255, base[1] + n))
+    img.data[i * 4 + 2] = Math.max(0, Math.min(255, base[2] + n))
+    img.data[i * 4 + 3] = 255
+  }
+  ctx.putImageData(img, 0, 0)
+  // Streak / track suggestion
+  ctx.globalAlpha = 0.18
+  ctx.strokeStyle = season === 'summer' ? '#3a3220' : '#5a6068'
+  ctx.lineWidth = 6
+  for (let i = 0; i < 8; i++) {
+    ctx.beginPath()
+    ctx.moveTo(Math.random() * size, Math.random() * size)
+    ctx.bezierCurveTo(
+      Math.random() * size, Math.random() * size,
+      Math.random() * size, Math.random() * size,
+      Math.random() * size, Math.random() * size,
+    )
+    ctx.stroke()
+  }
+  ctx.globalAlpha = 1
+  return c
+}
+
 /** Try to load a skybox for the given environment name from the archive.
  *  Returns null (graceful) if assets are not found. */
 export async function loadSkybox(archive: SgaArchive, envName: string): Promise<THREE.CubeTexture | null> {

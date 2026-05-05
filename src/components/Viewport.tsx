@@ -7,7 +7,7 @@ import { parseRgm, type RgmModel } from '@/lib/rgm'
 import { decodeRgt, rgtToCompressedTexture } from '@/lib/rgt'
 import { bcToCanvas } from '@/lib/bc-decode'
 import { rgmPath, type VehicleSpec } from '@/lib/vehicles'
-import { loadSkybox, loadGroundTexture } from '@/lib/skybox'
+import { loadSkybox, loadGroundTexture, proceduralSkybox, proceduralGroundTexture } from '@/lib/skybox'
 
 interface LightingPreset {
   ambientColor: number; ambientIntensity: number
@@ -52,11 +52,29 @@ interface Props {
   envArchive: SgaArchive | null
   /** Environment name to use (e.g. "mission_06"). */
   envName: string
+  /** When true, show the wrecked/destroyed variant of the model instead of
+   *  the intact one. Many CoH2 RGM files bundle both variants in submesh
+   *  groups whose names contain "destroyed" / "wreck" — toggling this swaps
+   *  which set is rendered. */
+  showDestroyed?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Submesh classification — many vehicle .rgm files include both intact and
+// destroyed/wreck variants, sometimes overlapping in world space. We split
+// them by name pattern so the user always sees one variant cleanly.
+// ---------------------------------------------------------------------------
+const DESTROYED_PATTERNS = [
+  /destroy/i, /wreck/i, /destruction/i, /burnt/i, /broken/i, /\bdmg\b/i, /_dam_/i,
+]
+function isDestroyedMesh(name: string): boolean {
+  return DESTROYED_PATTERNS.some(re => re.test(name))
 }
 
 export default function Viewport({
   root, vehicle, overlayCanvas, onModelLoaded, onPick, onHover, onReconnect,
   onPartsLoaded, selectedPart, explodeAll, season, envArchive, envName,
+  showDestroyed = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef    = useRef<HTMLCanvasElement>(null)
@@ -197,21 +215,26 @@ export default function Viewport({
   }, [season])
 
   // =========================================================================
-  // Env archive → skybox + ground texture
+  // Env archive → skybox + ground texture (procedural fallback when no
+  // archive is loaded, so demo mode still shows a battlefield-ish backdrop)
   // =========================================================================
   useEffect(() => {
-    if (!envArchive || !sceneRef.current) return
+    if (!sceneRef.current) return
     let cancelled = false
 
     const run = async () => {
       // Skybox
-      const cubeTex = await loadSkybox(envArchive, envName)
+      const cubeTex = envArchive
+        ? (await loadSkybox(envArchive, envName)) ?? proceduralSkybox(season)
+        : proceduralSkybox(season)
       if (!cancelled && sceneRef.current) {
-        sceneRef.current.background = cubeTex ?? new THREE.Color(0x0c0e14)
+        sceneRef.current.background = cubeTex
       }
 
       // Ground texture
-      const groundCanvas = await loadGroundTexture(envArchive, season)
+      const groundCanvas = envArchive
+        ? (await loadGroundTexture(envArchive, season)) ?? proceduralGroundTexture(season)
+        : proceduralGroundTexture(season)
       if (!cancelled && groundCanvas && groundMatRef.current) {
         const tex = new THREE.CanvasTexture(groundCanvas)
         tex.wrapS = tex.wrapT = THREE.RepeatWrapping
@@ -267,8 +290,22 @@ export default function Viewport({
 
         let diffuse: THREE.Texture | null = null
         let diffuseImage: HTMLCanvasElement | null = null
-        const difTset = model.textureSets.find(t => t.endsWith(`${vehicle.id}_dif`))
-                       ?? model.textureSets.find(t => /_dif$/i.test(t))
+        // Texture lookup priority — try several patterns so vehicles with
+        // unconventional naming (Tiger I → 'tiger_dif', some have 'tiger_hull_dif')
+        // still resolve. Skip destroyed/wreck textures.
+        const lower = (s: string) => s.toLowerCase()
+        const id = vehicle.id.toLowerCase()
+        const candidates = model.textureSets
+          .filter(t => !isDestroyedMesh(t) && /_dif$/i.test(t))
+          .sort((a, b) => {
+            // Prefer tsets whose basename includes the vehicle id
+            const aMatch = lower(a).includes(id) ? 0 : 1
+            const bMatch = lower(b).includes(id) ? 0 : 1
+            if (aMatch !== bMatch) return aMatch - bMatch
+            // Then prefer shorter (less likely to be a hull/turret variant)
+            return a.length - b.length
+          })
+        const difTset = candidates[0]
         if (difTset) {
           const path = difTset.replace(/\\/g, '/').toLowerCase() + '.rgt'
           const rgtBytes = await sga.readByPath(path)
@@ -303,7 +340,24 @@ export default function Viewport({
         const submeshMap = new Map<string, THREE.Mesh>()
         const origPos    = new Map<string, THREE.Vector3>()
 
+        // Partition: intact vs destroyed. Many CoH2 .rgm files contain both
+        // variants in the same file, overlapping in world space — rendering
+        // both at once causes z-fighting (the "tiger clipping into destroyed
+        // tiger" bug). We always render only one set; the showDestroyed prop
+        // selects which.
+        const intact:    typeof model.meshes = []
+        const destroyed: typeof model.meshes = []
         for (const sub of model.meshes) {
+          if (isDestroyedMesh(sub.name)) destroyed.push(sub)
+          else intact.push(sub)
+        }
+        // Fallback: if showDestroyed is requested but no destroyed parts
+        // were tagged, fall back to intact so we don't render an empty scene.
+        const visible = showDestroyed && destroyed.length > 0 ? destroyed
+                      : intact.length > 0 ? intact
+                      : model.meshes
+
+        for (const sub of visible) {
           const mat = new THREE.MeshStandardMaterial({
             map: diffuse,
             color: diffuse ? 0xffffff : 0x9aa18b,
@@ -342,7 +396,7 @@ export default function Viewport({
     run()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [root, vehicle?.id])
+  }, [root, vehicle?.id, showDestroyed])
 
   // =========================================================================
   // Overlay canvas → CanvasTexture
