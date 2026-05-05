@@ -3,7 +3,7 @@ import ConnectScreen from '@/components/ConnectScreen'
 import Editor from '@/components/Editor'
 import TitleBar from '@/components/TitleBar'
 import { loadSavedHandle } from '@/lib/coh2-fs'
-import { isElectron, detectInstallPath, nativePathToHandle } from '@/lib/native-fs'
+import { isElectron } from '@/lib/native-fs'
 
 /**
  * App routing: pick between the first-run "connect" flow and the editor
@@ -26,12 +26,12 @@ export default function App() {
     const sParams = new URLSearchParams(location.search)
     if (sParams.get('screenshot') === '1') { setProbing(false); return }
 
-    // In Electron: auto-detect CoH2 install; no user gesture required.
+    // In Electron we always start at ConnectScreen — never silently
+    // auto-jump into the editor. ConnectScreen still uses
+    // detectInstallPath() under the hood to pre-fill the path so the
+    // user just clicks Connect; they're never surprised by skipped UI.
     if (isElectron()) {
-      detectInstallPath().then(p => {
-        if (p) setInstallRoot(nativePathToHandle(p))
-        // If not found, fall through to ConnectScreen (manual pick)
-      }).catch(() => {/* ignore — ConnectScreen handles manual pick */}).finally(() => setProbing(false))
+      setProbing(false)
       return
     }
 
