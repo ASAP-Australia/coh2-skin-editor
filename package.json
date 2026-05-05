@@ -1,15 +1,44 @@
 {
   "name": "coh2-skin-editor",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "main": "dist-electron/electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "publish-skin": "python3 tools/publish.py",
-    "test-export": "npx tsx tools/test-export.ts"
+    "test-export": "npx tsx tools/test-export.ts",
+    "electron:compile": "tsc -p tsconfig.electron.json && echo '{\"type\":\"commonjs\"}' > dist-electron/package.json",
+    "electron:dev": "npm run electron:compile && concurrently \"vite\" \"wait-on http://localhost:5173 && NODE_ENV=development electron .\"",
+    "electron:build": "tsc -b && ELECTRON_BUILD=1 vite build && npm run electron:compile && electron-builder",
+    "electron:build:win": "tsc -b && cross-env ELECTRON_BUILD=1 vite build && npm run electron:compile && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.asap-australia.coh2-skin-editor",
+    "productName": "CoH2 Skin Editor",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "public/asap-logo.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "public/asap-logo.png",
+      "category": "Game"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "public/asap-logo.png"
+    }
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
@@ -34,6 +63,9 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "canvas": "^3.2.3",
+    "concurrently": "^9.2.1",
+    "electron": "^41.5.0",
+    "electron-builder": "^26.8.1",
     "eslint": "^10.2.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
@@ -42,6 +74,7 @@
     "tailwindcss": "^4.2.4",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "wait-on": "^9.0.5"
   }
 }

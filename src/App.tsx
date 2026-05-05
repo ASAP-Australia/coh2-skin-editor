@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import ConnectScreen from '@/components/ConnectScreen'
 import Editor from '@/components/Editor'
+import TitleBar from '@/components/TitleBar'
 import { loadSavedHandle } from '@/lib/coh2-fs'
+import { isElectron, detectInstallPath, nativePathToHandle } from '@/lib/native-fs'
 
 /**
  * App routing: pick between the first-run "connect" flow and the editor
@@ -13,6 +15,15 @@ export default function App() {
   const [probing, setProbing] = useState(true)
 
   useEffect(() => {
+    // In Electron: auto-detect CoH2 install; no user gesture required.
+    if (isElectron()) {
+      detectInstallPath().then(p => {
+        if (p) setInstallRoot(nativePathToHandle(p))
+        // If not found, fall through to ConnectScreen (manual pick)
+      }).catch(() => {/* ignore — ConnectScreen handles manual pick */}).finally(() => setProbing(false))
+      return
+    }
+
     // ?demo=1 bypasses the Connect *screen* — but if the user has previously
     // authorized their CoH2 install, we still load real models from it. Only
     // when no saved handle is available does demo mode fall back to a stub
@@ -53,18 +64,31 @@ export default function App() {
 
   if (probing) {
     return (
-      <div className="min-h-dvh grid place-items-center">
-        <div className="text-[12px] text-[var(--color-text-3)] tracking-[2px] uppercase">
-          Loading…
+      <>
+        <TitleBar />
+        <div className="min-h-dvh grid place-items-center">
+          <div className="text-[12px] text-[var(--color-text-3)] tracking-[2px] uppercase">
+            Loading…
+          </div>
         </div>
-      </div>
+      </>
     )
   }
 
   if (!installRoot) {
-    return <ConnectScreen onConnected={setInstallRoot} />
+    return (
+      <>
+        <TitleBar />
+        <ConnectScreen onConnected={setInstallRoot} />
+      </>
+    )
   }
 
-  return <Editor root={installRoot} onDisconnect={() => setInstallRoot(null)} />
+  return (
+    <>
+      <TitleBar />
+      <Editor root={installRoot} onDisconnect={() => setInstallRoot(null)} />
+    </>
+  )
 }
 

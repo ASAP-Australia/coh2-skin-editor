@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { isSupported, locateArchives, pickInstall } from '@/lib/coh2-fs'
 import { BorderBeam } from '@/components/ui/border-beam'
 import { defaultInstallPath } from '@/lib/ux'
+import { isElectron, pickInstallPathNative, nativePathToHandle } from '@/lib/native-fs'
 
 interface Props {
   onConnected: (handle: FileSystemDirectoryHandle) => void
@@ -72,8 +73,17 @@ export default function ConnectScreen({ onConnected }: Props) {
   const connect = async () => {
     setError(null); setPhase('picking')
     try {
-      const handle = await pickInstall()
-      if (!handle) { setPhase('idle'); return }
+      // In Electron: use native dialog.showOpenDialog instead of
+      // the browser File System Access API picker.
+      let handle: FileSystemDirectoryHandle | null | undefined
+      if (isElectron()) {
+        const nativePath = await pickInstallPathNative()
+        if (!nativePath) { setPhase('idle'); return }
+        handle = nativePathToHandle(nativePath)
+      } else {
+        handle = await pickInstall()
+        if (!handle) { setPhase('idle'); return }
+      }
       // Auto-validate: look for CoH2/Archives under the picked folder.
       // The "scanning" phase shows the animated dots so the user sees the
       // app actually doing something before bouncing back to the editor.

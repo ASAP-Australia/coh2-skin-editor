@@ -6,7 +6,9 @@ import path from 'node:path'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
-  base: '/coh2-skin-editor/',  // GitHub Pages subpath
+  // In Electron we need base: '/'; for GitHub Pages we need '/coh2-skin-editor/'.
+  // ELECTRON_BUILD env var is set by the electron:build script.
+  base: process.env.ELECTRON_BUILD ? '/' : '/coh2-skin-editor/',
   build: {
     // Pull three.js + pako into their own chunks so the main bundle stays
     // under the 500 kB warning threshold and re-renders / hot reloads stay

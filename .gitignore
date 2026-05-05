@@ -13,3 +13,5 @@ tools/templates/*.sga
 tools/templates/signed/
 public/keys/*.sga
 public/keys/manifest.json
+dist-electron/electron/
+release/
