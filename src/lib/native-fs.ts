@@ -17,6 +17,8 @@ interface ElectronAPI {
   detectCoh2:    () => Promise<string | null>
   pickDirectory: () => Promise<string | null>
   readFile:      (p: string) => Promise<ArrayBuffer>
+  readFileRange: (p: string, start: number, length: number) => Promise<ArrayBuffer>
+  fileStat:      (p: string) => Promise<{ size: number } | null>
   listDir:       (p: string) => Promise<{ name: string; isDirectory: boolean }[]>
   fileExists:    (p: string) => Promise<boolean>
   windowMinimize: () => Promise<void>
@@ -62,6 +64,35 @@ export async function pickInstallPathNative(): Promise<string | null> {
 // Duck-typed FileSystemFileHandle backed by IPC reads
 // ---------------------------------------------------------------------------
 
+/** Build a File-shaped object whose .slice() reads only the requested range
+ *  via IPC. CoH2 archives are huge (multi-hundred MB) — without this lazy
+ *  slicing, every SgaArchive.open() would transfer the whole file across
+ *  the IPC bridge into renderer memory just to read the few KB of TOC. */
+async function makeNativeFile(filePath: string): Promise<File> {
+  const stat = await api().fileStat(filePath)
+  const size = stat?.size ?? 0
+  const name = filePath.split(/[\\/]/).pop() ?? filePath
+
+  // We can't construct a real File whose slice reads ranged bytes, so we
+  // duck-type a Blob that the SGA reader will accept (it only calls
+  // .slice(start, end).arrayBuffer()). The cast through `unknown` is
+  // intentional — the structural surface we expose matches what the
+  // consumer needs.
+  function makeBlob(start: number, end: number): Blob {
+    return {
+      size: end - start,
+      slice(s = 0, e?: number) {
+        const subEnd = e ?? (end - start)
+        return makeBlob(start + s, start + subEnd)
+      },
+      arrayBuffer: async () => api().readFileRange(filePath, start, end - start),
+    } as unknown as Blob
+  }
+
+  const blob = makeBlob(0, size)
+  return Object.assign(blob, { name }) as unknown as File
+}
+
 function makeFileHandle(filePath: string): FileSystemFileHandle {
   return {
     name: filePath.split('/').pop() ?? filePath,
@@ -69,11 +100,7 @@ function makeFileHandle(filePath: string): FileSystemFileHandle {
     isSameEntry: async () => false,
     queryPermission: async () => 'granted' as PermissionState,
     requestPermission: async () => 'granted' as PermissionState,
-    getFile: async () => {
-      const buf = await api().readFile(filePath)
-      const name = filePath.split(/[\\/]/).pop() ?? filePath
-      return new File([buf], name)
-    },
+    getFile: async () => makeNativeFile(filePath),
     createWritable: async () => { throw new Error('read-only in Electron IPC layer') },
   } as unknown as FileSystemFileHandle
 }

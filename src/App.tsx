@@ -30,7 +30,18 @@ export default function App() {
     // auto-jump into the editor. ConnectScreen still uses
     // detectInstallPath() under the hood to pre-fill the path so the
     // user just clicks Connect; they're never surprised by skipped UI.
+    //
+    // Exception: ?headless=editor lets the screenshot harness skip the
+    // gate and land in the editor. Used by HEADLESS_SCREENSHOT runs in
+    // electron/main.ts to capture the Viewport with real models.
     if (isElectron()) {
+      if (sParams.get('headless') === 'editor') {
+        import('@/lib/native-fs').then(async ({ detectInstallPath, nativePathToHandle }) => {
+          const p = await detectInstallPath()
+          if (p) setInstallRoot(nativePathToHandle(p))
+        }).finally(() => setProbing(false))
+        return
+      }
       setProbing(false)
       return
     }

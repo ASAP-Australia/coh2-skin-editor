@@ -104,6 +104,11 @@ export default function Viewport({
 
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
+  // Bumps each time a new model finishes loading, so the overlay-binding
+  // useEffect re-runs and rebinds the texture to the freshly-built materials.
+  // Without this, the binding only runs on first overlayCanvas-prop change
+  // (which happens before the first model load completes).
+  const [modelTick, setModelTick] = useState(0)
 
   // =========================================================================
   // Scene init (once)
@@ -325,8 +330,17 @@ export default function Viewport({
       try {
         const archives = await locateArchives(root)
         if (!archives) throw new Error('Archives folder not found.')
+        // Search across every Art*.sga that ships with CoH2. Vehicle meshes
+        // are usually in ArtHigh.sga but the diffuse RGTs live in faction-
+        // specific archives (Tiger/Brummbär diffuse → ArtGermanEF.sga,
+        // Sherman → ArtAEFSkins.sga, etc). Trying ArtHigh-only meant most
+        // textures never loaded.
         const sgaCandidates = [
-          'ArtHigh.sga', 'ArtArmies.sga', 'ArtHighXP1.sga', 'ArtHighXP2.sga', 'ArtAEF.sga',
+          'ArtHigh.sga', 'ArtHighXP1.sga', 'ArtHighXP2.sga',
+          'ArtArmies.sga',
+          'ArtGermanEF.sga', 'ArtSovietEF.sga',
+          'ArtAEF.sga', 'ArtAEFSkins.sga',
+          'ArtBritish.sga', 'ArtWestGerman.sga',
         ]
         let sga: SgaArchive | null = null
         let rgmBytes: Uint8Array | null = null
@@ -365,40 +379,81 @@ export default function Viewport({
             // Then prefer shorter (less likely to be a hull/turret variant)
             return a.length - b.length
           })
-        const difTset = candidates[0]
-        if (difTset) {
-          const path = difTset.replace(/\\/g, '/').toLowerCase() + '.rgt'
-          // Try the SGA that held the RGM first (most common), then fall
-          // through to every other candidate. CoH2 splits some vehicles —
-          // mesh in ArtHigh.sga, diffuse in ArtArmies.sga.
-          let rgtBytes = await sga.readByPath(path)
-          if (!rgtBytes) {
-            for (const sgaName of sgaCandidates) {
-              try {
-                const fh = await archives.getFileHandle(sgaName)
-                const file = await fh.getFile()
-                const a = await SgaArchive.open(file)
-                const b = await a.readByPath(path)
-                if (b) {
-                  console.log('[viewport] diffuse', path, '← fallback', sgaName, b.length, 'bytes')
-                  rgtBytes = b
-                  break
-                }
-              } catch {/* ignore */}
-            }
+        // Build a list of candidate paths to search.
+        // 1. Whatever the RGM's textureSets advertise (preferred — they're authoritative)
+        // 2. Hardcoded fallbacks based on vehicle.id (mirrors tools/test-export.ts).
+        //    Some vehicles have non-obvious basenames (elefant → elefant_hull etc).
+        const aliases: Record<string, string[]> = {
+          elefant: ['elefant_hull', 'elefant'],
+          ostwind_flak_panzer: ['ostwind', 'ostwind_flak_panzer'],
+          sdkfz_222: ['sdkfz221', 'sdkfz_222'],
+          panther_ausf_g: ['panther', 'panther_ausf_g'],
+          king_tiger_sdkfz_182: ['kingtiger'],
+          puma_sdkfz_234: ['puma'],
+          jagdpanzer_iv_sdkfz_162: ['jagdpanzer_iv'],
+          panzer_ii_luchs_sdkfz_123: ['luchs'],
+          panzer_iv_sdkfz_ausf_i: ['panzeriv'],
+          m4a3e8_sherman_easy_8: ['m4a3e8_sherman'],
+          m4a3_sherman_76mm: ['m4a3_sherman_76'],
+          m4a1_sherman_calliope: ['m4a1_calliope'],
+          m10_tank_destroyer: ['m10'],
+          m36_tank_destroyer: ['m36'],
+          m15a1_aa_halftrack: ['m15_aa_halftrack'],
+          sherman_firefly: ['firefly'],
+        }
+        const bases = aliases[vehicle.id] ?? [vehicle.id]
+        const dirPath = `art/armies/${vehicle.faction}/vehicles/${vehicle.id}/`
+        const tsetPaths = candidates.map(c => c.replace(/\\/g, '/').toLowerCase() + '.rgt')
+        const fallbackPaths = bases.flatMap(b => [
+          `${dirPath}${b}_dif.rgt`,
+          `${dirPath}${b}_hull_dif.rgt`,
+        ])
+        const allPaths = [...new Set([...tsetPaths, ...fallbackPaths])]
+
+        // Open archives lazily but cache them — without this we re-open every
+        // SGA (~50 MB+, TOC parse) for every path candidate, ballooning load
+        // time to 30+ s for vehicles whose diffuse isn't in the RGM's home SGA.
+        const archiveCache = new Map<string, SgaArchive>()
+        const getArchive = async (name: string): Promise<SgaArchive | null> => {
+          if (archiveCache.has(name)) return archiveCache.get(name)!
+          try {
+            const fh = await archives.getFileHandle(name)
+            const file = await fh.getFile()
+            const a = await SgaArchive.open(file)
+            archiveCache.set(name, a)
+            return a
+          } catch { return null }
+        }
+
+        let rgtBytes: Uint8Array | null = null
+        let foundPath = ''
+        // For each path, try the RGM's home SGA first, then every other.
+        outerDif: for (const tryPath of allPaths) {
+          const direct = await sga.readByPath(tryPath)
+          if (direct) { rgtBytes = direct; foundPath = `${tryPath} (rgm SGA)`; break outerDif }
+          for (const sgaName of sgaCandidates) {
+            const a = await getArchive(sgaName)
+            if (!a) continue
+            const b = await a.readByPath(tryPath)
+            if (b) { rgtBytes = b; foundPath = `${tryPath} (${sgaName})`; break outerDif }
           }
-          if (rgtBytes) {
-            try {
-              const rgt = decodeRgt(rgtBytes)
-              diffuseImage = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
-              diffuse = new THREE.CanvasTexture(diffuseImage)
-              diffuse.flipY = true
-              diffuse.colorSpace = THREE.SRGBColorSpace
-              diffuse.wrapS = diffuse.wrapT = THREE.RepeatWrapping
-              diffuse.anisotropy = 4
-            } catch {
-              try { diffuse = rgtToCompressedTexture(decodeRgt(rgtBytes)) } catch {/* ignore */}
-            }
+        }
+        if (rgtBytes) {
+          console.log('[viewport] diffuse FOUND', foundPath, rgtBytes.length, 'bytes')
+        } else {
+          console.warn('[viewport] no diffuse found; tried', allPaths.length, 'paths across', sgaCandidates.length, 'SGAs')
+        }
+        if (rgtBytes) {
+          try {
+            const rgt = decodeRgt(rgtBytes)
+            diffuseImage = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
+            diffuse = new THREE.CanvasTexture(diffuseImage)
+            diffuse.flipY = true
+            diffuse.colorSpace = THREE.SRGBColorSpace
+            diffuse.wrapS = diffuse.wrapT = THREE.RepeatWrapping
+            diffuse.anisotropy = 4
+          } catch {
+            try { diffuse = rgtToCompressedTexture(decodeRgt(rgtBytes)) } catch {/* ignore */}
           }
         }
         if (cancelled) return
@@ -435,11 +490,29 @@ export default function Viewport({
                       : intact.length > 0 ? intact
                       : model.meshes
 
+        // If the parser produced zero usable submeshes, the file uses a
+        // format variant we don't decode yet (TRIM v5 packed stride — Tiger,
+        // Churchill, M5 Stuart). Surface this clearly instead of an empty
+        // viewport so the user knows what's wrong.
+        if (visible.length === 0) {
+          throw new Error(
+            `${vehicle.displayName} uses a CoH2 mesh format the editor doesn't decode yet ` +
+            `(TRIM v5 packed-stride). The skin export pipeline still works for this vehicle — ` +
+            `pick another model from the nav for now.`
+          )
+        }
+
         for (const sub of visible) {
           const mat = new THREE.MeshStandardMaterial({
             map: diffuse,
             color: diffuse ? 0xffffff : 0x9aa18b,
             metalness: 0.05, roughness: 0.85,
+            // Cut env-map influence WAY down. With scene.environment set
+            // to the PMREM-baked Sky, default envMapIntensity=1 means the
+            // bright sky bleeds into every surface — a low-roughness tank
+            // ends up washed-out white. 0.25 gives subtle IBL ambient
+            // without drowning out the diffuse texture.
+            envMapIntensity: 0.25,
           })
           const m = new THREE.Mesh(sub.geometry, mat)
           m.name = sub.name
@@ -492,6 +565,11 @@ export default function Viewport({
 
         onPartsLoaded?.(Array.from(submeshMap.keys()))
         onModelLoaded?.(model, diffuseImage)
+        // Bump tick → triggers the overlay-binding useEffect to rebind the
+        // (possibly-fresh) overlay texture to all materials in the new mesh
+        // group. Without this rebind the model would stay on its raw diffuse
+        // texture and decals wouldn't show.
+        setModelTick(t => t + 1)
         setLoading(false)
       } catch (e: any) {
         console.error(e)
@@ -517,15 +595,27 @@ export default function Viewport({
       }
       meshGroupRef.current.traverse(o => {
         const m = o as THREE.Mesh
-        if (m.isMesh) (m.material as THREE.MeshStandardMaterial).map = overlayTexRef.current
+        if (m.isMesh) {
+          const mat = m.material as THREE.MeshStandardMaterial
+          mat.map = overlayTexRef.current
+          // needsUpdate forces Three.js to recompile the shader with the
+          // new map. Without it, materials created with no map (or a null
+          // map) keep their compiled-without-texture shader → uvs get
+          // ignored → tank renders pure white.
+          mat.needsUpdate = true
+        }
       })
     } else if (baseTextureRef.current) {
       meshGroupRef.current.traverse(o => {
         const m = o as THREE.Mesh
-        if (m.isMesh) (m.material as THREE.MeshStandardMaterial).map = baseTextureRef.current
+        if (m.isMesh) {
+          const mat = m.material as THREE.MeshStandardMaterial
+          mat.map = baseTextureRef.current
+          mat.needsUpdate = true
+        }
       })
     }
-  }, [overlayCanvas])
+  }, [overlayCanvas, modelTick])
 
   // =========================================================================
   // Selected part → explode / emissive highlight

@@ -122,8 +122,25 @@ function createWindow() {
   // ── File system reads ──────────────────────────────────────────────────
   ipcMain.handle('read-file', async (_e, filePath: string) => {
     const buf = await fs.promises.readFile(filePath)
-    // Transfer as plain Uint8Array — structuredClone-safe across IPC
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+  })
+
+  // Range read — used by the SGA reader to load TOC + individual file
+  // blobs lazily, avoiding 300+ MB IPC transfers per archive open.
+  ipcMain.handle('read-file-range', async (_e, filePath: string, start: number, length: number) => {
+    const fd = await fs.promises.open(filePath, 'r')
+    try {
+      const buf = Buffer.alloc(length)
+      const { bytesRead } = await fd.read(buf, 0, length, start)
+      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + bytesRead)
+    } finally {
+      await fd.close()
+    }
+  })
+
+  ipcMain.handle('file-stat', async (_e, filePath: string) => {
+    try { const s = await fs.promises.stat(filePath); return { size: s.size } }
+    catch { return null }
   })
 
   ipcMain.handle('list-dir', async (_e, dirPath: string) => {
@@ -143,17 +160,25 @@ function createWindow() {
   if (process.env.NODE_ENV === 'development') {
     // In dev, Vite serves under the same base path it would for GitHub
     // Pages — load the explicit URL so we don't follow a 302 first.
-    // In screenshot mode (HEADLESS_SCREENSHOT_BYPASS=1) force ConnectScreen
-    // so the WebGL Viewport doesn't mount — useful when the host has no GPU.
+    // HEADLESS_SCREENSHOT_BYPASS=1 → force ConnectScreen with no Viewport
+    // (useful when host has no GPU)
+    // HEADLESS_SCREENSHOT_EDITOR=1 → skip Connect, land in Editor with auto-
+    //   detected install (used by automated screenshot smoke tests)
     const url = process.env.HEADLESS_SCREENSHOT_BYPASS
       ? 'http://localhost:5173/coh2-skin-editor/?screenshot=1'
-      : 'http://localhost:5173/coh2-skin-editor/'
+      : process.env.HEADLESS_SCREENSHOT_EDITOR
+        ? 'http://localhost:5173/coh2-skin-editor/?headless=editor'
+        : 'http://localhost:5173/coh2-skin-editor/'
     mainWindow.loadURL(url)
     if (!process.env.HEADLESS_SCREENSHOT) {
       mainWindow.webContents.openDevTools({ mode: 'detach' })
     }
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
+    const search =
+      process.env.HEADLESS_SCREENSHOT_BYPASS ? 'screenshot=1' :
+      process.env.HEADLESS_SCREENSHOT_EDITOR ? 'headless=editor' : ''
+    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'),
+      search ? { search } : undefined)
   }
 
   // HEADLESS_SCREENSHOT=/path/to/out.png → wait for first paint, capture, quit.
