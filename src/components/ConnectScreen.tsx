@@ -87,14 +87,15 @@ export default function ConnectScreen({ onConnected }: Props) {
 
   return (
     <div className="min-h-dvh grid place-items-center px-6">
+      {/* glass-3 already supplies border + inset highlight + radius. Adding
+          the outer drop shadow on top of that gave a doubled-up "stamped"
+          ring. Now we let the utility handle the surface and add ONE soft
+          ambient drop shadow. */}
       <div
         className="relative max-w-md w-full glass-3 p-10 overflow-hidden"
         style={{
           borderRadius: 28,
-          border: '0.5px solid rgb(255 255 255 / 0.10)',
-          boxShadow:
-            '0 24px 60px -16px rgb(0 0 0 / 0.55), ' +
-            '0 1px 0 rgb(255 255 255 / 0.06) inset',
+          boxShadow: '0 30px 80px -24px rgb(0 0 0 / 0.55)',
         }}
       >
         {/* Aussie-blue ambient halo */}
@@ -192,9 +193,11 @@ export default function ConnectScreen({ onConnected }: Props) {
                     background: 'rgba(255, 255, 255, 0.06)',
                     backdropFilter: 'blur(20px) saturate(160%)',
                     WebkitBackdropFilter: 'blur(20px) saturate(160%)',
-                    boxShadow:
-                      '0 1px 0 rgb(255 255 255 / 0.18) inset, ' +
-                      '0 0 0 0.5px rgb(255 255 255 / 0.10) inset',
+                    // Single subtle inset top-edge highlight only. The
+                    // BorderBeam parent already paints the perimeter glow,
+                    // so a second inset border-line + outer halo (previous
+                    // version) read as a doubled drop shadow.
+                    boxShadow: '0 1px 0 rgb(255 255 255 / 0.14) inset',
                   }}
                 >
                   {phase === 'picking'
