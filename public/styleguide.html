@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>CoH2 Skin Editor · Design Spec</title>
+<style>
+  /* Mirror of src/index.css design tokens — keep in sync when tokens move.
+     This file lives in /public so it's served as a static asset; open
+     directly at /coh2-skin-editor/styleguide.html to inspect / share. */
+  :root {
+    --bg:        oklch(0.155 0.015 260);
+    --bg-deep:   oklch(0.115 0.013 260);
+
+    --glass-1:  rgb(15 17 22 / 0.65);
+    --glass-2:  rgb(15 17 22 / 0.72);
+    --glass-3:  rgb(15 17 22 / 0.80);
+    --tint-1:   linear-gradient(180deg, rgb(255 255 255 / 0.04), rgb(255 255 255 / 0.02));
+    --tint-2:   linear-gradient(180deg, rgb(255 255 255 / 0.06), rgb(255 255 255 / 0.03));
+    --tint-3:   linear-gradient(180deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0.04));
+
+    --stroke-1: rgb(255 255 255 / 0.06);
+    --stroke-2: rgb(255 255 255 / 0.10);
+    --stroke-3: rgb(255 255 255 / 0.18);
+
+    --text-1: oklch(0.97 0.005 260);
+    --text-2: oklch(0.78 0.010 260);
+    --text-3: oklch(0.60 0.015 260);
+
+    --accent:         oklch(0.66 0.180 45);
+    --accent-soft:    oklch(0.66 0.180 45 / 0.20);
+    --accent-strong:  oklch(0.72 0.220 45);
+    --aussie-blue:    rgb(1 33 105);
+
+    --blue:    oklch(0.70 0.180 245);
+    --green:   oklch(0.74 0.180 145);
+    --red:     oklch(0.66 0.220 25);
+    --yellow:  oklch(0.84 0.18 95);
+
+    --radius-card:  18px;
+    --radius-panel: 22px;
+    --radius-pill:  9999px;
+    --radius-input: 10px;
+
+    --shadow-glass: 0 8px 32px rgb(0 0 0 / 0.40), 0 1px 0 rgb(255 255 255 / 0.04) inset;
+    --shadow-pop:   0 24px 64px rgb(0 0 0 / 0.55), 0 1px 0 rgb(255 255 255 / 0.06) inset;
+  }
+
+  *,*::before,*::after { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: -apple-system, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+    color: var(--text-1);
+    /* Sky-shader-like gradient backdrop so glass surfaces show real blur. */
+    background:
+      radial-gradient(120% 80% at 50% -20%, oklch(0.45 0.08 245) 0%, transparent 60%),
+      linear-gradient(180deg, oklch(0.20 0.04 250) 0%, oklch(0.10 0.015 250) 100%);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 56px 32px 96px;
+  }
+  header {
+    margin-bottom: 48px;
+  }
+  h1 {
+    font-size: 36px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0 0 8px;
+  }
+  header p {
+    color: var(--text-2);
+    margin: 0;
+    font-size: 14px;
+  }
+  h2 {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin: 48px 0 16px;
+  }
+  h3 {
+    font-size: 16px;
+    font-weight: 500;
+    margin: 24px 0 12px;
+    color: var(--text-2);
+  }
+  code {
+    font-family: 'SF Mono', 'Geist Mono', ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--text-2);
+    background: rgb(255 255 255 / 0.05);
+    padding: 2px 6px;
+    border-radius: 6px;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+  .stack { display: flex; flex-direction: column; gap: 12px; }
+
+  /* === Glass utilities (mirror of src/index.css) === */
+  .glass-1 {
+    background-color: var(--glass-1);
+    background-image: var(--tint-1);
+    backdrop-filter: blur(32px) saturate(140%);
+    border: 0.5px solid var(--stroke-1);
+    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.05);
+    border-radius: var(--radius-card);
+  }
+  .glass-2 {
+    background-color: var(--glass-2);
+    background-image: var(--tint-2);
+    backdrop-filter: blur(36px) saturate(150%);
+    border: 0.5px solid var(--stroke-2);
+    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.06);
+    border-radius: var(--radius-card);
+  }
+  .glass-3 {
+    background-color: var(--glass-3);
+    background-image: var(--tint-3);
+    backdrop-filter: blur(44px) saturate(160%);
+    border: 0.5px solid var(--stroke-3);
+    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.08);
+    border-radius: var(--radius-card);
+  }
+
+  /* Color swatch tile */
+  .swatch {
+    display: flex;
+    flex-direction: column;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 0.5px solid var(--stroke-1);
+    background: var(--glass-2);
+    background-image: var(--tint-2);
+    backdrop-filter: blur(20px);
+  }
+  .swatch .chip { height: 56px; }
+  .swatch .meta { padding: 10px 12px; font-size: 11px; }
+  .swatch .meta b { color: var(--text-1); font-weight: 500; display: block; margin-bottom: 2px; }
+  .swatch .meta span { color: var(--text-3); font-family: ui-monospace, monospace; font-size: 10px; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 6px;
+    height: 36px; padding: 0 14px;
+    font-size: 13px; font-weight: 500;
+    color: var(--text-1);
+    background: rgb(255 255 255 / 0.06);
+    border: 0.5px solid rgb(255 255 255 / 0.10);
+    border-radius: var(--radius-input);
+    backdrop-filter: blur(20px) saturate(160%);
+    cursor: pointer;
+    transition: background-color 160ms ease, transform 100ms cubic-bezier(.3,0,.7,1);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.10) inset;
+  }
+  .btn:hover { background: rgb(255 255 255 / 0.10); }
+  .btn:active { transform: scale(0.96); }
+  .btn-primary {
+    background: var(--accent);
+    color: #1a1410;
+    border-color: transparent;
+  }
+  .btn-primary:hover { background: var(--accent-strong); }
+  .btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-2);
+  }
+  .btn-ghost:hover { background: rgb(255 255 255 / 0.06); color: var(--text-1); }
+  .btn-danger { background: var(--red); color: white; border-color: transparent; }
+  .pill { border-radius: var(--radius-pill); padding: 0 18px; }
+
+  /* Window controls (TitleBar) */
+  .titlebar {
+    display: inline-flex; gap: 2px;
+    background-color: rgba(20, 22, 28, 0.78);
+    backdrop-filter: blur(20px) saturate(140%);
+    border: 0.5px solid rgb(255 255 255 / 0.08);
+    border-radius: 12px;
+    padding: 2px;
+    box-shadow: var(--shadow-glass);
+  }
+  .titlebar button {
+    display: grid; place-items: center;
+    width: 36px; height: 28px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: background-color 150ms;
+  }
+  .titlebar button:hover { background: rgb(255 255 255 / 0.15); color: white; }
+  .titlebar button.close:hover { background: rgb(244 63 94 / 0.85); }
+  .titlebar svg { fill: none; stroke: currentColor; }
+
+  /* Input */
+  .input {
+    height: 36px;
+    padding: 0 12px;
+    font-size: 13px;
+    color: var(--text-1);
+    background: rgb(0 0 0 / 0.30);
+    border: 0.5px solid var(--stroke-2);
+    border-radius: var(--radius-input);
+    outline: none;
+    transition: border-color 160ms;
+  }
+  .input:focus { border-color: var(--blue); }
+  .input::placeholder { color: var(--text-3); }
+
+  /* Toggle pill (Intact / Wrecked style) */
+  .seg {
+    display: inline-flex; gap: 2px;
+    background-color: var(--glass-2);
+    background-image: var(--tint-2);
+    backdrop-filter: blur(20px);
+    border: 0.5px solid var(--stroke-2);
+    border-radius: var(--radius-pill);
+    padding: 2px;
+  }
+  .seg button {
+    height: 26px; padding: 0 12px;
+    font-size: 10px; font-weight: 500; letter-spacing: 0.05em;
+    border: none; border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--text-3);
+    cursor: pointer;
+    transition: background 150ms, color 150ms;
+  }
+  .seg button.active {
+    background: rgb(255 255 255 / 0.15);
+    color: white;
+    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.15);
+  }
+  .seg button:not(.active):hover { color: var(--text-2); }
+
+  /* Card examples */
+  .demo-card {
+    padding: 20px 22px;
+    min-width: 220px;
+  }
+  .demo-card .eyebrow {
+    font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 8px;
+  }
+  .demo-card .title {
+    font-size: 18px; font-weight: 500; margin-bottom: 4px;
+  }
+  .demo-card .body { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+
+  /* Dot indicator */
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    display: inline-block;
+  }
+
+  /* Table-style listing */
+  .listing {
+    border: 0.5px solid var(--stroke-1);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .listing .item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px;
+    font-size: 13px;
+    border-top: 0.5px solid var(--stroke-1);
+  }
+  .listing .item:first-child { border-top: none; }
+  .listing .item .label { color: var(--text-2); }
+  .listing .item .value { color: var(--text-1); font-family: ui-monospace, monospace; font-size: 11px; }
+
+  /* Status indicators */
+  .status {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 22px; padding: 0 10px;
+    font-size: 11px; font-weight: 500;
+    border-radius: var(--radius-pill);
+    background: rgb(255 255 255 / 0.06);
+    border: 0.5px solid var(--stroke-2);
+  }
+  .status.ok    { background: oklch(0.40 0.10 145 / 0.30); color: oklch(0.92 0.10 145); border-color: oklch(0.50 0.10 145 / 0.40); }
+  .status.warn  { background: oklch(0.40 0.10 80  / 0.30); color: oklch(0.92 0.10 80);  border-color: oklch(0.50 0.10 80  / 0.40); }
+  .status.error { background: oklch(0.40 0.18 25  / 0.30); color: oklch(0.92 0.10 25);  border-color: oklch(0.50 0.18 25  / 0.40); }
+  .status .led {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 6px currentColor;
+  }
+
+  /* Section subtle separator */
+  hr {
+    border: none;
+    height: 0.5px;
+    background: var(--stroke-1);
+    margin: 56px 0 0;
+  }
+
+  /* Shortcuts */
+  kbd {
+    font-family: 'SF Mono', ui-monospace, monospace;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: rgb(255 255 255 / 0.06);
+    border: 0.5px solid var(--stroke-2);
+    box-shadow: 0 0.5px 0 rgb(255 255 255 / 0.08) inset, 0 1px 0 rgb(0 0 0 / 0.30);
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>CoH2 Skin Editor — Design Spec</h1>
+  <p>Apple-style dark glassmorphism for a desktop tool. This page renders every interactive element + token in the live system. Open it at <code>/coh2-skin-editor/styleguide.html</code> on the dev server, or open the file directly in any browser.</p>
+</header>
+
+<!-- ============================================================ COLOR -->
+<h2>Color · semantic tokens</h2>
+<div class="grid">
+  <div class="swatch"><div class="chip" style="background:var(--bg)"></div>            <div class="meta"><b>App background</b><span>--bg · oklch(.155 .015 260)</span></div></div>
+  <div class="swatch"><div class="chip" style="background:var(--bg-deep)"></div>       <div class="meta"><b>Deeper bg</b><span>--bg-deep</span></div></div>
+  <div class="swatch"><div class="chip" style="background:var(--accent)"></div>        <div class="meta"><b>Accent (brigade orange)</b><span>--accent · oklch(.66 .18 45)</span></div></div>
+  <div class="swatch"><div class="chip" style="background:var(--accent-strong)"></div> <div class="meta"><b>Accent strong</b><span>--accent-strong</span></div></div>
+  <div class="swatch"><div class="chip" style="background:var(--aussie-blue)"></div>   <div class="meta"><b>ASAP / Aussie blue</b><span>--aussie-blue · rgb(1 33 105)</span></div></div>
+  <div class="swatch"><div class="chip" style="background:var(--blue)"></div>          <div class="meta"><b>Info blue</b><span>--blue</span></div></div>
+  <div class="swatch"><div class="chip" style="background:var(--green)"></div>         <div class="meta"><b>Success</b><span>--green</span></div></div>
+  <div class="swatch"><div class="chip" style="background:var(--yellow)"></div>        <div class="meta"><b>Warning</b><span>--yellow</span></div></div>
+  <div class="swatch"><div class="chip" style="background:var(--red)"></div>           <div class="meta"><b>Danger</b><span>--red</span></div></div>
+</div>
+
+<h3>Text</h3>
+<div class="grid">
+  <div class="swatch"><div class="chip" style="background:var(--text-1)"></div><div class="meta"><b>Primary</b><span>--text-1</span></div></div>
+  <div class="swatch"><div class="chip" style="background:var(--text-2)"></div><div class="meta"><b>Secondary</b><span>--text-2</span></div></div>
+  <div class="swatch"><div class="chip" style="background:var(--text-3)"></div><div class="meta"><b>Tertiary / disabled</b><span>--text-3</span></div></div>
+</div>
+
+<!-- ============================================================ GLASS -->
+<h2>Glass surfaces · layering</h2>
+<p style="font-size:13px;color:var(--text-2);margin:0 0 16px;max-width:680px;">Every surface combines a dark base + a subtle white tint. Without the dark base, surfaces "invert" to white-on-white over bright skies (Three.js Sky shader). Backdrop blur radius increases by tier so layered surfaces read as distinct depths.</p>
+<div class="grid">
+  <div class="glass-1 demo-card"><div class="eyebrow">Glass 1</div><div class="title">Hero panels</div><div class="body">Faintest surface. <code>--glass-1</code> · 32 px blur · 140% saturate</div></div>
+  <div class="glass-2 demo-card"><div class="eyebrow">Glass 2</div><div class="title">Default cards</div><div class="body">TopMenu, PackIconCard, FactionNav. <code>--glass-2</code> · 36 px blur</div></div>
+  <div class="glass-3 demo-card"><div class="eyebrow">Glass 3</div><div class="title">Hover / hero</div><div class="body">ConnectScreen card. <code>--glass-3</code> · 44 px blur · 160% saturate</div></div>
+</div>
+
+<!-- ============================================================ RADII / SHADOWS -->
+<h2>Radii · shadows</h2>
+<div class="row">
+  <div class="glass-2 demo-card" style="border-radius:var(--radius-input);min-width:160px"><div class="eyebrow">--radius-input</div><div class="body">10 px</div></div>
+  <div class="glass-2 demo-card" style="border-radius:var(--radius-card);min-width:160px"><div class="eyebrow">--radius-card</div><div class="body">18 px</div></div>
+  <div class="glass-2 demo-card" style="border-radius:var(--radius-panel);min-width:160px"><div class="eyebrow">--radius-panel</div><div class="body">22 px</div></div>
+  <div class="glass-2 demo-card" style="border-radius:var(--radius-pill);min-width:200px"><div class="eyebrow">--radius-pill</div><div class="body">9999 px</div></div>
+</div>
+<div class="row" style="margin-top:16px">
+  <div class="glass-2 demo-card" style="box-shadow:var(--shadow-glass);min-width:200px"><div class="eyebrow">--shadow-glass</div><div class="body">Standard surface lift</div></div>
+  <div class="glass-2 demo-card" style="box-shadow:var(--shadow-pop);min-width:200px"><div class="eyebrow">--shadow-pop</div><div class="body">Floating menus / popovers</div></div>
+</div>
+
+<!-- ============================================================ BUTTONS -->
+<h2>Buttons</h2>
+<h3>Variants</h3>
+<div class="row">
+  <button class="btn">Default</button>
+  <button class="btn btn-primary">Primary</button>
+  <button class="btn btn-ghost">Ghost</button>
+  <button class="btn btn-danger">Danger</button>
+  <button class="btn pill">Pill</button>
+  <button class="btn" disabled style="opacity:.4;cursor:not-allowed">Disabled</button>
+</div>
+
+<h3>Sizes</h3>
+<div class="row" style="align-items:center">
+  <button class="btn" style="height:24px;padding:0 8px;font-size:11px">XS</button>
+  <button class="btn" style="height:30px;padding:0 12px;font-size:12px">SM</button>
+  <button class="btn">MD (default)</button>
+  <button class="btn" style="height:44px;padding:0 18px;font-size:14px;font-weight:600">LG</button>
+</div>
+
+<h3>Window controls (TitleBar) — Linux/Windows order</h3>
+<p style="font-size:12px;color:var(--text-3);margin:0 0 12px">Distinct from macOS traffic-lights. Rectangular glass chips with always-visible glyphs. Close gets a red wash on hover.</p>
+<div class="titlebar">
+  <button title="Minimize"><svg width="12" height="12" viewBox="0 0 12 12" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 6 H9.5"/></svg></button>
+  <button title="Maximize"><svg width="11" height="11" viewBox="0 0 12 12" stroke-width="1.3"><rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1.2"/></svg></button>
+  <button class="close" title="Close"><svg width="11" height="11" viewBox="0 0 12 12" stroke-width="1.5" stroke-linecap="round"><path d="M3 3 L9 9 M9 3 L3 9"/></svg></button>
+</div>
+
+<!-- ============================================================ INPUTS -->
+<h2>Inputs</h2>
+<div class="row">
+  <input class="input" placeholder="Pack name" />
+  <input class="input" value="Editor Test Pack" />
+  <input class="input" placeholder="Disabled" disabled style="opacity:.4" />
+</div>
+
+<h3>Segmented (Intact / Wrecked)</h3>
+<div class="seg">
+  <button class="active">Intact</button>
+  <button>Wrecked</button>
+</div>
+
+<!-- ============================================================ STATUS -->
+<h2>Status indicators</h2>
+<div class="row">
+  <span class="status ok"><span class="led"></span>Connected</span>
+  <span class="status warn"><span class="led"></span>Loading model…</span>
+  <span class="status error"><span class="led"></span>Tiger RGM unsupported</span>
+  <span class="status">Auto-saved · 7 s ago</span>
+</div>
+
+<!-- ============================================================ DATA LISTING -->
+<h2>Listing (project metadata)</h2>
+<div class="glass-1 listing" style="max-width:520px">
+  <div class="item"><span class="label">Pack name</span><span class="value">Editor Test Pack</span></div>
+  <div class="item"><span class="label">Author</span><span class="value">Anonymous</span></div>
+  <div class="item"><span class="label">Vehicles edited</span><span class="value">44</span></div>
+  <div class="item"><span class="label">Total decals</span><span class="value">312</span></div>
+  <div class="item"><span class="label">Last modified</span><span class="value">2026-05-05 18:54</span></div>
+</div>
+
+<!-- ============================================================ KBD -->
+<h2>Keyboard hints</h2>
+<div class="row">
+  <span><kbd>F</kbd> focus mode</span>
+  <span><kbd>Esc</kbd> close menus</span>
+  <span><kbd>⌘</kbd> + <kbd>S</kbd> save .coh2skin</span>
+  <span><kbd>Del</kbd> remove decal</span>
+  <span><kbd>Drop</kbd> image on viewport to import</span>
+</div>
+
+<!-- ============================================================ MOTION -->
+<h2>Motion</h2>
+<div class="row" style="align-items:center;gap:24px;font-size:12px;color:var(--text-2)">
+  <div><b style="display:block;color:var(--text-1);margin-bottom:4px">Press</b>scale .96 · 100 ms · cubic-bezier(.3,0,.7,1)</div>
+  <div><b style="display:block;color:var(--text-1);margin-bottom:4px">Spring bounce</b>scale .95 → 1 · 240 ms · cubic-bezier(.4,1.6,.5,1)</div>
+  <div><b style="display:block;color:var(--text-1);margin-bottom:4px">Hover bg</b>160 ms ease-out</div>
+  <div><b style="display:block;color:var(--text-1);margin-bottom:4px">Chrome fade</b>4 s idle → 35 % opacity · 300 ms</div>
+</div>
+
+<hr />
+
+<!-- ============================================================ COMPONENTS LOG -->
+<h2>Components log</h2>
+<p style="font-size:12px;color:var(--text-3);max-width:680px;line-height:1.6">Append a row whenever a new interactive component lands in the codebase. Dates in ISO format. Linked to the React file that owns it.</p>
+<div class="glass-1 listing" style="max-width:760px">
+  <div class="item"><span class="label">TitleBar</span><span class="value">2026-05-05 · src/components/TitleBar.tsx</span></div>
+  <div class="item"><span class="label">ConnectScreen</span><span class="value">2026-04 · src/components/ConnectScreen.tsx</span></div>
+  <div class="item"><span class="label">Editor</span><span class="value">2026-04 · src/components/Editor.tsx</span></div>
+  <div class="item"><span class="label">Viewport (Three.js + Sky shader)</span><span class="value">2026-05-05 · src/components/Viewport.tsx</span></div>
+  <div class="item"><span class="label">TopMenu</span><span class="value">2026-04 · src/components/TopMenu.tsx</span></div>
+  <div class="item"><span class="label">FactionNav</span><span class="value">2026-04 · src/components/FactionNav.tsx</span></div>
+  <div class="item"><span class="label">PackIconCard</span><span class="value">2026-04 · src/components/PackIconCard.tsx</span></div>
+  <div class="item"><span class="label">ImageLibrary</span><span class="value">2026-04 · src/components/ImageLibrary.tsx</span></div>
+  <div class="item"><span class="label">Toasts</span><span class="value">2026-04 · src/components/Toasts.tsx</span></div>
+  <div class="item"><span class="label">BorderBeam (ocean variant)</span><span class="value">2026-04 · src/components/ui/border-beam.tsx</span></div>
+</div>
+
+<p style="margin-top:48px;font-size:11px;color:var(--text-3);text-align:center">CoH2 Skin Editor · ASAP Australia · this page reflects <code>src/index.css</code> tokens at the time it was last updated.</p>
+
+</main>
+</body>
+</html>
