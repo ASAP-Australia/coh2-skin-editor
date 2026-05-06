@@ -80,11 +80,17 @@ export function parseRgm(buf: ArrayBuffer | Uint8Array): RgmModel {
         return  // Unknown variant — skip silently
       }
       const geo = buildGeometry(payload)
-      meshes.push({
-        name: parentName || node.name,
-        geometry: geo,
-        materialName: payload.materialName,
-      })
+
+      // Only add meshes with actual geometry (skip empty/degenerate meshes)
+      if (geo.attributes.position && (geo.attributes.position as THREE.BufferAttribute).count > 0) {
+        meshes.push({
+          name: parentName || node.name,
+          geometry: geo,
+          materialName: payload.materialName,
+        })
+      } else {
+        console.warn('[rgm] skipping degenerate mesh (no vertices)', node.name || parentName)
+      }
     } catch (err) {
       // Bad / unsupported submesh — log and continue so the rest of the model still loads
       console.warn('[rgm] skipping submesh', node.name || parentName, err)
@@ -252,9 +258,39 @@ function parseMrgmDataV8(u8: Uint8Array, chunk: Chunk): ParsedMeshData {
  *  vertex_stride, vertex_buffer, num_indices, u16[num_indices], ... */
 function parseTrimDataV5(u8: Uint8Array, chunk: Chunk): ParsedMeshData {
   const r = new Reader(u8, chunk.payloadOffset)
-  r.skip(4)  // u32 = 5 (header marker)
-  r.skip(4)  // u32 = 0 (reserved?)
+
+  // Diagnostic: dump first 32 bytes of the DATA chunk in hex
+  const diagHex: string[] = []
+  for (let i = 0; i < Math.min(32, chunk.payloadSize); i += 4) {
+    const val = new DataView(u8.buffer, u8.byteOffset + chunk.payloadOffset + i, 4).getUint32(0, true)
+    diagHex.push(`${val.toString(16).padStart(8, '0')}`)
+  }
+  console.log('[TRIM v5] payload hex:', diagHex.join(' '))
+
+  const v1 = r.u32()  // u32 = 5 (header marker)
+  const v2 = r.u32()  // u32 = 0 (reserved?)
   const numInput = r.u32()
+
+  // Diagnostic: log header values
+  if (v1 !== 5 || v2 !== 0 || numInput > 100) {
+    console.warn(`[TRIM v5] Unusual header: v1=${v1} (expected 5), v2=${v2} (expected 0), numInput=${numInput}`)
+  }
+
+  // Sanity check: if numInput looks wrong, we might have a format variant
+  if (numInput === 0 || numInput > 100) {
+    console.warn(`[TRIM v5] Suspicious numInput=${numInput}, might be a format variant. Attempting fallback...`)
+    // For now, treat as unsupported variant
+    return {
+      inputLayout: [],
+      vertexStride: 0,
+      vertexCount: 0,
+      vertexBuffer: new Uint8Array(0),
+      indices: new Uint16Array(0),
+      groups: [],
+      materialName: null,
+    }
+  }
+
   const inputLayout: InputElt[] = []
   for (let i = 0; i < numInput; i++) {
     const semantic = r.u32()
@@ -265,11 +301,18 @@ function parseTrimDataV5(u8: Uint8Array, chunk: Chunk): ParsedMeshData {
   const numVerts = r.u32()
   const stride = r.u32()
   const computedStride = inputLayout.reduce((s, e) => s + e.size, 0)
+
+  console.log(`[TRIM v5] numInput=${numInput}, numVerts=${numVerts}, stride=${stride}, computed=${computedStride}`)
+
   if (stride !== computedStride) {
-    throw new Error(`TRIM v5 stride mismatch: stored=${stride}, computed=${computedStride}`)
+    console.warn(`[TRIM v5] stride mismatch: stored=${stride}, computed=${computedStride}`)
+    // Don't throw - try to continue with the stored stride
   }
   const vbuf = r.bytes(numVerts * stride)
   const numIdx = r.u32()
+
+  console.log(`[TRIM v5] numIndices=${numIdx}`)
+
   const indices = new Uint16Array(numIdx)
   for (let k = 0; k < numIdx; k++) indices[k] = r.u16()
 
@@ -292,6 +335,11 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
   const positions = new Float32Array(p.vertexCount * 3)
   let normals: Float32Array | null = null
   let uvs: Float32Array | null = null
+
+  // Diagnostic: check if we have any data to work with
+  if (p.vertexCount === 0 || p.indices.length === 0) {
+    console.warn(`[buildGeometry] Empty mesh: ${p.vertexCount} vertices, ${p.indices.length} indices`)
+  }
 
   // Compute per-element offset within stride
   let cursor = 0
@@ -328,15 +376,18 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
           break
         case SEMANTIC.TEXCOORD0:
           if (!uvs) uvs = new Float32Array(p.vertexCount * 2)
+          // Canonical D3D→GL UV conversion per MODEL_EXTRACTION.md §3:
+          // flip V at parse time (`v = 1 - v`). Combined with flipY=true
+          // on the CanvasTexture, the unwrap reads correctly against a
+          // top-down canvas. The decal painter (Editor.tsx) and raycast
+          // UV picking both assume this convention.
           if (elt.format === 3) {
             uvs[v * 2 + 0] = view.getFloat32(o,     true)
-            uvs[v * 2 + 1] = 1 - view.getFloat32(o + 4, true)  // V flip (D3D→GL)
+            uvs[v * 2 + 1] = 1 - view.getFloat32(o + 4, true)
           } else if (elt.format === 2) {
-            // 4 bytes — likely R16G16_FLOAT (half-floats)
-            const u = halfToFloat(view.getUint16(o,     true))
-            const vv = halfToFloat(view.getUint16(o + 2, true))
-            uvs[v * 2 + 0] = u
-            uvs[v * 2 + 1] = 1 - vv
+            // 4 bytes — R16G16_FLOAT (half-floats)
+            uvs[v * 2 + 0] = halfToFloat(view.getUint16(o,     true))
+            uvs[v * 2 + 1] = 1 - halfToFloat(view.getUint16(o + 2, true))
           }
           break
       }
@@ -352,10 +403,25 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
   }
 
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  if (normals) geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
-  else         geo.computeVertexNormals()
+  if (normals) {
+    // Sanity check: if more than 5% of normals are degenerate (length < 0.1),
+    // the encoded normals are unreliable for this submesh — likely a packed
+    // format we don't understand. Skip them so they get recomputed below.
+    let bad = 0
+    const total = normals.length / 3
+    for (let i = 0; i < normals.length; i += 3) {
+      const lenSq = normals[i]*normals[i] + normals[i+1]*normals[i+1] + normals[i+2]*normals[i+2]
+      if (lenSq < 0.01) bad++
+    }
+    if (bad / total < 0.05) {
+      geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+    }
+  }
   if (uvs)     geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
   geo.setIndex(new THREE.BufferAttribute(flipped, 1))
+  // If we don't have valid normals (no normals attribute, or thrown out
+  // above as degenerate), recompute geometrically — must be after index is set.
+  if (!geo.getAttribute('normal')) geo.computeVertexNormals()
 
   // Re-apply per-Object groups so callers can render with multi-material later
   for (let g = 0; g < p.groups.length; g++) {
