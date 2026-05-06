@@ -71,7 +71,7 @@ export default function TopMenu(p: Props) {
   const activeDecal = p.activeDecalId != null ? veh.decals.find(d => d.id === p.activeDecalId) ?? null : null
 
   return (
-    <div ref={wrapRef} className="top-menu-wrap absolute top-4 left-4 z-20 flex flex-col gap-2 items-start">
+    <div ref={wrapRef} className="top-menu-wrap absolute top-2 left-2 z-20 flex flex-col gap-2 items-start">
       {/* Brand pill + menu buttons row */}
       <div className="glass-2 rounded-2xl px-3 py-2 flex items-center gap-2 shadow-[var(--shadow-glass)]">
         <div className="pr-2 mr-1 border-r border-white/10 leading-tight">

@@ -98,8 +98,11 @@ export default function Viewport({
     // space and the result appears significantly darker than the source textures.
     renderer.outputColorSpace = THREE.SRGBColorSpace
     // Mild ACES filmic tone map keeps bright highlights from clipping.
+    // Bumped exposure 1.2→1.6 — Electron's Chromium renders darker than
+    // dev Chrome with the same lighting; this pushes mid-tones up so the
+    // model reads as well-lit instead of murky.
     renderer.toneMapping = THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure = 1.2
+    renderer.toneMappingExposure = 1.6
     const scene = new THREE.Scene()
     // Dark studio backdrop — near-black, slight cool tint. Replaces the
     // Three.Sky atmospheric shader which was bleeding bright sky into the
@@ -122,28 +125,30 @@ export default function Viewport({
     // form a 3-point: key (warm front-right), fill (cool front-left), rim
     // (cool back). No env map, no PMREM — keeps materials reading their
     // diffuse + normal maps cleanly without sky-tint washout.
-    // Hemisphere provides the sky/ground ambient fill. The sky colour is a
-    // cool blue-grey (overcast European sky), the ground colour is a warm
-    // olive to simulate light bouncing off grass/earth. Relatively bright so
-    // the shadow side of the tank never goes full-black.
-    const ambient = new THREE.HemisphereLight(0xb0c0d0, 0x504030, 0.80)
+    // Lighting from SESSION_HANDOFF.md — the exact values that rendered
+    // correctly in the web app. These are a 3-point studio setup:
+    //   • Hemisphere: cool sky / dim warm-ground ambient fill
+    //   • Key:  warm DirectionalLight front-right  (main source)
+    //   • Fill: cool DirectionalLight front-left   (lifts shadows)
+    //   • Rim:  cool DirectionalLight back          (separation)
+    // No env-map / PMREM — those washed diffuse tones to white.
+    // Hemisphere intensity bumped 0.50→0.85 so shadow-side faces have lift
+    // instead of falling to near-black under ACES tone mapping.
+    const ambient = new THREE.HemisphereLight(0xa0b0c8, 0x303030, 0.85)
     ambientRef.current = ambient as unknown as THREE.AmbientLight
     scene.add(ambient)
 
-    // Key light — warm front-right, simulates European afternoon sun.
-    const sun = new THREE.DirectionalLight(0xfff4e0, 1.40)
+    const sun = new THREE.DirectionalLight(0xfff1d6, 1.45)
     sun.position.set(5, 8, 5)
     sunRef.current = sun
     scene.add(sun)
 
-    // Fill light — cool front-left, lifts the shadow-side faces.
     const fill = new THREE.DirectionalLight(0x90a8c8, 0.65)
     fill.position.set(-6, 4, -3)
     fillRef.current = fill
     scene.add(fill)
 
-    // Rim / back light — separates the tank from the dark background.
-    const rim = new THREE.DirectionalLight(0xb0c4e0, 0.70)
+    const rim = new THREE.DirectionalLight(0xb0c4d8, 0.75)
     rim.position.set(-2, 2, -8)
     scene.add(rim)
 
@@ -223,8 +228,8 @@ export default function Viewport({
       if (groundMatRef.current) groundMatRef.current.color.setHex(0x9aabb8) // snowy pale
       sceneRef.current.background = new THREE.Color(0x0d1016)  // slightly cooler dark
     } else {
-      sunRef.current.color.setHex(0xfff4e0)   // warm summer key
-      sunRef.current.intensity = 1.40
+      sunRef.current.color.setHex(0xfff1d6)   // warm summer key
+      sunRef.current.intensity = 1.45
       fillRef.current.color.setHex(0x90a8c8)  // cool fill
       fillRef.current.intensity = 0.65
       if (groundMatRef.current) groundMatRef.current.color.setHex(0x1c1e22) // dark earth
@@ -351,29 +356,42 @@ export default function Viewport({
         //    Some vehicles have non-obvious basenames (elefant → elefant_hull etc).
         const aliases: Record<string, string[]> = {
           elefant: ['elefant_hull', 'elefant'],
-          ostwind_flak_panzer: ['ostwind', 'ostwind_flak_panzer'],
-          sdkfz_222: ['sdkfz221', 'sdkfz_222'],
-          panther_ausf_g: ['panther', 'panther_ausf_g'],
-          king_tiger_sdkfz_182: ['kingtiger'],
-          puma_sdkfz_234: ['puma'],
-          jagdpanzer_iv_sdkfz_162: ['jagdpanzer_iv'],
-          panzer_ii_luchs_sdkfz_123: ['luchs'],
-          panzer_iv_sdkfz_ausf_i: ['panzeriv'],
-          m4a3e8_sherman_easy_8: ['m4a3e8_sherman'],
-          m4a3_sherman_76mm: ['m4a3_sherman_76'],
-          m4a1_sherman_calliope: ['m4a1_calliope'],
-          m10_tank_destroyer: ['m10'],
-          m36_tank_destroyer: ['m36'],
-          m15a1_aa_halftrack: ['m15_aa_halftrack'],
-          sherman_firefly: ['firefly'],
+          ostwind_flak_panzer: ['ostwind_flak_panzer', 'ostwind', 'ostwind_flakpanzer'],
+          sdkfz_222: ['sdkfz_222', 'sdkfz222', 'sdkfz221'],
+          panther_ausf_g: ['panther', 'panther_ausf_g', 'pzkpfw_v_panther'],
+          king_tiger_sdkfz_182: ['kingtiger', 'king_tiger', 'tiger_ii'],
+          puma_sdkfz_234: ['puma', 'sdkfz_234', 'sdkfz234_puma'],
+          jagdpanzer_iv_sdkfz_162: ['jagdpanzer_iv', 'jagdpanzeriv', 'jagdpanzer'],
+          panzer_ii_luchs_sdkfz_123: ['luchs', 'panzer_ii_luchs', 'pzkpfw_ii'],
+          panzer_iv_sdkfz_ausf_i: ['panzeriv', 'panzer_iv', 'pzkpfw_iv'],
+          hetzer: ['hetzer', 'jagdpanzer_38t', 'jagdpanzer_38'],
+          jagdtiger: ['jagdtiger'],
+          sturmtiger: ['sturmtiger', 'sturmpanzer'],
+          tiger: ['tiger', 'tiger_i', 'pzkpfw_vi_tiger'],
+          brummbar: ['brummbar', 'sturmpanzer_iv'],
+          kubelwagen: ['kubelwagen', 'kuebelwagen'],
+          m4a3e8_sherman_easy_8: ['m4a3e8_sherman', 'm4a3e8', 'sherman_easy_8'],
+          m4a3_sherman_76mm: ['m4a3_sherman_76', 'm4a3_76mm', 'sherman_76mm'],
+          m4a1_sherman_calliope: ['m4a1_calliope', 'm4a1_sherman', 'sherman_calliope'],
+          m10_tank_destroyer: ['m10', 'm10_wolverine'],
+          m36_tank_destroyer: ['m36', 'm36_jackson'],
+          m15a1_aa_halftrack: ['m15_aa_halftrack', 'm15a1', 'm16_halftrack'],
+          sherman_firefly: ['firefly', 'sherman_firefly', 'sherman_vc'],
         }
         const bases = aliases[vehicle.id] ?? [vehicle.id]
-        const dirPath = `art/armies/${vehicle.faction}/vehicles/${vehicle.id}/`
+        // Try both vehicle.id and each alias as the folder name — CoH2's SGA
+        // layout isn't consistent (puma_sdkfz_234/puma_dif vs puma/puma_dif).
+        const dirCandidates = [vehicle.id, ...bases].map(d =>
+          `art/armies/${vehicle.faction}/vehicles/${d}/`
+        )
         const tsetPaths = candidates.map(c => c.replace(/\\/g, '/').toLowerCase() + '.rgt')
-        const fallbackPaths = bases.flatMap(b => [
-          `${dirPath}${b}_dif.rgt`,
-          `${dirPath}${b}_hull_dif.rgt`,
-        ])
+        const fallbackPaths = dirCandidates.flatMap(dirPath =>
+          bases.flatMap(b => [
+            `${dirPath}${b}_dif.rgt`,
+            `${dirPath}${b}_hull_dif.rgt`,
+            `${dirPath}${b}_default_dif.rgt`,
+          ])
+        )
         const allPaths = [...new Set([...tsetPaths, ...fallbackPaths])]
 
         // Open archives lazily but cache them — without this we re-open every
@@ -414,6 +432,11 @@ export default function Viewport({
             const rgt = decodeRgt(rgtBytes)
             diffuseImage = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
             diffuse = new THREE.CanvasTexture(diffuseImage)
+            // flipY=true is the third leg of the canonical 3-flip identity
+            // (see MODEL_EXTRACTION.md §7). Parser flips V at decode time;
+            // CanvasTexture's flipY=true uploads the canvas right-side-up
+            // for GL; sampling with the flipped UVs lands on the correct
+            // texel on a top-down decoded canvas.
             diffuse.flipY = true
             diffuse.colorSpace = THREE.SRGBColorSpace
             diffuse.wrapS = diffuse.wrapT = THREE.RepeatWrapping
@@ -429,12 +452,15 @@ export default function Viewport({
         // path across every cached SGA. Normal maps are stored in linear
         // space (NOT sRGB), and we set normalScale below.
         let normalTex: THREE.Texture | null = null
-        const nrmFallbackPaths = bases.flatMap(b => [
-          `${dirPath}${b}_nrm.rgt`,
-          `${dirPath}${b}_hull_nrm.rgt`,
-          `${dirPath}${b}_norm.rgt`,
-          `${dirPath}${b}_n.rgt`,
-        ])
+        const nrmFallbackPaths = dirCandidates.flatMap(dirPath =>
+          bases.flatMap(b => [
+            `${dirPath}${b}_nrm.rgt`,
+            `${dirPath}${b}_hull_nrm.rgt`,
+            `${dirPath}${b}_norm.rgt`,
+            `${dirPath}${b}_n.rgt`,
+            `${dirPath}${b}_default_nrm.rgt`,
+          ])
+        )
         // Filter destroyed/wreck variants — same patterns as the diffuse
         // ranker so we don't accidentally bind the wrecked normal to the
         // intact hull (which produces inverted shading on visible panels).
@@ -516,16 +542,139 @@ export default function Viewport({
           )
         }
 
+        // ── Per-submesh texture binding ────────────────────────────────
+        // Each submesh's MaterialName resolves to an MTRL chunk whose params
+        // list the textures THAT submesh expects. The body atlas is the
+        // common case; tracks reference a separate `*_track_dif.rgt` (a
+        // small tiling tread tile) and skirts/wheels can reference yet
+        // another atlas. Without this, every submesh got the body atlas →
+        // tracks rendered the entire hull texture stretched across them.
+        const texCache = new Map<string, { diffuse: THREE.Texture | null; normal: THREE.Texture | null }>()
+        // Pre-seed the cache with the body diffuse + normal we already loaded.
+        if (diffuse) {
+          texCache.set('__body__', { diffuse, normal: normalTex })
+        }
+        const resolveRgtPath = async (rawPath: string): Promise<Uint8Array | null> => {
+          // Material params come Windows-style with backslashes, no extension.
+          const norm = rawPath.replace(/\\/g, '/').toLowerCase()
+          const candidate = norm.endsWith('.rgt') ? norm : `${norm}.rgt`
+          const direct = await sga!.readByPath(candidate)
+          if (direct) return direct
+          for (const sgaName of sgaCandidates) {
+            const a = await getArchive(sgaName)
+            if (!a) continue
+            const b = await a.readByPath(candidate)
+            if (b) return b
+          }
+          return null
+        }
+        const decodeTextureBytes = (
+          bytes: Uint8Array,
+          isNormal: boolean,
+        ): THREE.Texture | null => {
+          try {
+            const rgt = decodeRgt(bytes)
+            const cv = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
+            const t = new THREE.CanvasTexture(cv)
+            t.flipY = true
+            t.colorSpace = isNormal ? THREE.NoColorSpace : THREE.SRGBColorSpace
+            t.wrapS = t.wrapT = THREE.RepeatWrapping
+            t.anisotropy = 4
+            return t
+          } catch { return null }
+        }
+        // CoH2 MTRL chunks don't expose texture-path params via our parser
+        // (`params: []` in real captures), so we derive the per-material
+        // textures from the model's textureSets by name-matching the
+        // material's distinguishing token.
+        //
+        //   material `sturmtiger`     → first textureSet ending `_dif` not in `_wreck_` / `_tread_`
+        //   material `tread_left/...` → first textureSet matching `*_tread_dif`
+        //   material `*_wreck`        → first textureSet matching `*_wreck_dif`
+        //
+        // This is robust to the various CoH2 naming conventions because
+        // the textureSets list is authoritative — it's literally what the
+        // game ships.
+        const tsetsLower = model.textureSets.map(t => t.replace(/\\/g, '/').toLowerCase())
+        const findTset = (predicate: (path: string) => boolean): string | null => {
+          for (const t of tsetsLower) if (predicate(t)) return t
+          return null
+        }
+        const tokenFor = (mat: string): string => {
+          // Pull the distinguishing token from a material name.
+          if (/wreck/.test(mat))     return 'wreck'
+          if (/tread|track/.test(mat)) return 'tread'
+          // Body / default — let the matcher pick the plain `*_dif` not
+          // qualified by `_tread_` / `_wreck_`.
+          return ''
+        }
+        const getTexturesForMaterial = async (
+          materialName: string | null,
+        ): Promise<{ diffuse: THREE.Texture | null; normal: THREE.Texture | null }> => {
+          const cacheKey = materialName ?? '__body__'
+          if (texCache.has(cacheKey)) return texCache.get(cacheKey)!
+          const token = materialName ? tokenFor(materialName) : ''
+          let difPath: string | null = null
+          let nrmPath: string | null = null
+          if (token) {
+            difPath = findTset(p => p.includes(`_${token}_`) && /_dif$/.test(p))
+            nrmPath = findTset(p => p.includes(`_${token}_`) && /_nrm$|_norm$/.test(p))
+          } else {
+            // Body: pick a `_dif` that's NOT wreck/tread-qualified, prefer
+            // ones whose basename matches the vehicle id.
+            const isBody = (p: string) => /_dif$/.test(p) && !/_wreck_|_tread_|_track_|\/badges\//.test(p)
+            difPath = findTset(p => isBody(p) && p.includes(vehicle.id.toLowerCase()))
+                   ?? findTset(isBody)
+            const isBodyNrm = (p: string) =>
+              (/_nrm$|_norm$/.test(p)) && !/_wreck_|_tread_|_track_|\/badges\//.test(p)
+            nrmPath = findTset(p => isBodyNrm(p) && p.includes(vehicle.id.toLowerCase()))
+                   ?? findTset(isBodyNrm)
+          }
+          let dTex: THREE.Texture | null = null
+          let nTex: THREE.Texture | null = null
+          if (difPath) {
+            const b = await resolveRgtPath(difPath)
+            if (b) dTex = decodeTextureBytes(b, false)
+          }
+          if (nrmPath) {
+            const b = await resolveRgtPath(nrmPath)
+            if (b) nTex = decodeTextureBytes(b, true)
+          }
+          // Fall back to body atlas if this material didn't resolve a
+          // diffuse — better than rendering pure black.
+          const result = {
+            diffuse: dTex ?? texCache.get('__body__')?.diffuse ?? null,
+            normal:  nTex ?? texCache.get('__body__')?.normal  ?? null,
+          }
+          texCache.set(cacheKey, result)
+          return result
+        }
+
+        const isBodyMaterial = (mn: string | null): boolean => {
+          if (!mn) return true  // null materialName → assume body
+          return tokenFor(mn) === ''
+        }
         for (const sub of visible) {
+          const tex = await getTexturesForMaterial(sub.materialName)
+          if (cancelled) return
+          const subDiffuse = tex.diffuse
+          const subNormal  = tex.normal
           const mat = new THREE.MeshStandardMaterial({
-            map: diffuse,
-            normalMap: normalTex,
-            color: diffuse ? 0xffffff : 0x9aa18b,
+            map: subDiffuse,
+            normalMap: subNormal,
+            color: subDiffuse ? 0xffffff : 0x9aa18b,
             metalness: 0.05, roughness: 0.85,
+            // CoH2 RGM submeshes have inconsistent winding — some panels
+            // (Puma turret, Panther skirts) end up with their normals
+            // facing inwards, rendering as solid black. DoubleSide makes
+            // both faces lit, masking the broken winding.
+            side: THREE.DoubleSide,
           })
-          // Mild normal-map intensity so panel-line/rivet detail reads
-          // without going CGI-rough.
-          if (normalTex) mat.normalScale = new THREE.Vector2(1.0, 1.0)
+          if (subNormal) mat.normalScale = new THREE.Vector2(1.0, 1.0)
+          // Mark whether this submesh uses the BODY diffuse — only those
+          // get the editable overlay rebound onto them. Tracks/wheels/wrecks
+          // keep their own (non-editable) tile/wreck textures.
+          ;(mat as any).__usesBodyDiffuse = isBodyMaterial(sub.materialName)
           const m = new THREE.Mesh(sub.geometry, mat)
           m.name = sub.name
           group.add(m)
@@ -606,6 +755,9 @@ export default function Viewport({
     if (overlayCanvas) {
       if (!overlayTexRef.current) {
         overlayTexRef.current = new THREE.CanvasTexture(overlayCanvas)
+        // Same canonical flipY=true as the diffuse — keeps the unwrap
+        // identity in §7 of MODEL_EXTRACTION.md intact through the
+        // overlay-compositing path.
         overlayTexRef.current.flipY = true
         overlayTexRef.current.colorSpace = THREE.SRGBColorSpace
         overlayTexRef.current.wrapS = overlayTexRef.current.wrapT = THREE.RepeatWrapping
@@ -614,12 +766,13 @@ export default function Viewport({
         const m = o as THREE.Mesh
         if (m.isMesh) {
           const mat = m.material as THREE.MeshStandardMaterial
-          mat.map = overlayTexRef.current
-          // needsUpdate forces Three.js to recompile the shader with the
-          // new map. Without it, materials created with no map (or a null
-          // map) keep their compiled-without-texture shader → uvs get
-          // ignored → tank renders pure white.
-          mat.needsUpdate = true
+          // Only rebind the editable overlay onto submeshes that use the
+          // BODY diffuse. Tracks/wheels keep their own (tile) textures so
+          // we don't smear the hull atlas across treads.
+          if ((mat as any).__usesBodyDiffuse) {
+            mat.map = overlayTexRef.current
+            mat.needsUpdate = true
+          }
         }
       })
     } else if (baseTextureRef.current) {
@@ -627,8 +780,10 @@ export default function Viewport({
         const m = o as THREE.Mesh
         if (m.isMesh) {
           const mat = m.material as THREE.MeshStandardMaterial
-          mat.map = baseTextureRef.current
-          mat.needsUpdate = true
+          if ((mat as any).__usesBodyDiffuse) {
+            mat.map = baseTextureRef.current
+            mat.needsUpdate = true
+          }
         }
       })
     }

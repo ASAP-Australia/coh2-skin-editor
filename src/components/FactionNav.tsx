@@ -34,10 +34,68 @@ export default function FactionNav({ project, currentId, onPick }: Props) {
     v.faction === f && (project.vehicles[v.id]?.decals?.length ?? 0) > 0)
 
   return (
-    <div className="absolute bottom-4 left-4 right-4 z-10 glass-2 rounded-2xl shadow-[var(--shadow-glass)]
-                    flex items-stretch gap-1 px-2 py-2 max-w-full">
-      {/* Faction tabs */}
-      <div className="flex items-stretch gap-0.5 pr-2 mr-1 border-r border-white/10 shrink-0">
+    <>
+      {/* Vehicle pills — floating glass pill centered ABOVE the faction bar.
+          Appears for the active faction. Apple Control Center / Dock styling:
+          heavy blur, subtle inner highlight, 1px hairline border. */}
+      <div
+        className="absolute left-1/2 -translate-x-1/2 z-10 max-w-[min(92vw,960px)]
+                   rounded-2xl shadow-[var(--shadow-glass)] px-2 py-1.5"
+        style={{
+          bottom: 76,
+          background: 'rgba(20, 22, 28, 0.62)',
+          backdropFilter: 'blur(28px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(28px) saturate(180%)',
+          border: '0.5px solid rgba(255,255,255,0.10)',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
+        }}
+      >
+        <div
+          ref={rowRef}
+          className="flex items-center gap-1 overflow-x-auto
+                     [&::-webkit-scrollbar]:h-0
+                     [&::-webkit-scrollbar-thumb]:bg-white/15 [&::-webkit-scrollbar-thumb]:rounded-full
+                     [&::-webkit-scrollbar-track]:bg-transparent">
+          {list.map(v => {
+            const isActive = v.id === currentId
+            const decalCount = project.vehicles[v.id]?.decals?.length ?? 0
+            const dirty = decalCount > 0
+            const title = `${v.displayName} · default tactical # ${v.defaultTac}` +
+              (dirty ? ` · ${decalCount} decal${decalCount === 1 ? '' : 's'} placed` : ' · no decals yet')
+            return (
+              <button
+                key={v.id}
+                data-id={v.id}
+                onClick={() => onPick(v.id)}
+                title={title}
+                className={`relative px-3 py-1.5 rounded-pill text-[11px] font-medium whitespace-nowrap shrink-0 transition-all
+                  ${isActive
+                    ? 'bg-white/95 text-black shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_2px_8px_rgba(0,0,0,0.25)]'
+                    : 'text-[var(--color-text-2)] hover:bg-white/10 hover:text-white'}`}
+              >
+                {v.displayName}
+                {dirty && (
+                  <span title={`${decalCount} decal${decalCount === 1 ? '' : 's'} on this vehicle`}
+                        className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-orange-400 shadow-[0_0_4px_#fb923c]" />
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Faction tabs — centered floating pill at the very bottom. */}
+      <div
+        className="absolute left-1/2 -translate-x-1/2 bottom-3 z-10
+                   rounded-pill shadow-[var(--shadow-glass)] flex items-center gap-0.5 px-1 py-1"
+        style={{
+          background: 'rgba(20, 22, 28, 0.62)',
+          backdropFilter: 'blur(28px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(28px) saturate(180%)',
+          border: '0.5px solid rgba(255,255,255,0.10)',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
+        }}
+      >
         {FACTIONS.map(f => {
           const isActive = active === f.id
           const dirty = factionHasDirty(f.id)
@@ -45,54 +103,19 @@ export default function FactionNav({ project, currentId, onPick }: Props) {
             <button
               key={f.id}
               onClick={() => setActive(f.id)}
-              className={`relative px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-[1px] transition
+              className={`relative px-4 py-1.5 rounded-pill text-[11px] font-bold uppercase tracking-[1.5px] transition-all
                 ${isActive
-                  ? 'bg-[var(--color-accent)] text-black'
-                  : 'text-[var(--color-text-3)] hover:text-white hover:bg-white/5'}`}
+                  ? 'bg-white/95 text-black shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_2px_8px_rgba(0,0,0,0.25)]'
+                  : 'text-[var(--color-text-3)] hover:text-white hover:bg-white/10'}`}
             >
               {f.label}
               {dirty && !isActive && (
-                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-orange-400" />
+                <span className="absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full bg-orange-400" />
               )}
             </button>
           )
         })}
       </div>
-
-      {/* Vehicle pills — single horizontal scroll row */}
-      <div
-        ref={rowRef}
-        className="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0
-                   [&::-webkit-scrollbar]:h-1
-                   [&::-webkit-scrollbar-thumb]:bg-white/15 [&::-webkit-scrollbar-thumb]:rounded-full
-                   [&::-webkit-scrollbar-track]:bg-transparent">
-        {list.map(v => {
-          const isActive = v.id === currentId
-          const decalCount = project.vehicles[v.id]?.decals?.length ?? 0
-          const dirty = decalCount > 0
-          // Tooltip explains the small badges so they're not mystery glyphs
-          const title = `${v.displayName} · default tactical # ${v.defaultTac}` +
-            (dirty ? ` · ${decalCount} decal${decalCount === 1 ? '' : 's'} placed` : ' · no decals yet')
-          return (
-            <button
-              key={v.id}
-              data-id={v.id}
-              onClick={() => onPick(v.id)}
-              title={title}
-              className={`relative px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap shrink-0 transition
-                border ${isActive
-                  ? 'bg-[var(--color-accent)] text-black border-[var(--color-accent)]'
-                  : 'bg-white/5 text-[var(--color-text-2)] border-white/5 hover:bg-white/10 hover:text-white'}`}
-            >
-              {v.displayName}
-              {dirty && (
-                <span title={`${decalCount} decal${decalCount === 1 ? '' : 's'} on this vehicle`}
-                      className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-orange-400 shadow-[0_0_4px_#fb923c]" />
-              )}
-            </button>
-          )
-        })}
-      </div>
-    </div>
+    </>
   )
 }

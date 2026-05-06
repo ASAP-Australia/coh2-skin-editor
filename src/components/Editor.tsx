@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Viewport from './Viewport'
 import TopMenu from './TopMenu'
-import PackIconCard from './PackIconCard'
 import FactionNav from './FactionNav'
 import { useToasts } from './Toasts'
 import { VEHICLES } from '@/lib/vehicles'
@@ -44,7 +43,7 @@ export default function Editor({ root, onDisconnect }: Props) {
   const [envArchive, setEnvArchive] = useState<SgaArchive | null>(null)
   const [envName, setEnvName] = useState('mission_06')
   // Toggle between intact and destroyed/wrecked variants of the model.
-  const [showDestroyed, setShowDestroyed] = useState(false)
+  const [showDestroyed] = useState(false)
   // Camo state — stored separately from project (not persisted, preview only)
   const [camoPreset, setCamoPreset] = useState<CamoPreset | null>(null)
   const [camoPrompt, setCamoPrompt] = useState('')
@@ -264,7 +263,7 @@ export default function Editor({ root, onDisconnect }: Props) {
   }, [project, toast])
 
   return (
-    <div className="min-h-dvh w-full relative overflow-hidden">
+    <div className="h-dvh w-full relative overflow-hidden">
       <Viewport
         root={root}
         vehicle={vehicle}
@@ -325,12 +324,6 @@ export default function Editor({ root, onDisconnect }: Props) {
           onApplyCamo={applyCamo}
         />
 
-        <PackIconCard
-          packName={project.packName}
-          diffuseCanvas={baseDiffuseRef.current}
-          palette={project.palette}
-        />
-
         <FactionNav
           project={project}
           currentId={vehicle.id}
@@ -341,30 +334,9 @@ export default function Editor({ root, onDisconnect }: Props) {
           }}
         />
 
-        {/* Intact / destroyed variant toggle — small glass pill, top-right
-            below the pack-icon card. Apple Control-Center style segmented. */}
-        <div className="intact-wrecked-toggle absolute top-20 right-4 z-20 glass-2 rounded-pill p-0.5 flex items-center gap-0.5 shadow-[var(--shadow-glass)]">
-          <button
-            onClick={() => setShowDestroyed(false)}
-            className={`px-3 py-1 text-[10px] font-medium tracking-wide rounded-pill transition-all ${
-              !showDestroyed
-                ? 'bg-white/15 text-white shadow-[inset_0_0.5px_0_rgb(255_255_255/0.15)]'
-                : 'text-[var(--color-text-3)] hover:text-[var(--color-text-2)]'
-            }`}
-            title="Show intact variant">
-            Intact
-          </button>
-          <button
-            onClick={() => setShowDestroyed(true)}
-            className={`px-3 py-1 text-[10px] font-medium tracking-wide rounded-pill transition-all ${
-              showDestroyed
-                ? 'bg-white/15 text-white shadow-[inset_0_0.5px_0_rgb(255_255_255/0.15)]'
-                : 'text-[var(--color-text-3)] hover:text-[var(--color-text-2)]'
-            }`}
-            title="Show wrecked / destroyed variant">
-            Wrecked
-          </button>
-        </div>
+        {/* Intact/Wrecked toggle removed at user request — viewer always
+            shows the intact variant. `showDestroyed` stays wired (always
+            false) so Viewport's submesh classifier still filters wrecks out. */}
 
         {/* Auto-save indicator removed at user request — was reading
             as cluttering the dark viewport. Save state still happens via

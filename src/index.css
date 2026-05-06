@@ -104,9 +104,11 @@
  *
  * On the web build (no `is-electron` class) these rules do nothing, so the
  * GitHub Pages layout is unchanged. */
-body.is-electron .pack-icon-card        { top: 2.75rem; }   /* was 1rem */
-body.is-electron .intact-wrecked-toggle { top: 6.25rem; }   /* was 5rem */
-body.is-electron .top-menu-wrap         { top: 2.75rem; }   /* was 1rem */
+/* Top-row chrome shifts down beneath the titlebar pill in Electron.
+ * Intact/Wrecked toggle now lives at the bottom-right (above the faction nav)
+ * so it no longer needs a top-shift. */
+/* Align top-left menu vertically with the titlebar pill (top: 0.625rem). */
+body.is-electron .top-menu-wrap         { top: 0.625rem; left: 0.625rem; }
 
 /* Body baseline — pure dark, no coloured ambient light. The 3D viewport
  * is the visual subject; the chrome is glass over near-black. */

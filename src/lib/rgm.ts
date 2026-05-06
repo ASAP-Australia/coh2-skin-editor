@@ -304,14 +304,46 @@ function parseTrimDataV5(u8: Uint8Array, chunk: Chunk): ParsedMeshData {
 
   console.log(`[TRIM v5] numInput=${numInput}, numVerts=${numVerts}, stride=${stride}, computed=${computedStride}`)
 
-  if (stride !== computedStride) {
-    console.warn(`[TRIM v5] stride mismatch: stored=${stride}, computed=${computedStride}`)
-    // Don't throw - try to continue with the stored stride
+  // If stride mismatches significantly, the format might be different
+  // Some TRIM v5 variants (like King Tiger) may have packed data
+  let actualStride = stride
+  if (stride !== computedStride && stride !== 0) {
+    console.warn(`[TRIM v5] stride mismatch: stored=${stride}, computed=${computedStride} (using stored)`)
+    actualStride = stride
   }
-  const vbuf = r.bytes(numVerts * stride)
+
+  // Safety check: if stride is 0 or vertices would overflow, bail out
+  if (actualStride === 0 || numVerts === 0 || numVerts > 1000000) {
+    console.warn(`[TRIM v5] Invalid vertex parameters: numVerts=${numVerts}, stride=${actualStride}`)
+    return {
+      inputLayout: [],
+      vertexStride: 0,
+      vertexCount: 0,
+      vertexBuffer: new Uint8Array(0),
+      indices: new Uint16Array(0),
+      groups: [],
+      materialName: null,
+    }
+  }
+
+  const vbuf = r.bytes(numVerts * actualStride)
   const numIdx = r.u32()
 
   console.log(`[TRIM v5] numIndices=${numIdx}`)
+
+  // Safety check: if no indices, this is an empty mesh
+  if (numIdx === 0 || numIdx > 10000000) {
+    console.warn(`[TRIM v5] No indices or invalid count: ${numIdx}`)
+    return {
+      inputLayout,
+      vertexStride: actualStride,
+      vertexCount: numVerts,
+      vertexBuffer: vbuf,
+      indices: new Uint16Array(0),
+      groups: [],
+      materialName: null,
+    }
+  }
 
   const indices = new Uint16Array(numIdx)
   for (let k = 0; k < numIdx; k++) indices[k] = r.u16()
