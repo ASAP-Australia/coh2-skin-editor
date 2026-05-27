@@ -611,6 +611,17 @@ function createWindow() {
     return await getMyWorkshopItems()
   })
 
+  // ── Workshop content staging dir ────────────────────────────────────
+  // Creates a fresh temporary directory for staging Workshop content before
+  // publishing. The renderer builds the SGA + manifest into this dir, then
+  // passes it as `contentPath` to steam:workshop:publish. The dir is unique
+  // per call (mkdtemp) so concurrent publishes don't collide.
+  ipcMain.handle('tmp:make-publish-dir', async () => {
+    const base = path.join(app.getPath('temp'), 'coh2-workshop-publish-')
+    const dir = await fs.promises.mkdtemp(base)
+    return dir
+  })
+
   // ── Native folder picker (fallback if auto-detect fails) ────────────
   ipcMain.handle('pick-directory', async () => {
     if (!mainWindow) return null

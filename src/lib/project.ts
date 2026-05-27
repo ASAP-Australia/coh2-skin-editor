@@ -155,6 +155,11 @@ export interface Coh2SkinProject {
   packDescription: string
   /** Author credit. */
   author: string
+  /** Steam Workshop item ID, set after a successful publish via
+   *  PublishToWorkshopDialog. Absent / undefined = not yet published.
+   *  ≤5×10⁹ = real Workshop ID (safe to call update); ≥1×10¹⁵ = fake
+   *  locally-generated ID from freshPackId() (treat as unpublished). */
+  workshopId?: string
   /** Per-vehicle state, keyed by vehicle id (live editing layer). */
   vehicles: Record<string, VehicleProject>
   /** Per-faction defaults for the live editing layer. */

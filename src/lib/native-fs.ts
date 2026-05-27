@@ -147,6 +147,10 @@ interface ElectronAPI {
   listDir:       (p: string) => Promise<{ name: string; isDirectory: boolean }[]>
   fileExists:    (p: string) => Promise<boolean>
   writeFile:     (p: string, bytes: ArrayBuffer) => Promise<void>
+  /** Create a fresh temporary directory for Workshop content staging.
+   *  Returns the absolute path. Used by PublishToWorkshopDialog before
+   *  calling steam.workshop.publish. */
+  makeTmpPublishDir: () => Promise<string>
   windowMinimize:     () => Promise<void>
   windowMaximize:     () => Promise<void>
   windowClose:        () => Promise<void>
@@ -328,6 +332,13 @@ export async function listWorkshopItems(root: string): Promise<WorkshopItem[]> {
 export async function listStockArchives(installRoot: string): Promise<StockArchive[]> {
   if (!isElectron()) return []
   return api().listStockArchives(installRoot)
+}
+
+/** Create a fresh temporary directory for Workshop content staging.
+ *  Returns the absolute path; throws when not in Electron. */
+export async function makeTmpPublishDir(): Promise<string> {
+  if (!isElectron()) throw new Error('Not in Electron context')
+  return api().makeTmpPublishDir()
 }
 
 /** Write binary bytes to a path on disk, creating parent directories as needed.

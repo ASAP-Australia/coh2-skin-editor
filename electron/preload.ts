@@ -258,6 +258,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('diffusion:get-body-mask', faction, vehicleId),
   },
 
+  // Workshop content staging dir — creates a fresh temp dir the renderer
+  // can use as contentPath for steam:workshop:publish.
+  makeTmpPublishDir: (): Promise<string> => ipcRenderer.invoke('tmp:make-publish-dir'),
+
   // Steam Workshop bridge — Steam-first v1.0. The renderer calls
   // `steam.init()` from the StartScreen and dispatches to one of three
   // branches based on the discriminated failure code. `steam.workshop.publish`
