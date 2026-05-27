@@ -47,6 +47,58 @@ export interface StockArchive {
 }
 
 // ---------------------------------------------------------------------------
+// Steam Workshop bridge (mirrored from electron/steam.ts)
+// ---------------------------------------------------------------------------
+
+export interface SteamInitInfo {
+  steamId: string
+  personaName: string
+  ownsApp: boolean
+  installPath: string | null
+}
+
+export type SteamInitError =
+  | { code: 'no-steam'; message: string }
+  | { code: 'no-game'; message: string }
+  | { code: 'init-failed'; message: string }
+
+export type SteamInitResult =
+  | { ok: true; info: SteamInitInfo }
+  | { ok: false; error: SteamInitError }
+
+export interface PublishWorkshopInput {
+  contentPath: string
+  previewPath: string
+  title: string
+  description: string
+  tags: string[]
+  /** `0` Public, `1` FriendsOnly, `2` Private, `3` Unlisted. Default Public. */
+  visibility?: 0 | 1 | 2 | 3
+  changeNote?: string
+}
+
+export interface PublishWorkshopResult {
+  workshopId: string
+  needsAgreement: boolean
+}
+
+export interface UpdateWorkshopResult {
+  needsAgreement: boolean
+}
+
+export interface MyWorkshopItem {
+  workshopId: string
+  title: string
+  description: string
+  tags: string[]
+  visibility: number
+  /** Unix seconds. */
+  timeUpdated: number
+  previewUrl: string | null
+  url: string
+}
+
+// ---------------------------------------------------------------------------
 // Type declarations for the preload bridge
 // ---------------------------------------------------------------------------
 
@@ -70,6 +122,18 @@ interface ElectronDiffusionNamespace {
   getBodyMask: (faction: string, vehicleId: string) => Promise<string | null>
 }
 
+interface ElectronSteamWorkshopNamespace {
+  publish: (input: PublishWorkshopInput) => Promise<PublishWorkshopResult>
+  update: (workshopId: string, input: PublishWorkshopInput) => Promise<UpdateWorkshopResult>
+  getMine: () => Promise<MyWorkshopItem[]>
+}
+
+interface ElectronSteamNamespace {
+  init: () => Promise<SteamInitResult>
+  reset: () => Promise<void>
+  workshop: ElectronSteamWorkshopNamespace
+}
+
 interface ElectronAPI {
   detectCoh2:         () => Promise<string | null>
   detectCoh2Mods:     () => Promise<string | null>
@@ -90,6 +154,7 @@ interface ElectronAPI {
   signalRendererReady: () => void
   ai:        ElectronAiNamespace
   diffusion: ElectronDiffusionNamespace
+  steam:     ElectronSteamNamespace
 }
 
 declare global {

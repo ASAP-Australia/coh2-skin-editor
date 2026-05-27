@@ -108,6 +108,54 @@ interface StockArchive {
   size: number
 }
 
+// ── Steam types (mirrored from electron/steam.ts) ─────────────────────────────
+
+interface SteamInitInfo {
+  steamId: string
+  personaName: string
+  ownsApp: boolean
+  installPath: string | null
+}
+
+type SteamInitError =
+  | { code: 'no-steam'; message: string }
+  | { code: 'no-game'; message: string }
+  | { code: 'init-failed'; message: string }
+
+type SteamInitResult =
+  | { ok: true; info: SteamInitInfo }
+  | { ok: false; error: SteamInitError }
+
+interface PublishWorkshopInput {
+  contentPath: string
+  previewPath: string
+  title: string
+  description: string
+  tags: string[]
+  visibility?: 0 | 1 | 2 | 3
+  changeNote?: string
+}
+
+interface PublishWorkshopResult {
+  workshopId: string
+  needsAgreement: boolean
+}
+
+interface UpdateWorkshopResult {
+  needsAgreement: boolean
+}
+
+interface MyWorkshopItem {
+  workshopId: string
+  title: string
+  description: string
+  tags: string[]
+  visibility: number
+  timeUpdated: number
+  previewUrl: string | null
+  url: string
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -208,5 +256,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('diffusion:edit-image', req),
     getBodyMask: (faction: string, vehicleId: string): Promise<string | null> =>
       ipcRenderer.invoke('diffusion:get-body-mask', faction, vehicleId),
+  },
+
+  // Steam Workshop bridge — Steam-first v1.0. The renderer calls
+  // `steam.init()` from the StartScreen and dispatches to one of three
+  // branches based on the discriminated failure code. `steam.workshop.publish`
+  // is the critical-path fix for the multiplayer bug (real Workshop IDs
+  // instead of fabricated ones that fail lobby validation).
+  steam: {
+    init: (): Promise<SteamInitResult> => ipcRenderer.invoke('steam:init'),
+    reset: (): Promise<void> => ipcRenderer.invoke('steam:reset'),
+    workshop: {
+      publish: (input: PublishWorkshopInput): Promise<PublishWorkshopResult> =>
+        ipcRenderer.invoke('steam:workshop:publish', input),
+      update: (
+        workshopId: string,
+        input: PublishWorkshopInput,
+      ): Promise<UpdateWorkshopResult> =>
+        ipcRenderer.invoke('steam:workshop:update', workshopId, input),
+      getMine: (): Promise<MyWorkshopItem[]> => ipcRenderer.invoke('steam:workshop:get-mine'),
+    },
   },
 })

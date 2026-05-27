@@ -1,17 +1,27 @@
 import { useEffect, useState } from 'react'
-import ConnectScreen from '@/components/ConnectScreen'
+import SteamGate from '@/components/SteamGate'
 import Editor from '@/components/Editor'
 import TitleBar from '@/components/TitleBar'
-import { loadSavedHandle } from '@/lib/coh2-fs'
 import { isElectron } from '@/lib/native-fs'
 
 /**
- * App routing: pick between the first-run "connect" flow and the editor
- * proper. We probe IndexedDB for a saved handle on mount; if found and the
- * user still grants permission, we skip straight to the editor.
+ * App routing — v1.0 Steam-first.
+ *
+ * Boot order:
+ *   1. SteamGate authenticates the user against Steam, validates CoH2
+ *      ownership, and hands us the install path Steam reports.
+ *   2. We mount the Editor with that handle. No second picker, no
+ *      saved-handle dance — Steam is the single source of truth.
+ *
+ * Web build: the gate renders a "download the desktop app" branch.
+ * Headless screenshot flag (`?headless=editor`) skips the gate the
+ * same way the previous ConnectScreen path did, used by automated
+ * screenshot smoke tests.
  */
 export default function App() {
   const [installRoot, setInstallRoot] = useState<FileSystemDirectoryHandle | null>(null)
+  const [steamId, setSteamId] = useState<string | null>(null)
+  const [personaName, setPersonaName] = useState<string | null>(null)
   const [probing, setProbing] = useState(true)
 
   // Mark body so CSS can shift top-anchored chrome below the TitleBar pill.
@@ -21,67 +31,24 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    // ?screenshot=1 forces ConnectScreen (no WebGL viewport mounted) for
-    // headless captures via Electron's webContents.capturePage().
+    // ?screenshot=1 forces the gate (no WebGL viewport) for headless captures.
+    // ?headless=editor lets the screenshot harness skip the gate and land in
+    // the editor directly. Used by HEADLESS_SCREENSHOT runs.
     const sParams = new URLSearchParams(location.search)
-    if (sParams.get('screenshot') === '1') { setProbing(false); return }
-
-    // In Electron we always start at ConnectScreen — never silently
-    // auto-jump into the editor. ConnectScreen still uses
-    // detectInstallPath() under the hood to pre-fill the path so the
-    // user just clicks Connect; they're never surprised by skipped UI.
-    //
-    // Exception: ?headless=editor lets the screenshot harness skip the
-    // gate and land in the editor. Used by HEADLESS_SCREENSHOT runs in
-    // electron/main.ts to capture the Viewport with real models.
-    if (isElectron()) {
-      if (sParams.get('headless') === 'editor') {
-        import('@/lib/native-fs').then(async ({ detectInstallPath, nativePathToHandle }) => {
-          const p = await detectInstallPath()
-          if (p) setInstallRoot(nativePathToHandle(p))
-        }).finally(() => setProbing(false))
-        return
-      }
+    if (sParams.get('screenshot') === '1') {
       setProbing(false)
       return
     }
-
-    // ?demo=1 bypasses the Connect *screen* — but if the user has previously
-    // authorized their CoH2 install, we still load real models from it. Only
-    // when no saved handle is available does demo mode fall back to a stub
-    // (which triggers the placeholder tank + procedural skybox in Viewport).
-    const params = new URLSearchParams(location.search)
-    const demo = params.get('demo') === '1'
-
-    loadSavedHandle()
-      .then(h => {
-        if (h) { setInstallRoot(h); return }
-        if (demo) {
-          // No saved install — give the editor a stub so it can mount, and
-          // the viewport will render the procedural demo scene.
-          const stub = {
-            name: 'Demo (no real install)',
-            kind: 'directory' as const,
-            getDirectoryHandle: async () => { throw new Error('demo mode — no real FS') },
-            getFileHandle:      async () => { throw new Error('demo mode — no real FS') },
-            entries:            async function*() {},
-          }
-          setInstallRoot(stub as unknown as FileSystemDirectoryHandle)
-        }
-      })
-      .catch(() => {
-        if (demo) {
-          const stub = {
-            name: 'Demo (no real install)',
-            kind: 'directory' as const,
-            getDirectoryHandle: async () => { throw new Error('demo mode — no real FS') },
-            getFileHandle:      async () => { throw new Error('demo mode — no real FS') },
-            entries:            async function*() {},
-          }
-          setInstallRoot(stub as unknown as FileSystemDirectoryHandle)
-        }
-      })
-      .finally(() => setProbing(false))
+    if (sParams.get('headless') === 'editor' && isElectron()) {
+      import('@/lib/native-fs')
+        .then(async ({ detectInstallPath, nativePathToHandle }) => {
+          const p = await detectInstallPath()
+          if (p) setInstallRoot(nativePathToHandle(p))
+        })
+        .finally(() => setProbing(false))
+      return
+    }
+    setProbing(false)
   }, [])
 
   if (probing) {
@@ -101,16 +68,37 @@ export default function App() {
     return (
       <>
         <TitleBar />
-        <ConnectScreen onConnected={setInstallRoot} />
+        <SteamGate
+          onAuthed={({ handle, steamId, personaName }) => {
+            setSteamId(steamId)
+            setPersonaName(personaName)
+            setInstallRoot(handle)
+          }}
+        />
       </>
     )
+  }
+
+  // Persist the Steam identity onto the window so any deeply nested
+  // publish-flow component can read it without piping it through every
+  // Editor sub-tree prop. This is a v1.0 carve-out — see the v1.1 todo
+  // to thread it through a proper context once the publish dialog lands.
+  if (typeof window !== 'undefined') {
+    ;(window as { __steam?: { id: string; name: string } }).__steam =
+      steamId && personaName ? { id: steamId, name: personaName } : undefined
   }
 
   return (
     <>
       <TitleBar />
-      <Editor root={installRoot} onDisconnect={() => setInstallRoot(null)} />
+      <Editor
+        root={installRoot}
+        onDisconnect={() => {
+          setInstallRoot(null)
+          setSteamId(null)
+          setPersonaName(null)
+        }}
+      />
     </>
   )
 }
-

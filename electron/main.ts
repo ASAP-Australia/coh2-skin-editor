@@ -9,6 +9,15 @@ import {
   listWorkshopItems,
   listStockArchives,
 } from './detect-coh2'
+import {
+  initSteam,
+  publishWorkshopItem,
+  updateWorkshopItem,
+  getMyWorkshopItems,
+  resetSteamCache,
+  type PublishWorkshopInput,
+  type UpdateWorkshopInput,
+} from './steam'
 
 // ── Local type copies ─────────────────────────────────────────────────────────
 // The electron directory compiles under `rootDir: "electron"` which prevents
@@ -574,6 +583,32 @@ function createWindow() {
   })
   ipcMain.handle('diffusion:get-body-mask', (_e, faction: string, vehicleId: string) => {
     return getDiffusionSidecar().getBodyMask(faction, vehicleId)
+  })
+
+  // ── Steam Workshop bridge ───────────────────────────────────────────
+  // Steam-first: v1.0 requires a live Steam connection. The renderer
+  // calls steam:init from the StartScreen and branches on the discriminated
+  // failure code (no-steam / no-game / init-failed). Workshop publish/update
+  // are gated behind a successful init in the renderer, but the IPC
+  // handlers re-check via requireSteamClient() in steam.ts as a safety net.
+  ipcMain.handle('steam:init', () => {
+    const s = initSteam()
+    return s.ok ? { ok: true as const, info: s.info } : { ok: false as const, error: s.error }
+  })
+  ipcMain.handle('steam:reset', () => {
+    resetSteamCache()
+  })
+  ipcMain.handle('steam:workshop:publish', async (_e, input: PublishWorkshopInput) => {
+    return await publishWorkshopItem(input)
+  })
+  ipcMain.handle(
+    'steam:workshop:update',
+    async (_e, workshopId: string, input: UpdateWorkshopInput) => {
+      return await updateWorkshopItem(workshopId, input)
+    },
+  )
+  ipcMain.handle('steam:workshop:get-mine', async () => {
+    return await getMyWorkshopItems()
   })
 
   // ── Native folder picker (fallback if auto-detect fails) ────────────
