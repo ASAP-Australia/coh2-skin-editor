@@ -37,7 +37,7 @@ import { bcToCanvas } from './bc-decode'
 import { canvasToRgt } from './rgt-writer'
 import { buildSga, type SgaInputFile } from './sga-writer'
 import { paintDecals, type RenderContext } from './decal-painter'
-import { VEHICLES } from './vehicles'
+import { VEHICLES, findVehicleSpec, inferProjectFactions, type Faction } from './vehicles'
 import type { Coh2SkinProject } from './project'
 
 const TEMPLATE_GUID = '935a02ef44344ea29108b57b9cb7b9f5'
@@ -50,6 +50,8 @@ const TEMPLATE_FILES = [
   'attrib/skin_pack/german/caf_ss3_winter_light.rgd',
   'attrib/skin_pack/german/caf_ss3_winter_medium.rgd',
   'english/english.ucs',
+  `ui/bin/${TEMPLATE_GUID}.gfx`,
+  `ui/assets/textures/${TEMPLATE_GUID}_i1.dds`,
 ]
 
 /** Generate a fresh 32-hex-char mod GUID. Cryptographically random. */
@@ -81,7 +83,7 @@ export function freshPackId(): string {
 }
 
 /** SGA archives most likely to contain the diffuse RGTs for a given faction. */
-function factionSgaCandidates(faction: string): string[] {
+export function factionSgaCandidates(faction: string): string[] {
   switch (faction) {
     case 'german':       return ['ArtGermanEF.sga', 'ArtArmies.sga', 'ArtHigh.sga']
     case 'west_german':  return ['ArtWestGerman.sga', 'ArtHighXP1.sga', 'ArtArmies.sga']
@@ -95,7 +97,7 @@ function factionSgaCandidates(faction: string): string[] {
 /** Filename aliases — CoH2 names a handful of textures differently from the
  *  entity directory (e.g. elefant/elefant_hull_dif.rgt, panther_ausf_g/
  *  panther_dif.rgt). The export pipeline tries each candidate in order. */
-function textureBaseNamesFor(vehicleId: string): string[] {
+export function textureBaseNamesFor(vehicleId: string): string[] {
   const aliases: Record<string, string[]> = {
     elefant:               ['elefant_hull', 'elefant'],
     ostwind_flak_panzer:   ['ostwind', 'ostwind_flak_panzer'],
@@ -139,47 +141,63 @@ async function composeVehicleDiffuse(
   project: Coh2SkinProject,
   vehicleId: string,
   archives: { handle: FileSystemDirectoryHandle; cache: Map<string, SgaArchive> },
+  factionHints?: Faction[],
 ): Promise<{ canvas: HTMLCanvasElement; difTset: string } | null> {
   const veh = project.vehicles[vehicleId]
   if (!veh || veh.decals.length === 0) return null
-  const vSpec = VEHICLES.find(v => v.id === vehicleId)
+  const vSpec = findVehicleSpec(vehicleId, factionHints)
   if (!vSpec) return null
-
-  // The diffuse RGT lives in a faction-specific SGA in CoH2's install layout.
-  // ArtGermanEF / ArtWestGerman / ArtSovietEF / ArtAEFSkins / ArtBritish are
-  // the per-faction texture archives; ArtHigh / ArtArmies hold the *meshes*.
-  // For ~4 vehicles the texture file basename differs from the entity id
-  // (e.g. elefant/<elefant_hull>_dif.rgt). Try each candidate basename.
-  const sgaCandidates = factionSgaCandidates(vSpec.faction)
-  const baseNames = textureBaseNamesFor(vSpec.id)
-  let sga: SgaArchive | null = null
-  let rgtBytes: Uint8Array | null = null
-  outer: for (const sgaName of sgaCandidates) {
-    let a = archives.cache.get(sgaName)
-    if (!a) {
-      try {
-        const fh = await archives.handle.getFileHandle(sgaName)
-        a = await SgaArchive.open(await fh.getFile())
-        archives.cache.set(sgaName, a)
-      } catch { continue }
-    }
-    for (const base of baseNames) {
-      const difPath = `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/${base}_dif.rgt`
-      const b = await a.readByPath(difPath)
-      if (b) { sga = a; rgtBytes = b; break outer }
-    }
-  }
-  if (!sga || !rgtBytes) return null
-
-  const rgt = decodeRgt(rgtBytes)
-  const baseCanvas = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
 
   // Composite to a 2048² canvas regardless of source resolution — that's
   // what the CoH2 RGT pipeline wants for skin packs.
   const out = document.createElement('canvas')
   out.width = out.height = 2048
   const ctx = out.getContext('2d')!
-  ctx.drawImage(baseCanvas, 0, 0, 2048, 2048)
+
+  const customDiffuseUrl = veh.customDiffuseUrl ?? null
+  if (customDiffuseUrl) {
+    // Fast path: a custom diffuse is already available (AI-generated or
+    // user-uploaded). Load it as an image and draw it onto the canvas.
+    // This bypasses the SGA read + BC decode entirely.
+    await new Promise<void>((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => { ctx.drawImage(img, 0, 0, 2048, 2048); resolve() }
+      img.onerror = reject
+      img.src = customDiffuseUrl
+    })
+  } else {
+    // Slow path: locate the vanilla diffuse RGT in the CoH2 install, decode
+    // the BC-compressed pixels, and draw them onto the canvas.
+    //
+    // ArtGermanEF / ArtWestGerman / ArtSovietEF / ArtAEFSkins / ArtBritish are
+    // the per-faction texture archives; ArtHigh / ArtArmies hold the *meshes*.
+    // For ~4 vehicles the texture file basename differs from the entity id
+    // (e.g. elefant/<elefant_hull>_dif.rgt). Try each candidate basename.
+    const sgaCandidates = factionSgaCandidates(vSpec.faction)
+    const baseNames = textureBaseNamesFor(vSpec.id)
+    let sga: SgaArchive | null = null
+    let rgtBytes: Uint8Array | null = null
+    outer: for (const sgaName of sgaCandidates) {
+      let a = archives.cache.get(sgaName)
+      if (!a) {
+        try {
+          const fh = await archives.handle.getFileHandle(sgaName)
+          a = await SgaArchive.open(await fh.getFile())
+          archives.cache.set(sgaName, a)
+        } catch { continue }
+      }
+      for (const base of baseNames) {
+        const difPath = `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/${base}_dif.rgt`
+        const b = await a.readByPath(difPath)
+        if (b) { sga = a; rgtBytes = b; break outer }
+      }
+    }
+    if (!sga || !rgtBytes) return null
+
+    const rgt = decodeRgt(rgtBytes)
+    const baseCanvas = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
+    ctx.drawImage(baseCanvas, 0, 0, 2048, 2048)
+  }
 
   // Paint decals
   const renderCtx: RenderContext = {
@@ -334,6 +352,7 @@ export async function patchExport(
   if (vehicleIds.length === 0) {
     throw new Error('Project has no vehicles with decals. Add at least one decal first.')
   }
+  const factionHintsPatch = inferProjectFactions(vehicleIds)
 
   let textureCount = 0
 
@@ -341,10 +360,10 @@ export async function patchExport(
     const id = vehicleIds[i]
     onProgress({ phase: 'composite', message: `Compositing ${id}`, current: i + 1, total: vehicleIds.length })
 
-    const composed = await composeVehicleDiffuse(root, project, id, archives)
+    const composed = await composeVehicleDiffuse(root, project, id, archives, factionHintsPatch)
     if (!composed) continue
 
-    const vSpec = VEHICLES.find(v => v.id === id)
+    const vSpec = findVehicleSpec(id, factionHintsPatch)
     if (!vSpec) continue
     const baseName = outputBasename(id)
     const difTset = `art\\armies\\${vSpec.faction}\\vehicles\\${id}\\${baseName}_dif`
@@ -387,7 +406,32 @@ export async function exportSkinPack(
   root: FileSystemDirectoryHandle,
   project: Coh2SkinProject,
   onProgress: (p: ExportProgress) => void,
+  /** Which export slot index to use for the vehicle state; undefined = use project.vehicles. */
+  _targetSlot?: number,
+  /** Stable numeric id to use as the SGA filename (for overwrite-in-place Live Sync). */
+  stableNumericId?: string,
+  /** Stable mod GUID to use for internal asset paths (for overwrite-in-place Live Sync). */
+  stableModGuid?: string,
 ): Promise<ExportResult> {
+  // ── Input validation (must happen BEFORE any async I/O) ──
+  if (_targetSlot !== undefined && (_targetSlot < 0 || _targetSlot > 5)) {
+    throw new Error(`Invalid targetSlot ${_targetSlot}: must be 0–5`)
+  }
+  if (stableNumericId !== undefined) {
+    if (!/^\d+$/.test(stableNumericId) || /^0\d/.test(stableNumericId)) {
+      throw new Error(
+        `Invalid numericIdOverride "${stableNumericId}": must be a non-empty string of digits with no leading zeros`,
+      )
+    }
+  }
+  if (stableModGuid !== undefined) {
+    if (!/^[0-9a-f]{32}$/.test(stableModGuid)) {
+      throw new Error(
+        `Invalid modGuidOverride "${stableModGuid}": must be exactly 32 lowercase hex characters`,
+      )
+    }
+  }
+
   onProgress({ phase: 'init', message: 'Locating CoH2 archives…' })
   const archHandle = await locateArchives(root)
   if (!archHandle) throw new Error('Could not locate CoH2/Archives folder under the install handle.')
@@ -395,8 +439,8 @@ export async function exportSkinPack(
   onProgress({ phase: 'init', message: 'Loading template…' })
   const tmpl = await fetchTemplate()
 
-  const newGuid = freshModGuid()
-  const numericId = freshPackId()
+  const newGuid = stableModGuid ?? freshModGuid()
+  const numericId = stableNumericId ?? freshPackId()
   const archives = { handle: archHandle, cache: new Map<string, SgaArchive>() }
 
   // Composite each vehicle's diffuse + decals
@@ -404,16 +448,19 @@ export async function exportSkinPack(
   if (vehicleIds.length === 0) {
     throw new Error('Project has no vehicles with decals. Add at least one decal first.')
   }
+  // Infer factions from the project so shared vehicle ids (e.g. 'halftrack'
+  // appears in both german and soviet) are resolved to the right faction.
+  const factionHints = inferProjectFactions(vehicleIds)
   const sgaFiles: SgaInputFile[] = []
 
   for (let i = 0; i < vehicleIds.length; i++) {
     const id = vehicleIds[i]
     onProgress({ phase: 'composite', message: `Compositing ${id}`, current: i + 1, total: vehicleIds.length })
-    const composed = await composeVehicleDiffuse(root, project, id, archives)
+    const composed = await composeVehicleDiffuse(root, project, id, archives, factionHints)
     if (!composed) continue
     // Encode + wrap as RGT, and add for both summer + winter slots.
     const rgtBytes = canvasToRgt(composed.canvas, composed.difTset)
-    const vSpec = VEHICLES.find(v => v.id === id)!
+    const vSpec = findVehicleSpec(id, factionHints)!
     for (const season of ['summer', 'winter'] as const) {
       const path = `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/skins/${newGuid}_${season}/${vSpec.id}_dif.rgt`
       sgaFiles.push({ path, bytes: rgtBytes, compress: false })
@@ -434,9 +481,16 @@ export async function exportSkinPack(
   // would conflict if the user has both subscribed simultaneously. That's
   // a v2 problem: rewrite the binary chunk to use unique names + recompute
   // the embedded CRC. Single-pack-active is the v1 contract.
-  for (const path of TEMPLATE_FILES) {
-    if (path.endsWith('.info') || path.endsWith('.ucs')) continue
-    sgaFiles.push({ path, bytes: tmpl[path], compress: true })
+  //
+  // UI icon files (.gfx + _i1.dds): rename GUID in the path. The .gfx binary
+  // may reference the old GUID internally so rewrite it too.
+  for (const tmplPath of TEMPLATE_FILES) {
+    if (tmplPath.endsWith('.info') || tmplPath.endsWith('.ucs')) continue
+    // Rewrite GUID in the path (for .gfx and _i1.dds which are named after the GUID)
+    const destPath = tmplPath.replace(TEMPLATE_GUID, newGuid)
+    // Also rewrite GUID references inside the bytes (e.g. .gfx may reference the GUID)
+    const destBytes = rewriteGuid(tmpl[tmplPath], newGuid)
+    sgaFiles.push({ path: destPath, bytes: destBytes, compress: true })
   }
   // english.ucs: rewrite GUID references (paths inside the file might use it)
   sgaFiles.push({

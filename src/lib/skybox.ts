@@ -25,6 +25,35 @@ export const SKYBOX_ENVS = [
   'stormy_sky',
 ]
 
+/** Classify a skybox environment name into a season bucket.
+ *
+ * Rules (case-insensitive):
+ *   - Ends with `_winter` → 'winter'
+ *   - Ends with `_summer` → 'summer'
+ *   - `stormy_sky` → 'either' (overcast works for both seasons)
+ *   - Everything else → 'summer' (default; most CoH2 stock envs are warm)
+ */
+export function seasonOfEnv(env: string): 'summer' | 'winter' | 'either' {
+  const lower = env.toLowerCase()
+  if (lower === 'stormy_sky') return 'either'
+  if (/_winter$/.test(lower)) return 'winter'
+  if (/_summer$/.test(lower)) return 'summer'
+  return 'summer'
+}
+
+/** Return only those env names from `envs` that are appropriate for `season`.
+ *  Envs classified as 'either' pass both summer and winter filters.
+ *  Returns a new array; never mutates the input. */
+export function filterEnvsBySeason(
+  envs: string[],
+  season: 'summer' | 'winter',
+): string[] {
+  return envs.filter(env => {
+    const s = seasonOfEnv(env)
+    return s === 'either' || s === season
+  })
+}
+
 /** Three.js CubeTexture face order: px, nx, py, ny, pz, nz
  *  Maps to the CoH2 side-wrap strip order: right, left, top, bottom, front, back
  *  Strip layout (left→right): front | right | back | left */

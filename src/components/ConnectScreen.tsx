@@ -5,6 +5,9 @@ import { isElectron, detectInstallPath, pickInstallPathNative, nativePathToHandl
 
 interface Props {
   onConnected: (handle: FileSystemDirectoryHandle) => void
+  /** When true, the screen plays its exit animation (caller-controlled
+   *  transition flag). Does not affect internal behaviour. */
+  exiting?: boolean
 }
 
 /**

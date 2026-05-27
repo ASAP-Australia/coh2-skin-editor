@@ -246,3 +246,50 @@ body {
     @apply font-sans;
   }
 }
+
+/* ── Custom scrollbar (opt-in) ────────────────────────────────────────────
+ * App-wide scrollbars are intentionally hidden via the dark glass aesthetic,
+ * but a few places legitimately need a visible rail — long saved-project
+ * lists, settings menus with overflowing rows, etc. Add `custom-scrollbar`
+ * to the scroll container to render a 12 px themed scrollbar with a thumb
+ * that brightens on hover.
+ *
+ * Cross-browser:
+ *   - WebKit/Blink (Chrome, Electron, Edge, Safari) → ::-webkit-scrollbar
+ *   - Firefox → scrollbar-width + scrollbar-color
+ *
+ * Colors are RGBA against the dark base so the rail reads as a faint glass
+ * channel and the thumb as the usual `glass-2` surface tone. Hover bumps
+ * the thumb to the brighter `glass-3` so the affordance is unmistakable.
+ */
+.custom-scrollbar {
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.18) transparent;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgb(255 255 255 / 0.14);
+  border-radius: 9999px;
+  /* Inset border keeps the thumb visually narrower than the 12 px rail
+   * so the rail reads as channel-with-thumb rather than a solid bar. */
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 150ms ease;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(255 255 255 / 0.28);
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:active {
+  background-color: rgb(255 255 255 / 0.38);
+}
+.custom-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}

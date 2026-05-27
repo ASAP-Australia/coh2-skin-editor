@@ -61,7 +61,7 @@ interface FolderDef {
 
 export class SgaArchive {
   readonly archiveName: string
-  private readonly file: File
+  private readonly file: Blob
   private readonly dataPos: number
   private readonly folders: FolderDef[]
   private readonly files: FileDef[]
@@ -69,7 +69,7 @@ export class SgaArchive {
 
   private constructor(
     archiveName: string,
-    file: File,
+    file: Blob,
     dataPos: number,
     folders: FolderDef[],
     files: FileDef[],
@@ -84,15 +84,21 @@ export class SgaArchive {
   }
 
   /** Open + parse the SGA's TOC. The data block stays on disk; file payloads
-   *  are read lazily as the caller asks for specific paths. */
-  static async open(file: File): Promise<SgaArchive> {
+   *  are read lazily as the caller asks for specific paths.
+   *  Accepts any `Blob`-compatible object (including `File`). */
+  static async open(file: Blob): Promise<SgaArchive> {
     // Header: 12 + 128 + 12 = 152 bytes
-    const headerBytes = new Uint8Array(await file.slice(0, 152).arrayBuffer())
+    const headerBytes = new Uint8Array(await file.slice(0, 172).arrayBuffer())
     if (
       String.fromCharCode(...headerBytes.subarray(0, 8)) !== '_ARCHIVE'
     ) throw new Error('Not an SGA file (bad magic)')
     const view = new DataView(headerBytes.buffer)
     const major = view.getUint16(8, true)
+
+    if (major === 10) {
+      return SgaArchive._openV10(file, headerBytes, view)
+    }
+
     if (major !== 7) throw new Error(`SGA v${major} not supported (only v7)`)
 
     const archiveName = decodeUtf16Le(headerBytes.subarray(12, 12 + 128))
@@ -170,6 +176,123 @@ export class SgaArchive {
 
     void headerPos
     return new SgaArchive(archiveName, file, dataPos, folders, files, nameAtOffset)
+  }
+
+  /**
+   * SGA v10 (CoH3/Anvil) reader.
+   *
+   * Fixed header layout (428 bytes):
+   *   [0..7]    "_ARCHIVE"
+   *   [8..9]    major = 10 (u16 LE)
+   *   [10..11]  product (u16 LE)
+   *   [12..139] archiveName UTF-16-LE (128 bytes)
+   *   [140..147] blobOffset (u64 LE) — offset of TOC blob
+   *   [148..151] blobLength (u32 LE)
+   *   [152..159] dataOffset (u64 LE) — absolute offset of data section
+   *   [160..167] dataBlobLength (u64 LE)
+   *   [168..171] unknown2 (u32 LE)
+   *   [172..427] RSA signature (256 bytes)
+   *
+   * TOC blob header (11 × u32 = 44 bytes):
+   *   [0]  tocDataOffset   (drive entries, offset within blob)
+   *   [1]  tocDataCount
+   *   [2]  folderDataOffset
+   *   [3]  folderDataCount
+   *   [4]  fileDataOffset
+   *   [5]  fileDataCount
+   *   [6]  stringOffset
+   *   [7]  stringLength
+   *   [8]  fileHashOffset
+   *   [9]  fileHashLength
+   *   [10] blockSize
+   *
+   * File entry (30 bytes):
+   *   nameOff(4) + hashOff(4) + dataOff(8) + compLen(4) + uncompLen(4) + verif(1) + storage(1) + crc(4)
+   */
+  private static async _openV10(
+    file: Blob,
+    headerBytes: Uint8Array,
+    view: DataView,
+  ): Promise<SgaArchive> {
+    // Read the full 428-byte fixed header
+    const fullHeaderBytes = new Uint8Array(await file.slice(0, 428).arrayBuffer())
+    const fullView = new DataView(fullHeaderBytes.buffer)
+
+    const archiveName = decodeUtf16Le(fullHeaderBytes.subarray(12, 12 + 128))
+
+    // blobOffset is u64 LE — we only handle the low 32 bits (files < 4 GB)
+    const blobOffset = fullView.getUint32(140, true)
+    const blobLength = fullView.getUint32(148, true)
+    // dataOffset is u64 LE — low 32 bits
+    const dataOffset = fullView.getUint32(152, true)
+
+    void view  // v7 view not needed for v10
+
+    // Read TOC blob
+    const tocBytes = new Uint8Array(
+      await file.slice(blobOffset, blobOffset + blobLength).arrayBuffer(),
+    )
+    const toc = new DataView(tocBytes.buffer)
+
+    // TOC blob header (11 × u32)
+    const folderDataOffset = toc.getUint32(8, true)
+    const folderDataCount  = toc.getUint32(12, true)
+    const fileDataOffset   = toc.getUint32(16, true)
+    const fileDataCount    = toc.getUint32(20, true)
+    const stringOffset     = toc.getUint32(24, true)
+    const stringLength     = toc.getUint32(28, true)
+
+    // Folders (20 bytes each, same as v7)
+    const folders: FolderDef[] = []
+    for (let i = 0; i < folderDataCount; i++) {
+      const o = folderDataOffset + i * 20
+      folders.push({
+        namePos: toc.getUint32(o, true),
+        folderFirst: toc.getUint32(o + 4, true),
+        folderLast: toc.getUint32(o + 8, true),
+        fileFirst: toc.getUint32(o + 12, true),
+        fileLast: toc.getUint32(o + 16, true),
+      })
+    }
+
+    // Files (30 bytes each, but layout differs from v7):
+    //   nameOff(4) + hashOff(4) + dataOff(8) + compLen(4) + uncompLen(4) + verif(1) + storage(1) + crc(4)
+    const files: FileDef[] = []
+    for (let i = 0; i < fileDataCount; i++) {
+      const o = fileDataOffset + i * 30
+      const namePos     = toc.getUint32(o, true)
+      // hashOff at o+4 (skip)
+      const dataPos     = toc.getUint32(o + 8, true)  // low 32 bits of u64
+      // high 32 bits at o+12 (ignore — files < 4 GB)
+      const storeLength = toc.getUint32(o + 16, true)
+      const length      = toc.getUint32(o + 20, true)
+      const storage     = tocBytes[o + 25]
+      files.push({ namePos, dataPos, storeLength, length, storage })
+    }
+
+    // Strings section (NUL-terminated, offset relative to blob start)
+    const nameAtOffset = new Map<number, string>()
+    {
+      const strEnd = stringOffset + stringLength
+      let cur = stringOffset
+      const td = new TextDecoder('utf-8', { fatal: false })
+      while (cur < strEnd) {
+        let endIx = cur
+        while (endIx < strEnd && tocBytes[endIx] !== 0) endIx++
+        const rel = cur - stringOffset
+        nameAtOffset.set(rel, td.decode(tocBytes.subarray(cur, endIx)))
+        cur = endIx + 1
+      }
+    }
+
+    return new SgaArchive(archiveName, file, dataOffset, folders, files, nameAtOffset)
+  }
+
+  /** Return all file paths in the archive (convenience shorthand for
+   *  `this.list().map(e => e.path)`). Useful when you only need paths
+   *  without paying for lazy-reader closures. */
+  listPaths(): string[] {
+    return this.list().map(e => e.path)
   }
 
   /** Return all files in the archive, with lazy readers. */

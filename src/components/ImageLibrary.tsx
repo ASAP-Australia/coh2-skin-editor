@@ -74,10 +74,19 @@ export default function ImageLibrary({ project, setProject, onImageReady, toast 
     <div>
       <div
         ref={dragRef}
+        role="button"
+        aria-label="Drop image or click to browse"
+        tabIndex={0}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         onClick={() => fileInputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            fileInputRef.current?.click()
+          }
+        }}
         className="rounded-xl border border-dashed border-white/15 px-3 py-5 text-center cursor-pointer
                    bg-black/20 hover:bg-black/30 hover:border-white/25 transition"
       >

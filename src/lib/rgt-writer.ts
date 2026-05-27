@@ -119,9 +119,18 @@ export function canvasToRgt(
   const tsetChildren = concatChunks([tsetData, txtr])
   const tset = foldChunk('TSET', 1, internalName, tsetChildren)
 
+  // FBIF (FileBurnInfo) chunk — required by the CoH2 engine to recognise
+  // the RGT as a valid custom skin texture. Payload: u32 op_len, op string,
+  // then 20 zero bytes (tool info / timestamp — zeros are fine for custom skins).
+  const enc = new TextEncoder()
+  const fbifOp = enc.encode('generic-image to data-rgt')
+  const fbifPayload = new Uint8Array(4 + fbifOp.length + 20)
+  new DataView(fbifPayload.buffer).setUint32(0, fbifOp.length, true)
+  fbifPayload.set(fbifOp, 4)
+  const fbif = dataChunk('FBIF', 2, 'FileBurnInfo', fbifPayload)
+
   // 6. File header (16 magic + 20 fixed) — same shape we read
   const fileHeader = new Uint8Array(36)
-  const enc = new TextEncoder()
   fileHeader.set(enc.encode('Relic Chunky'), 0)
   fileHeader[12] = 0x0d; fileHeader[13] = 0x0a; fileHeader[14] = 0x1a; fileHeader[15] = 0
   const fhView = new DataView(fileHeader.buffer)
@@ -131,9 +140,10 @@ export function canvasToRgt(
   fhView.setUint32(28, 0x1c, true)
   fhView.setUint32(32, 1, true)
 
-  const out = new Uint8Array(fileHeader.length + tset.length)
+  const body = concatChunks([fbif, tset])
+  const out = new Uint8Array(fileHeader.length + body.length)
   out.set(fileHeader, 0)
-  out.set(tset, fileHeader.length)
+  out.set(body, fileHeader.length)
   return out
 }
 

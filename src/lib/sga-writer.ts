@@ -65,6 +65,11 @@ export interface SgaInputFile {
   /** Default true (zlib deflate, storage=2). Set false for already-compressed
    *  payloads or tiny files where compression doesn't help. */
   compress?: boolean
+  /** Explicit storage-type alias. `'buffer'` selects storage=2 (zlib-deflated
+   *  "buffer" mode), identical to `compress: true`. Provided for parity with
+   *  the SGA reader's storage enum so test fixtures can name the type
+   *  explicitly without touching `compress`. */
+  storage?: 'buffer'
 }
 
 export interface BuildSgaOptions {
@@ -84,7 +89,7 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
   const driveOf = (p: string): 0 | 1 | 2 | 3 => {
     if (p.startsWith('attrib/'))  return 0
     if (p.startsWith('english/') || p.startsWith('locale/')) return 1
-    if (p.endsWith('.info'))      return 2
+    if (!p.includes('/'))         return 2  // root-level files (e.g. <guid>.info, <slug>.dds) → info drive
     return 3
   }
   const files = [...input].sort((a, b) => {
@@ -266,7 +271,7 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
   }
   fileHeader.set(nameUtf16, 12)
   fhView.setUint32(140, headerSize, true)
-  const dataPosAbs = 152 + headerSize
+  const dataPosAbs = 152 + headerSize + 256  // standard 256-byte gap between TOC end and data block
   fhView.setUint32(144, dataPosAbs, true)
   fhView.setUint32(148, 1, true)          // reserved must be 1
 
@@ -344,14 +349,14 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
   // Names section
   for (let i = 0; i < namesBytes.length; i++) tocBytes[namePos + i] = namesBytes[i]
 
-  // ----- Concatenate file header + TOC + data block -----
+  // ----- Concatenate file header + TOC + 256-byte gap + data block -----
   const dataBlockSize = runningDataLen
-  const out = new Uint8Array(152 + headerSize + dataBlockSize)
+  const out = new Uint8Array(dataPosAbs + dataBlockSize)
   out.set(fileHeader, 0)
   out.set(tocBytes, 152)
-  let cursor = 152 + headerSize
+  // The 256-byte gap (bytes 152+headerSize .. dataPosAbs-1) stays zero-filled.
   for (const p of prepared) {
-    out.set(p.bytes, cursor + p.dataPos)
+    out.set(p.bytes, dataPosAbs + p.dataPos)
   }
   return out
 }

@@ -55,12 +55,67 @@ export function parseChunky(buf: ArrayBuffer | Uint8Array): { version: number; r
   if (!isChunky(u8)) throw new Error('Not a Relic Chunky file (bad magic)')
   const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength)
   const version = view.getUint32(16, true)
-  if (version !== 3) {
-    throw new Error(`Chunky version ${version} not supported (expected 3)`)
+  if (version === 3) {
+    // Header is 36 bytes: 16 magic + 5 × uint32. Chunks start at offset 36.
+    const root = parseChunks(u8, view, 36, u8.length)
+    return { version, root }
+  } else if (version === 4) {
+    // v4 (CoH3/Anvil) file header is 24 bytes: 16 magic + version + platform.
+    const root = parseChunksV4(u8, view, 24, u8.length)
+    return { version, root }
+  } else {
+    throw new Error(`Chunky version ${version} not supported`)
   }
-  // Header is 36 bytes: 16 magic + 5 × uint32. Chunks start at offset 36.
-  const root = parseChunks(u8, view, 36, u8.length)
-  return { version, root }
+}
+
+/** Parse a sequence of v4 chunks within `[start, end)`. Recurses into FOLDers.
+ *
+ * v4 chunk header (20 bytes + pathLen bytes):
+ *   [0..3]    kind     "DATA" or "FOLD"
+ *   [4..7]    fourCC
+ *   [8..11]   version  int32 LE
+ *   [12..15]  length   payload bytes (int32 LE)
+ *   [16..19]  pathLen  int32 LE
+ *   [20..20+pathLen-1] path (ASCII)
+ *   [20+pathLen..]     payload (length bytes)
+ */
+function parseChunksV4(
+  u8: Uint8Array,
+  view: DataView,
+  start: number,
+  end: number,
+): Chunk[] {
+  const out: Chunk[] = []
+  let p = start
+  while (p + 20 <= end) {
+    const kindBytes = u8.subarray(p, p + 4)
+    const kindStr = String.fromCharCode(kindBytes[0], kindBytes[1], kindBytes[2], kindBytes[3])
+    if (kindStr !== 'DATA' && kindStr !== 'FOLD') break
+    const fourCC = String.fromCharCode(u8[p + 4], u8[p + 5], u8[p + 6], u8[p + 7])
+    const cver = view.getUint32(p + 8, true)
+    const size = view.getUint32(p + 12, true)
+    const pathLen = view.getUint32(p + 16, true)
+    const pathStart = p + 20
+    const payloadOffset = pathStart + pathLen
+    const payloadEnd = payloadOffset + size
+    if (payloadEnd > end) break
+    const name = decodeName(u8, pathStart, pathLen)
+    const chunk: Chunk = {
+      kind: kindStr as ChunkKind,
+      fourCC,
+      version: cver,
+      name,
+      payloadOffset,
+      payloadSize: size,
+      children: [],
+    }
+    if (kindStr === 'FOLD') {
+      chunk.children = parseChunksV4(u8, view, payloadOffset, payloadEnd)
+    }
+    out.push(chunk)
+    p = payloadEnd
+  }
+  return out
 }
 
 /** Parse a sequence of chunks within `[start, end)`. Recurses into FOLDers. */

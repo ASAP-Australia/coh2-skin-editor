@@ -9,22 +9,87 @@
  * When running as a plain web page the functions are no-ops / return null.
  */
 
+import type {
+  AiProvider,
+  AiCompleteRequest,
+  AiCompleteResponse,
+  AiSettings,
+  AiGenerateImageRequest,
+  AiGenerateImageResponse,
+  DiffusionStatus,
+  DiffusionGenerateImageRequest,
+  DiffusionGenerateImageResponse,
+  DiffusionEditImageRequest,
+  DiffusionEditImageResponse,
+} from './ai/types'
+
+// ---------------------------------------------------------------------------
+// Workshop / stock-archive types (mirrored from electron/detect-coh2.ts)
+// ---------------------------------------------------------------------------
+
+export interface WorkshopItem {
+  /** Numeric Workshop ID (folder name under content/231430/). */
+  id: string
+  /** Absolute path to the workshop item's directory. */
+  dir: string
+  /** Absolute path to the .sga archive inside the item dir, or null when
+   *  no .sga is present. */
+  sgaPath: string | null
+}
+
+export interface StockArchive {
+  /** Filename without extension — used as the template option `name`. */
+  id: string
+  /** Absolute path to the .sga archive. */
+  path: string
+  /** Approximate size in bytes (from fs.statSync). */
+  size: number
+}
+
 // ---------------------------------------------------------------------------
 // Type declarations for the preload bridge
 // ---------------------------------------------------------------------------
 
+interface ElectronAiNamespace {
+  getSettings: () => Promise<AiSettings>
+  setActiveProvider: (p: AiProvider) => Promise<boolean>
+  setKey: (p: AiProvider, key: string) => Promise<boolean>
+  clearKey: (p: AiProvider) => Promise<boolean>
+  complete: (req: AiCompleteRequest) => Promise<AiCompleteResponse>
+  generateImage: (req: AiGenerateImageRequest) => Promise<AiGenerateImageResponse>
+}
+
+interface ElectronDiffusionNamespace {
+  getStatus: () => Promise<DiffusionStatus>
+  listModels: () => Promise<string[]>
+  listLoras: () => Promise<string[]>
+  start: (model: string) => Promise<DiffusionStatus>
+  stop: () => Promise<DiffusionStatus>
+  generateImage: (req: DiffusionGenerateImageRequest) => Promise<DiffusionGenerateImageResponse>
+  editImage: (req: DiffusionEditImageRequest) => Promise<DiffusionEditImageResponse>
+  getBodyMask: (faction: string, vehicleId: string) => Promise<string | null>
+}
+
 interface ElectronAPI {
-  detectCoh2:    () => Promise<string | null>
-  pickDirectory: () => Promise<string | null>
+  detectCoh2:         () => Promise<string | null>
+  detectCoh2Mods:     () => Promise<string | null>
+  detectCoh2Workshop: () => Promise<string | null>
+  listWorkshopItems:  (root: string) => Promise<WorkshopItem[]>
+  listStockArchives:  (installRoot: string) => Promise<StockArchive[]>
+  pickDirectory:      () => Promise<string | null>
   readFile:      (p: string) => Promise<ArrayBuffer>
   readFileRange: (p: string, start: number, length: number) => Promise<ArrayBuffer>
   fileStat:      (p: string) => Promise<{ size: number } | null>
   listDir:       (p: string) => Promise<{ name: string; isDirectory: boolean }[]>
   fileExists:    (p: string) => Promise<boolean>
-  windowMinimize: () => Promise<void>
-  windowMaximize: () => Promise<void>
-  windowClose:   () => Promise<void>
-  isMaximized:   () => Promise<boolean>
+  writeFile:     (p: string, bytes: ArrayBuffer) => Promise<void>
+  windowMinimize:     () => Promise<void>
+  windowMaximize:     () => Promise<void>
+  windowClose:        () => Promise<void>
+  isMaximized:        () => Promise<boolean>
+  signalRendererReady: () => void
+  ai:        ElectronAiNamespace
+  diffusion: ElectronDiffusionNamespace
 }
 
 declare global {
@@ -166,4 +231,51 @@ export function nativePathToHandle(dirPath: string): FileSystemDirectoryHandle {
       }
     },
   } as unknown as FileSystemDirectoryHandle
+}
+
+// ---------------------------------------------------------------------------
+// New convenience wrappers (added to close the lost surface)
+// ---------------------------------------------------------------------------
+
+/** Detect the CoH2 mods folder path (Documents/My Games/Company of Heroes 2/mods).
+ *  Returns null outside Electron or when detection fails. */
+export async function detectModsPath(): Promise<string | null> {
+  if (!isElectron()) return null
+  return api().detectCoh2Mods()
+}
+
+/** Detect the Steam Workshop content folder for CoH2.
+ *  Returns null outside Electron or when not found. */
+export async function detectWorkshopPath(): Promise<string | null> {
+  if (!isElectron()) return null
+  return api().detectCoh2Workshop()
+}
+
+/** Enumerate workshop items under the given root directory.
+ *  Returns [] outside Electron. */
+export async function listWorkshopItems(root: string): Promise<WorkshopItem[]> {
+  if (!isElectron()) return []
+  return api().listWorkshopItems(root)
+}
+
+/** Enumerate the stock CoH2 archives under the given install root.
+ *  Returns [] outside Electron. */
+export async function listStockArchives(installRoot: string): Promise<StockArchive[]> {
+  if (!isElectron()) return []
+  return api().listStockArchives(installRoot)
+}
+
+/** Write binary bytes to a path on disk, creating parent directories as needed.
+ *  No-op outside Electron. */
+export async function writeFile(p: string, bytes: ArrayBuffer | Uint8Array): Promise<void> {
+  if (!isElectron()) return
+  // Normalise Uint8Array → plain ArrayBuffer for the IPC bridge.
+  // The `.slice()` call on a SharedArrayBuffer-backed Uint8Array would return
+  // ArrayBuffer, but TypeScript types it as ArrayBuffer | SharedArrayBuffer,
+  // so we use the Uint8Array constructor instead which always gives an owned
+  // ArrayBuffer.
+  const buf: ArrayBuffer = bytes instanceof Uint8Array
+    ? new Uint8Array(bytes).buffer as ArrayBuffer
+    : bytes
+  return api().writeFile(p, buf)
 }

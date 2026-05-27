@@ -64,6 +64,9 @@ export const VEHICLES: VehicleSpec[] = [
   V('su85',                'soviet', 'SU-85',            'medium', 'B21'),
   V('su-76m',              'soviet', 'SU-76M',           'medium', 'C21'),
   V('m3a1_scout_car',      'soviet', 'M3A1 Scout',       'light',  'D11'),
+  // Soviet Lend-Lease halftrack — shares the 'halftrack' id with the
+  // German Sd.Kfz. 251. findVehicleSpec uses faction hints to disambiguate.
+  V('halftrack',           'soviet', 'Lend-Lease Truck', 'utility', 'D12'),
 
   // USF (Allied Expeditionary Force / US Forces)
   V('m26_pershing',           'aef', 'Pershing',         'heavy',       'A11'),
@@ -98,4 +101,60 @@ export const FACTIONS: { id: Faction; label: string }[] = [
 
 export function rgmPath(v: VehicleSpec): string {
   return `art/armies/${v.faction}/vehicles/${v.id}/${v.id}.rgm`
+}
+
+/**
+ * Look up a vehicle by id, optionally biased toward a set of faction hints.
+ *
+ * When a vehicle id is shared across factions (e.g. `halftrack` appears for
+ * both `german` and `soviet`), the plain `VEHICLES.find(v => v.id === id)`
+ * call always returns the first catalogue entry (german). Callers that know
+ * the project's faction context should pass `factionHints` so the correct
+ * entry is returned.
+ *
+ * Behaviour:
+ *   1. If exactly one match exists, return it regardless of hints.
+ *   2. If multiple matches exist and hints are provided, prefer the first
+ *      match whose faction is in the hint set.
+ *   3. If hints don't narrow to a unique match (or are absent/empty), fall
+ *      back to the first catalogue match.
+ *   4. Returns `undefined` when the id is not in the catalogue at all.
+ */
+export function findVehicleSpec(id: string, factionHints?: Faction[]): VehicleSpec | undefined {
+  const matches = VEHICLES.filter(v => v.id === id)
+  if (matches.length === 0) return undefined
+  if (matches.length === 1) return matches[0]
+  // Multiple matches — use faction hints to pick the right one.
+  if (factionHints && factionHints.length > 0) {
+    const hinted = matches.find(v => factionHints.includes(v.faction))
+    if (hinted) return hinted
+  }
+  // Fall back to first-match (catalogue ordering).
+  return matches[0]
+}
+
+/**
+ * Infer the set of factions present in a project from its vehicle ids.
+ *
+ * Only ids that map to a UNIQUE faction in the catalogue contribute; ambiguous
+ * ids (those shared by multiple factions, like `halftrack`) are ignored unless
+ * the project also contains unambiguous ids that resolve the faction. The
+ * return value is the de-duplicated list of factions found, sorted
+ * alphabetically for stable output.
+ *
+ * This is used by mod-export.ts to build the `factionHints` argument for
+ * `findVehicleSpec` so that shared-id halftracks and similar are routed to
+ * the right faction archive path.
+ */
+export function inferProjectFactions(vehicleIds: string[]): Faction[] {
+  const factionSet = new Set<Faction>()
+  for (const id of vehicleIds) {
+    const matches = VEHICLES.filter(v => v.id === id)
+    // Only unambiguous ids contribute — ambiguous ones would wrongly bias
+    // the result toward whichever faction appears first in the catalogue.
+    if (matches.length === 1) {
+      factionSet.add(matches[0].faction)
+    }
+  }
+  return Array.from(factionSet).sort()
 }
