@@ -37,7 +37,7 @@ import { bcToCanvas } from './bc-decode'
 import { canvasToRgt } from './rgt-writer'
 import { buildSga, type SgaInputFile } from './sga-writer'
 import { paintDecals, type RenderContext } from './decal-painter'
-import { VEHICLES, findVehicleSpec, inferProjectFactions, type Faction } from './vehicles'
+import { findVehicleSpec, inferProjectFactions, type Faction } from './vehicles'
 import type { Coh2SkinProject } from './project'
 
 const TEMPLATE_GUID = '935a02ef44344ea29108b57b9cb7b9f5'

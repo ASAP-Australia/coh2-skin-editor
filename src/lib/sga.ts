@@ -214,6 +214,11 @@ export class SgaArchive {
     headerBytes: Uint8Array,
     view: DataView,
   ): Promise<SgaArchive> {
+    // Suppress unused-arg warnings for the v7-shaped header slice passed
+    // by the dispatcher — we re-read 428 bytes below for v10's bigger TOC.
+    void headerBytes
+    void view
+
     // Read the full 428-byte fixed header
     const fullHeaderBytes = new Uint8Array(await file.slice(0, 428).arrayBuffer())
     const fullView = new DataView(fullHeaderBytes.buffer)
@@ -225,8 +230,6 @@ export class SgaArchive {
     const blobLength = fullView.getUint32(148, true)
     // dataOffset is u64 LE — low 32 bits
     const dataOffset = fullView.getUint32(152, true)
-
-    void view  // v7 view not needed for v10
 
     // Read TOC blob
     const tocBytes = new Uint8Array(

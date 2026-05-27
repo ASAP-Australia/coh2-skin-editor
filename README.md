@@ -1,41 +1,71 @@
 # CoH2 Skin Editor (community)
 
-A browser-based skin pack editor for **Company of Heroes 2** that runs entirely
-on your own machine. You install Relic's CoH2 Mod Tools (free), then use this
-web app to place decals on your tanks (shields, bortnummer, vehicle names,
-kill rings) and export a buildable skin pack.
+[![CI](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/codeql.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/ASAP-australia/coh2-skin-editor/badge)](https://securityscorecards.dev/viewer/?uri=github.com/ASAP-australia/coh2-skin-editor)
+[![Accessibility (WCAG 2.1 AA)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/accessibility.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/accessibility.yml)
+[![Lighthouse](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/lighthouse.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/lighthouse.yml)
+[![Dependency Review](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/dependency-review.yml)
+[![OSV Scanner](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/osv-scanner.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/osv-scanner.yml)
+[![Gitleaks](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/gitleaks.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+A desktop skin / decal / faceplate editor for **Company of Heroes 2** that
+publishes directly to the **Steam Workshop**. Place decals on tanks (shields,
+bortnummer, vehicle names, kill rings), build full skin packs, and ship them
+to your subscribers — Steam handles distribution, multiplayer lobby
+validation, and updates.
 
 **Local-first by design.** Vehicle meshes and base textures come from your
-local CoH2 Tools install — they're never uploaded to a server. The app is
-just JavaScript running in your browser; the source you provide stays on
-your machine.
+local CoH2 install via Steam — they're never uploaded to a server. The
+Workshop upload is the only outbound network call, and it goes straight
+to Steam over their authenticated SDK channel.
 
 ## Status
 
-Early scaffolding. The viewer + decal editor from
-[`coh2-prinses-irene-skin`](https://github.com/jflessenkemper/coh2-prinses-irene-skin)
-is being ported in here, with proper UI, multi-vehicle support, GitHub
-Pages deployment, and a proper build pipeline.
+**v1.0 — Steam-first desktop release.** The editor is shipped as an
+Electron app that bridges to the Steamworks SDK for authentication and
+Workshop publishing. The previous browser build (which couldn't publish
+to Workshop) has been retired.
+
+The Steam-first architecture fixes the pre-1.0 multiplayer-lobby
+validation bug: every published item now carries a real Workshop ID, so
+Steam recognises subscriptions when CoH2 asks during lobby join.
+
+## Install
+
+Grab the latest AppImage / `.exe` from
+[Releases](https://github.com/ASAP-australia/coh2-skin-editor/releases).
+You need:
+
+- **Steam running** and signed into the account that owns Company of
+  Heroes 2 (Steam App ID 231430).
+- **CoH2 installed** through that Steam account.
+
+The first launch authenticates against Steam, locates your CoH2 install
+automatically, and (one-time) clears any stale packs from a pre-1.0
+install of this tool from your mods folder.
 
 ## Develop
 
 ```sh
 npm install
-npm run dev
+npm run electron:dev     # runs Vite + Electron with hot reload
+npm run test             # runs the Vitest suite (~1500 tests)
+npm run electron:build   # produces an AppImage in ./release
 ```
 
-Open the URL Vite prints. You'll see a placeholder workspace in dark
-glassmorphism style — actual viewport + decal placement is being wired in
-next.
+Steam must be running for `electron:dev` to authenticate — the SteamGate
+screen will sit on the "no-steam" branch until you start the client.
 
 ## Stack
 
-- **Vite + React + TypeScript**
+- **Electron + Vite + React 19 + TypeScript**
 - **Tailwind CSS v4** (CSS-first config in `src/index.css`)
 - **shadcn/ui** (Radix primitives, restyled for dark glassmorphism)
 - **Three.js** (3D viewport, FBX loader, raycasting for decal placement)
+- **steamworks.js** (Node.js binding to the Steamworks SDK)
 - Pure-client compositor for the diffuse texture (no server)
-- GitHub Pages for hosting
 
 ## Design
 
@@ -45,14 +75,30 @@ shadows, continuous corner radii.
 
 ## Why this exists
 
-Relic's official Mod Tools workflow requires Wine/Proton, ModBuilder, raw XML
-editing, and a deep understanding of Relic's pipeline — the barrier to entry
-is too high. This editor compresses placement (the bit that needs a 3D
-viewport) into a clean web UI, then emits the same TGA/XML files the official
-tools would produce, so anyone can build a CoH2 skin pack without learning
-the Mod Tools end-to-end.
+Relic's official Mod Tools workflow requires Wine/Proton, ModBuilder, raw
+XML editing, and a deep understanding of Relic's pipeline — the barrier
+to entry is too high. This editor compresses placement (the bit that
+needs a 3D viewport) into a clean Electron UI, packs the result into a
+valid CoH2 `.sga`, and uploads it straight to the Workshop — so anyone
+can ship a skin pack without learning the Mod Tools end-to-end.
+
+## Security & quality gates
+
+CI runs on every PR:
+
+- **CI** — `tsc`, ESLint, Vitest (~1500 unit + component tests), Playwright
+  smoke
+- **CodeQL** — static analysis for JS/TS security issues
+- **OpenSSF Scorecard** — supply-chain & repository-hygiene scoring
+- **Accessibility** — axe-core + pa11y-ci against WCAG 2.1 AA
+- **Lighthouse** — performance / a11y / best-practices score
+- **Dependency Review** — flags new direct deps with known CVEs
+- **OSV Scanner** — Google's vulnerability database lookup
+- **Gitleaks** — secret-scanning on every commit
+- **Size limit** — guards against bundle-size regressions
+- **Mutation testing** — Stryker on core libs
 
 ## License
 
-MIT. CoH2 game assets remain Relic/SEGA property — this app never redistributes
-them. You must own CoH2 + the Mod Tools to use this editor.
+MIT. CoH2 game assets remain Relic/SEGA property — this app never
+redistributes them. You must own CoH2 (via Steam) to use this editor.
