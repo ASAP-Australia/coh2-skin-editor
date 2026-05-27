@@ -134,6 +134,27 @@ interface ElectronSteamNamespace {
   workshop: ElectronSteamWorkshopNamespace
 }
 
+// Mods-folder migration types — mirror electron/mods-wipe.ts.
+export type FakeIdKind = 'decals' | 'faceplates' | 'extension' | 'skins'
+
+export interface FakeIdEntry {
+  kind: FakeIdKind
+  path: string
+  id: string
+  size: number
+  reason: 'non-numeric-basename' | 'numeric-above-threshold'
+}
+
+export interface TrashResult {
+  trashed: string[]
+  failed: { path: string; error: string }[]
+}
+
+interface ElectronModsNamespace {
+  scanFakeIds: (modsRoot: string) => Promise<FakeIdEntry[]>
+  trashFakeIds: (paths: string[], modsRoot: string) => Promise<TrashResult>
+}
+
 interface ElectronAPI {
   detectCoh2:         () => Promise<string | null>
   detectCoh2Mods:     () => Promise<string | null>
@@ -159,6 +180,7 @@ interface ElectronAPI {
   ai:        ElectronAiNamespace
   diffusion: ElectronDiffusionNamespace
   steam:     ElectronSteamNamespace
+  mods:      ElectronModsNamespace
 }
 
 declare global {

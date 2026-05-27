@@ -108,6 +108,23 @@ interface StockArchive {
   size: number
 }
 
+// ── Mods-folder migration types (mirrored from electron/mods-wipe.ts) ────────
+
+type FakeIdKind = 'decals' | 'faceplates' | 'extension' | 'skins'
+
+interface FakeIdEntry {
+  kind: FakeIdKind
+  path: string
+  id: string
+  size: number
+  reason: 'non-numeric-basename' | 'numeric-above-threshold'
+}
+
+interface TrashResult {
+  trashed: string[]
+  failed: { path: string; error: string }[]
+}
+
 // ── Steam types (mirrored from electron/steam.ts) ─────────────────────────────
 
 interface SteamInitInfo {
@@ -261,6 +278,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Workshop content staging dir — creates a fresh temp dir the renderer
   // can use as contentPath for steam:workshop:publish.
   makeTmpPublishDir: (): Promise<string> => ipcRenderer.invoke('tmp:make-publish-dir'),
+
+  // One-time mods-folder migration. v0.x Live Sync dropped SGAs with
+  // fake Workshop IDs into the mods tree; those files now fail lobby
+  // validation and need to be cleared. `scanFakeIds` is a cheap stat-
+  // only walk; `trashFakeIds` moves selected files to the OS trash
+  // (recoverable). Both no-op gracefully when modsRoot doesn't exist.
+  mods: {
+    scanFakeIds: (modsRoot: string): Promise<FakeIdEntry[]> =>
+      ipcRenderer.invoke('mods:scan-fake-ids', modsRoot),
+    trashFakeIds: (paths: string[], modsRoot: string): Promise<TrashResult> =>
+      ipcRenderer.invoke('mods:trash-fake-ids', paths, modsRoot),
+  },
 
   // Steam Workshop bridge — Steam-first v1.0. The renderer calls
   // `steam.init()` from the StartScreen and dispatches to one of three

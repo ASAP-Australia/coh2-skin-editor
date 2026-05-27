@@ -18,6 +18,7 @@ import {
   type PublishWorkshopInput,
   type UpdateWorkshopInput,
 } from './steam'
+import { scanFakeIdSgas, trashFakeIdSgas } from './mods-wipe'
 
 // ── Local type copies ─────────────────────────────────────────────────────────
 // The electron directory compiles under `rootDir: "electron"` which prevents
@@ -520,6 +521,21 @@ function createWindow() {
     await fs.promises.mkdir(path.dirname(filePath), { recursive: true })
     await fs.promises.writeFile(filePath, Buffer.from(bytes))
   })
+
+  // ── One-time mods-folder migration (v1.0). Scans for pre-v1.0 fake-
+  //    Workshop-ID SGAs that fail lobby validation and moves them to the
+  //    OS trash (not unlink — recoverable via Recycle Bin / Trash if we
+  //    misclassified a real Workshop subscription). See electron/mods-
+  //    wipe.ts for the classification heuristic.
+  ipcMain.handle('mods:scan-fake-ids', (_e, modsRoot: string) => {
+    return scanFakeIdSgas(modsRoot)
+  })
+  ipcMain.handle(
+    'mods:trash-fake-ids',
+    async (_e, paths: string[], modsRoot: string) => {
+      return await trashFakeIdSgas(paths, modsRoot)
+    },
+  )
 
   // ── AI: settings + key management + completions ───────────────────────
   ipcMain.handle('ai:get-settings', () => ({
