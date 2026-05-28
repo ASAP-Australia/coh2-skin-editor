@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Viewport from './Viewport'
 import TopMenu from './TopMenu'
 import FactionNav from './FactionNav'
+import ScenePanel from './ScenePanel'
 import { useToasts } from './Toasts'
 import { VEHICLES } from '@/lib/vehicles'
 import {
@@ -13,6 +14,7 @@ import { paintDecals, type RenderContext } from '@/lib/decal-painter'
 // (relTime removed with bottom-right "saved Xs ago" indicator)
 import { SgaArchive } from '@/lib/sga'
 import { generateCamo, type CamoPreset } from '@/lib/camo-generator'
+import { type PresetId, loadPresetId, persistPresetId } from '@/lib/scene-settings'
 
 interface Props {
   root: FileSystemDirectoryHandle
@@ -23,6 +25,7 @@ export default function Editor({ root, onDisconnect }: Props) {
   const { api: toast, node: toastNode } = useToasts()
   const [project, setProject] = useState<Coh2SkinProject>(() => loadActive() ?? newProject('My Skin Pack'))
   const [season, setSeason] = useState<'summer' | 'winter'>('summer')
+  const [presetId, setPresetId] = useState<PresetId>(() => loadPresetId())
   // Default to Brummbär — Tiger has a packed-stride RGM variant the parser
   // doesn't handle yet (every submesh skipped → empty viewport). Brummbär is
   // a well-tested model. Users can still pick Tiger from the nav and (when
@@ -91,6 +94,9 @@ export default function Editor({ root, onDisconnect }: Props) {
     return () => document.removeEventListener('keydown', onKey)
   }, [])
   const showChrome = chromeVisible && !chromeForcedHidden
+
+  // Persist the active scene preset whenever it changes.
+  useEffect(() => { persistPresetId(presetId) }, [presetId])
 
   const vehicle = useMemo(() => VEHICLES.find(v => v.id === vehicleId) ?? VEHICLES[0], [vehicleId])
   const veh = useMemo(() => getOrInitVehicle(project, vehicle.id), [project, vehicle.id])
@@ -284,6 +290,7 @@ export default function Editor({ root, onDisconnect }: Props) {
         envArchive={envArchive}
         envName={envName}
         showDestroyed={showDestroyed}
+        presetId={presetId}
       />
 
       {/* Chrome-fade wrapper: everything inside fades away when the user is
@@ -344,6 +351,11 @@ export default function Editor({ root, onDisconnect }: Props) {
             as cluttering the dark viewport. Save state still happens via
             the "saved Xs ago" line inside the View menu. */}
       </div>
+
+      {/* Scene preset picker — always visible (not dimmed with the rest of
+          the chrome) so the user can switch environment without having to
+          first wake the UI. ScenePanel positions itself via `fixed`. */}
+      <ScenePanel presetId={presetId} setPresetId={setPresetId} />
 
       {/* Persistent — never dims. Toast notifications + a 'wake' affordance
           so the user knows the chrome is just hidden, not gone. */}
