@@ -1,7 +1,7 @@
 {
   "name": "coh2-skin-editor",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -46,6 +46,10 @@
       "dist/**/*",
       "dist-electron/**/*",
       "node_modules/steamworks.js/**/*",
+      "native/coh2-workshop/index.js",
+      "native/coh2-workshop/index.d.ts",
+      "native/coh2-workshop/bin/**/*",
+      "native/coh2-workshop/build/Release/coh2_workshop.node",
       "steam_appid.txt"
     ],
     "extraResources": [
@@ -55,7 +59,9 @@
       }
     ],
     "asarUnpack": [
-      "node_modules/steamworks.js/dist/**/*"
+      "node_modules/steamworks.js/dist/**/*",
+      "native/coh2-workshop/bin/**/*",
+      "native/coh2-workshop/build/Release/*.node"
     ],
     "directories": {
       "output": "release"
