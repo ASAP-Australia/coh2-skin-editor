@@ -263,20 +263,32 @@ body {
  * the thumb to the brighter `glass-3` so the affordance is unmistakable.
  */
 .custom-scrollbar {
-  /* Firefox */
+  /* Firefox — needs explicit thumb colour because we override the
+   * global "hide all scrollbars" rule but Firefox doesn't honour
+   * ::-webkit-* selectors. Bumped 0.18 → 0.28 to match WebKit. */
   scrollbar-width: thin;
-  scrollbar-color: rgb(255 255 255 / 0.18) transparent;
+  scrollbar-color: rgb(255 255 255 / 0.28) rgb(255 255 255 / 0.04);
 }
 .custom-scrollbar::-webkit-scrollbar {
   width: 12px;
   height: 12px;
 }
+/* Visible rail channel — user feedback "add a custom scrollbar to the
+ * right" was about discoverability. A transparent track + low-opacity
+ * thumb reads as "no scrollbar at all" on the dark glass background,
+ * which is exactly the opposite of the user request. A faint white
+ * channel makes the rail itself read as an affordance even at rest. */
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgb(255 255 255 / 0.04);
   border-radius: 9999px;
+  margin: 4px 0;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: rgb(255 255 255 / 0.14);
+  /* Resting thumb visible-but-not-loud: 0.22 reads as ~A0 white on the
+   * `glass-3` card (rgb 20/22/28 / 0.62) — clearly an affordance, not a
+   * stripe of noise. Was 0.14 which the user reported as "broke out of
+   * the menu" (i.e. felt invisible). */
+  background-color: rgb(255 255 255 / 0.22);
   border-radius: 9999px;
   /* Inset border keeps the thumb visually narrower than the 12 px rail
    * so the rail reads as channel-with-thumb rather than a solid bar. */
@@ -285,10 +297,10 @@ body {
   transition: background-color 150ms ease;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background-color: rgb(255 255 255 / 0.28);
+  background-color: rgb(255 255 255 / 0.38);
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:active {
-  background-color: rgb(255 255 255 / 0.38);
+  background-color: rgb(255 255 255 / 0.5);
 }
 .custom-scrollbar::-webkit-scrollbar-corner {
   background: transparent;
