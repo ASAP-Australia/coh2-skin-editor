@@ -1,0 +1,40 @@
+name: size-limit
+
+# Posts a comment on every PR with the bundle-size delta against the base
+# branch. Catches accidental dependency bloat before it lands instead of
+# relying on the manual README badge to drift.
+#
+# Uses andresz1/size-limit-action, which:
+#   1. Builds the PR branch and runs `npm run size`
+#   2. Builds the base branch and runs `npm run size`
+#   3. Diffs the results and writes a sticky PR comment
+#
+# Budget is configured in package.json under "size-limit". Currently
+# set to 1500 kB total JS — well above the actual brotli figure of ~345 kB
+# so the CI doesn't fail on legitimate small additions.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  size:
+    runs-on: ubuntu-latest
+    # PRs from forks can't post comments; keep the job non-blocking so it
+    # doesn't gate forked contributions on a permission the repo can't grant.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: andresz1/size-limit-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # `npm ci` runs implicitly. `build_script` matches the script
+          # name in package.json — the action expects `dist/` to be
+          # produced by it.
+          build_script: build
+          skip_step: install
+          # Run the same script the local `npm run size` uses.
+          script: npx size-limit --json

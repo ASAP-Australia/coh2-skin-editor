@@ -18,8 +18,21 @@
     "electron:compile": "tsc -p tsconfig.electron.json && echo '{\"type\":\"commonjs\"}' > dist-electron/package.json",
     "electron:dev": "npm run electron:compile && concurrently \"vite\" \"wait-on http://localhost:5173 && NODE_ENV=development electron .\"",
     "electron:build": "tsc -b && ELECTRON_BUILD=1 vite build && npm run electron:compile && electron-builder",
-    "electron:build:win": "tsc -b && cross-env ELECTRON_BUILD=1 vite build && npm run electron:compile && electron-builder --win"
+    "electron:build:win": "tsc -b && cross-env ELECTRON_BUILD=1 vite build && npm run electron:compile && electron-builder --win",
+    "size": "size-limit"
   },
+  "size-limit": [
+    {
+      "path": "dist/assets/index-*.js",
+      "brotli": true,
+      "limit": "250 kB"
+    },
+    {
+      "path": "dist/assets/three-*.js",
+      "brotli": true,
+      "limit": "150 kB"
+    }
+  ],
   "build": {
     "appId": "com.asap-australia.coh2-skin-editor",
     "productName": "CoH2 Skin Editor",
@@ -96,6 +109,8 @@
     "typescript-eslint": "^8.58.2",
     "vite": "^8.0.10",
     "vitest": "^3.2.4",
-    "wait-on": "^9.0.5"
+    "wait-on": "^9.0.5",
+    "@size-limit/file": "^12.1.0",
+    "size-limit": "^12.1.0"
   }
 }
