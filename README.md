@@ -52,6 +52,16 @@ The first launch authenticates against Steam, locates your CoH2 install
 automatically, and (one-time) clears any stale packs from a pre-1.0
 install of this tool from your mods folder.
 
+## Publishing skins to the Workshop
+
+The CoH2 engine validates RSA signatures on SGA archives before loading them.
+Exported skin `.sga` files cannot be dropped into your local mods folder and
+loaded in-game — the engine rejects unsigned archives. The supported
+distribution flow is **publishing to the Steam Workshop**. When you subscribe
+to a Workshop item, Steam delivers a signed copy of the SGA. For local testing
+before publication, use the editor's **Live Sync** feature, which writes to the
+local mods folder under a flag the engine recognizes during development.
+
 ## Develop
 
 ```sh
