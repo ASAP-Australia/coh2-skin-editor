@@ -19,7 +19,9 @@
     "electron:dev": "npm run electron:compile && concurrently \"vite\" \"wait-on http://localhost:5173 && NODE_ENV=development electron .\"",
     "electron:build": "tsc -b && ELECTRON_BUILD=1 vite build && npm run electron:compile && electron-builder",
     "electron:build:win": "tsc -b && cross-env ELECTRON_BUILD=1 vite build && npm run electron:compile && electron-builder --win",
-    "size": "size-limit"
+    "size": "size-limit",
+    "a11y": "npx tsx scripts/a11y-axe.mts",
+    "a11y:pa11y": "pa11y-ci"
   },
   "size-limit": [
     {
@@ -110,7 +112,10 @@
     "vite": "^8.0.10",
     "vitest": "^3.2.4",
     "wait-on": "^9.0.5",
+    "@axe-core/playwright": "^4.11.3",
     "@size-limit/file": "^12.1.0",
+    "pa11y-ci": "^4.1.1",
+    "playwright": "^1.60.0",
     "size-limit": "^12.1.0"
   }
 }
