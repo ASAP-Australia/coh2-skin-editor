@@ -37,7 +37,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { scheduleLiveSync } from '@/lib/live-sync'
+import { scheduleLiveSync, useLiveSync } from '@/lib/live-sync'
 import {
   type Coh2FaceplateProject,
   type FaceplateLayer,
@@ -100,7 +100,7 @@ import {
   WholeWord,
 } from 'lucide-react'
 import { applySnap, type SnapTarget } from '@/lib/snap-guides'
-import LiveSyncBadge from '@/components/LiveSyncBadge'
+import { StateIcon } from '@/components/LiveSyncBadge'
 import AtlasViewPanel from '@/components/AtlasViewPanel'
 import FaceplateInGamePreview from '@/components/FaceplateInGamePreview'
 import {
@@ -173,6 +173,14 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   const [insigniaOpen, setInsigniaOpen] = useState(false)
   /** Whether the centered title-rename popover is open. */
   const [packNameEditOpen, setPackNameEditOpen] = useState(false)
+  // ── Live Sync state (for title pill inline icon) ───────────────────────
+  const sync = useLiveSync()
+  const liveSyncTitle = sync.enabled
+    ? `Click to rename — Live Sync: ${sync.reason}`
+    : 'Click to rename — Live Sync is off'
+  const liveSyncAriaLabel = sync.enabled
+    ? `Project name — click to rename. Live Sync: ${sync.reason}`
+    : 'Project name — click to rename. Live Sync is off'
   /** Publish-to-Workshop dialog. */
   const [publishDialogOpen, setPublishDialogOpen] = useState(false)
   const [publishTarget, setPublishTarget] = useState<import('@/components/PublishToWorkshopDialog').WorkshopPublishTarget | null>(null)
@@ -1550,9 +1558,8 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
       {/* ── Centered project title pill — top center of viewport ────────
           Mirrors EditorHomeButton's glass styling. Clicking opens a small
           rename popover so the user can rename the pack inline. Shows ONLY
-          packName (never author). LiveSyncBadge sits as a sibling to the
-          rename button inside the same fixed-position wrapper, visually
-          adjacent but isolated from rename-toggle click events. */}
+          packName (never author). The Live Sync status icon is rendered
+          inline at the end of the title text — hover reveals the reason. */}
       <div
         style={
           {
@@ -1571,8 +1578,8 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
       >
         <button
           type="button"
-          title="Click to rename this faceplate"
-          aria-label="Project name — click to rename"
+          title={liveSyncTitle}
+          aria-label={liveSyncAriaLabel}
           onClick={() => {
             setPackNameEditOpen(v => !v)
           }}
@@ -1580,6 +1587,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
+            gap: 6,
             height: 36,
             paddingLeft: 14,
             paddingRight: 14,
@@ -1605,23 +1613,13 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
           }}
         >
-          {project.packName || 'Unnamed Faceplate'}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {project.packName || 'Unnamed Faceplate'}
+          </span>
+          <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
+            <StateIcon state={sync.state} />
+          </span>
         </button>
-
-        {/* LiveSyncBadge — adjacent to title, clicks do not propagate to
-            the rename toggle. Wrap in a div with stopPropagation so badge
-            interactions (e.g. opening icon picker) stay isolated. */}
-        <div onClick={(e) => e.stopPropagation()}>
-          <LiveSyncBadge
-            iconPicker={{
-              current: project.inventoryIcon ?? null,
-              onSet: dataUrl =>
-                mutate(p => ({ ...p, inventoryIcon: dataUrl ?? undefined }), {
-                  undoable: true,
-                }),
-            }}
-          />
-        </div>
 
         {/* Rename popover — appears directly below the title button */}
         <PackIdentityPopover

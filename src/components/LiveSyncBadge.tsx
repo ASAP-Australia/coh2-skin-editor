@@ -51,7 +51,7 @@ import type { LiveSyncState } from '@/lib/live-sync'
 
 // ─── Icon mapping ─────────────────────────────────────────────────────────────
 
-function StateIcon({ state }: { state: LiveSyncState }) {
+export function StateIcon({ state }: { state: LiveSyncState }) {
   switch (state) {
     case 'idle':
     case 'synced':

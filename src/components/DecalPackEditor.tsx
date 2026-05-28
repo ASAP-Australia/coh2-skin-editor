@@ -65,11 +65,11 @@ import {
   type Decal,
 } from '@/lib/decal-pack-project'
 import { rasteriseDecal } from '@/lib/decal-pack-export'
-import { scheduleLiveSync } from '@/lib/live-sync'
+import { scheduleLiveSync, useLiveSync } from '@/lib/live-sync'
 import { writeClipboard, readClipboard } from '@/lib/editor-clipboard'
 import { INSIGNIA_LIBRARY, type InsigniaEntry } from '@/lib/insignia-library'
 import HexColorInput from '@/components/editor-primitives/HexColorInput'
-import LiveSyncBadge from '@/components/LiveSyncBadge'
+import { StateIcon } from '@/components/LiveSyncBadge'
 import AtlasViewPanel from '@/components/AtlasViewPanel'
 import DecalPackInGamePreview from '@/components/DecalPackInGamePreview'
 import {
@@ -170,6 +170,14 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
   // identifier so the user always sees which pack they're editing without
   // having to expand the side panel.
   const [packNameEditOpen, setPackNameEditOpen] = useState(false)
+  // ── Live Sync state (for title pill inline icon) ───────────────────────
+  const sync = useLiveSync()
+  const liveSyncTitle = sync.enabled
+    ? `Click to rename — Live Sync: ${sync.reason}`
+    : 'Click to rename — Live Sync is off'
+  const liveSyncAriaLabel = sync.enabled
+    ? `Pack name — click to rename. Live Sync: ${sync.reason}`
+    : 'Pack name — click to rename. Live Sync is off'
 
   // ── Publish-to-Workshop dialog ────────────────────────────────────────
   const [publishDialogOpen, setPublishDialogOpen] = useState(false)
@@ -1103,8 +1111,8 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
           popover (name / description / author / icon). These ARE the
           in-game text fields — name appears above the decal grid and on
           the equip card; description is the body text on that card.
-          LiveSyncBadge sits as a sibling to the rename button, visually
-          adjacent but isolated from rename-toggle click events. */}
+          The Live Sync status icon is rendered inline at the end of the
+          title text — hover reveals the reason. */}
       <div
         style={
           {
@@ -1123,8 +1131,8 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
       >
         <button
           type="button"
-          title="Click to rename this decal pack"
-          aria-label="Pack name — click to rename"
+          title={liveSyncTitle}
+          aria-label={liveSyncAriaLabel}
           onClick={() => {
             setPackNameEditOpen(v => !v)
           }}
@@ -1132,6 +1140,7 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
+            gap: 6,
             height: 36,
             paddingLeft: 14,
             paddingRight: 14,
@@ -1157,14 +1166,13 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
             transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
           }}
         >
-          {project.packName || 'Unnamed Decal Pack'}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {project.packName || 'Unnamed Decal Pack'}
+          </span>
+          <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
+            <StateIcon state={sync.state} />
+          </span>
         </button>
-
-        {/* LiveSyncBadge — adjacent to title, clicks do not propagate to
-            the rename toggle. */}
-        <div onClick={(e) => e.stopPropagation()}>
-          <LiveSyncBadge />
-        </div>
 
         {/* Pack identity popover — name / description / author / icon.
             Name and Description ARE the in-game text fields: name appears
