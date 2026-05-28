@@ -43,6 +43,8 @@ import {
   Sphere,
   SRGBColorSpace,
   ACESFilmicToneMapping,
+  CanvasTexture,
+  MeshStandardMaterial,
   type Object3D,
   type Mesh,
   type Material,
@@ -51,6 +53,7 @@ import {
 import { loadStructure } from './structure-loader'
 import { VEHICLES, rgmPath } from './vehicles'
 import { registerThreeRenderer } from './vehicle-icons'
+import { bakeDecalOntoKingTigerDiffuse } from './king-tiger-decal-bake'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public API
@@ -93,6 +96,65 @@ export async function renderVehicleSilhouette(
 let sharedContext: RendererContext | null = null
 
 // ─────────────────────────────────────────────────────────────────────────
+// King Tiger decal preview renderer
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Render the King Tiger (king_tiger_sdkfz_182) with a user decal composited
+ * onto the hullSideRight UV region, and return the result as a PNG data URL.
+ *
+ * Steps:
+ *   1. Fetch the vanilla diffuse from `/debug/king_tiger.png`.
+ *   2. Bake the decal into a 2048² composite canvas via
+ *      `bakeDecalOntoKingTigerDiffuse`.
+ *   3. Wrap in a THREE.CanvasTexture and swap onto all mesh materials.
+ *   4. Render via the shared RendererContext (same camera/lighting as
+ *      `renderVehicleSilhouette`) at the requested `size`.
+ *   5. Restore the original materials and return the PNG data URL.
+ *
+ * Returns `null` when the install handle is missing (King Tiger RGM not
+ * loadable) or when any step fails — callers should degrade gracefully.
+ */
+export async function renderKingTigerWithDecal(opts: {
+  install: FileSystemDirectoryHandle
+  decalCanvas: HTMLCanvasElement
+  size?: number
+}): Promise<string | null> {
+  const { install, decalCanvas, size = 512 } = opts
+
+  // 1. Fetch and decode the vanilla diffuse texture.
+  let vanillaImg: HTMLImageElement
+  try {
+    vanillaImg = await loadImageFromUrl('/debug/king_tiger.png')
+  } catch (e) {
+    console.warn('[renderKingTigerWithDecal] failed to load vanilla diffuse:', (e as Error).message)
+    return null
+  }
+
+  // 2. Bake decal into a composited 2048² canvas.
+  let bakedCanvas: HTMLCanvasElement
+  try {
+    bakedCanvas = await bakeDecalOntoKingTigerDiffuse(vanillaImg, decalCanvas)
+  } catch (e) {
+    console.warn('[renderKingTigerWithDecal] bake failed:', (e as Error).message)
+    return null
+  }
+
+  // 3. Build a CanvasTexture from the baked canvas.
+  const bakedTexture = new CanvasTexture(bakedCanvas)
+  bakedTexture.colorSpace = SRGBColorSpace
+
+  // 4. Render via the shared RendererContext.
+  const ctx = sharedContext ?? (sharedContext = new RendererContext(install))
+
+  // Serialise behind the shared busy queue so we don't stomp on concurrent
+  // renderVehicleSilhouette calls sharing the same canvas.
+  const result = await ctx.renderWithTexture('king_tiger_sdkfz_182', bakedTexture, size)
+  bakedTexture.dispose()
+  return result
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Internal renderer
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -116,6 +178,96 @@ class RendererContext {
 
   constructor(root: FileSystemDirectoryHandle) {
     this.root = root
+  }
+
+  /** Render the vehicle substituting all mesh materials with the supplied
+   *  texture. Used by `renderKingTigerWithDecal` so it can share the
+   *  existing camera/lighting rig without forking the full render path. */
+  async renderWithTexture(
+    vehicleId: string,
+    texture: Texture,
+    size: number,
+  ): Promise<string | null> {
+    const next = this.busy.then(() => this.renderInnerWithTexture(vehicleId, texture, size))
+    this.busy = next.catch(() => undefined)
+    return await next
+  }
+
+  private async renderInnerWithTexture(
+    vehicleId: string,
+    texture: Texture,
+    size: number,
+  ): Promise<string | null> {
+    const spec = VEHICLES.find(v => v.id === vehicleId)
+    if (!spec) return null
+
+    const { renderer, scene, camera } = this.ensureContext(size)
+
+    let loaded: Awaited<ReturnType<typeof loadStructure>>
+    try {
+      loaded = await loadStructure(this.root, rgmPath(spec))
+    } catch (e) {
+      console.warn('[vehicle-3d-renderer] load failed:', (e as Error).message)
+      return null
+    }
+
+    const group = loaded.group
+
+    // Override every mesh material with the baked texture. We swap back
+    // after the render so we don't pollute any cached mesh objects.
+    const originalMaterials = new Map<Mesh, Material | Material[]>()
+    group.traverse(obj => {
+      const mesh = obj as Mesh
+      if (!mesh.isMesh) return
+      originalMaterials.set(mesh, mesh.material)
+      const mat = new MeshStandardMaterial({ map: texture })
+      mesh.material = mat
+    })
+
+    const bbox = new Box3().setFromObject(group)
+    const centre = new Vector3()
+    bbox.getCenter(centre)
+    group.position.sub(centre)
+    scene.add(group)
+
+    const sphere = new Sphere()
+    bbox.setFromObject(group).getBoundingSphere(sphere)
+    const fitDist = (sphere.radius * FIT_MARGIN) / Math.tan((CAM_FOV_DEG * Math.PI) / 360)
+
+    const az = (CAM_AZIMUTH_DEG * Math.PI) / 180
+    const el = (CAM_ELEVATION_DEG * Math.PI) / 180
+    camera.position.set(
+      Math.sin(az) * Math.cos(el) * fitDist,
+      Math.sin(el) * fitDist,
+      Math.cos(az) * Math.cos(el) * fitDist,
+    )
+    camera.lookAt(0, 0, 0)
+    camera.near = fitDist * 0.05
+    camera.far = fitDist * 5
+    camera.updateProjectionMatrix()
+
+    renderer.render(scene, camera)
+    const dataUrl = renderer.domElement.toDataURL('image/png')
+
+    // Clean up overridden materials, then dispose the group.
+    group.traverse(obj => {
+      const mesh = obj as Mesh
+      if (!mesh.isMesh) return
+      const overrideMat = mesh.material
+      const orig = originalMaterials.get(mesh)
+      if (orig !== undefined) mesh.material = orig
+      // Dispose the override material (NOT the texture — caller owns it).
+      if (Array.isArray(overrideMat)) {
+        overrideMat.forEach(m => m.dispose())
+      } else {
+        overrideMat.dispose()
+      }
+    })
+
+    scene.remove(group)
+    disposeGroup(group)
+
+    return dataUrl
   }
 
   /** Queue a render and return the resulting PNG data URL. Returns null
@@ -271,6 +423,17 @@ class RendererContext {
 // ─────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────
+
+/** Load a URL into a decoded HTMLImageElement. Used by `renderKingTigerWithDecal`
+ *  to fetch the vanilla King Tiger diffuse from `/debug/king_tiger.png`. */
+function loadImageFromUrl(url: string): Promise<HTMLImageElement> {
+  return new Promise((res, rej) => {
+    const img = new Image()
+    img.onload = () => res(img)
+    img.onerror = () => rej(new Error(`Failed to load image: ${url}`))
+    img.src = url
+  })
+}
 
 /** Walk a Three.js group and dispose every geometry/material/texture it
  *  owns. Necessary because `loadStructure` allocates fresh buffers per

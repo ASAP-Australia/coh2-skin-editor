@@ -409,6 +409,7 @@ export default function App() {
             setDecalPackProject(null)
             setPhase('start')
           }}
+          installRoot={installRoot}
         />
       </>
     )
