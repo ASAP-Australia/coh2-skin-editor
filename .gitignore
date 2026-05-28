@@ -1,17 +1,46 @@
 node_modules
 dist
+dist-electron/electron/
+release/
+
+# Build / test artefacts that don't belong in git
+coverage/
+playwright-report/
+test-results/
+.lighthouseci/
+reports/
+out/
+.vite/
+node_modules/.vite/
+
+# Editor / agent scratchpads
+.llm/
+.claude-conversations/
+
+# Large local-only datasets — Tailwind v4 honours .gitignore for its
+# auto-source scan, so this also stops `tailwindcss` from trying to
+# walk these directories at build time. The `training/` directory
+# alone is ~18 GB of ML weights and caches; without this entry
+# `vite build` hung indefinitely in the transform stage as Tailwind
+# attempted to extract class names from every file in that tree.
+training/
+tools/extracted/
+tools/companion/
+
+# Project artefacts users may produce locally
+*.coh2skin
+*.coh2skin.bak-*
+sbom.cdx.json
+
+# OS / IDE
 .DS_Store
 *.log
 .env
 .env.*
 !.env.example
+
+# Workshop / Steam upload caches
 tools/templates/*.sga
 tools/templates/signed/
 public/keys/*.sga
 public/keys/manifest.json
-tools/templates/*.sga
-tools/templates/signed/
-public/keys/*.sga
-public/keys/manifest.json
-dist-electron/electron/
-release/

@@ -1,7 +1,19 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+
+/* Tailwind v4 auto-detection walks the entire project root scanning every
+ * file extension it recognises. On this repo the root contains a local
+ * `training/` tree (~18 GB of ML weights) and `tools/extracted/` (~164 MB
+ * of unpacked game assets) — even though both are .gitignored, the Oxide
+ * scanner reads enough metadata during the walk to hang `vite build`
+ * indefinitely in the transform phase. The `source(none)` modifier above
+ * disables auto-detection entirely; the explicit `@source` rules below
+ * tell Tailwind exactly which directories ship in the production bundle,
+ * which is all we need. */
+@source "./**/*.{html,ts,tsx,js,jsx}";
+@source "../index.html";
 
 @custom-variant dark (&:is(.dark *));
 
