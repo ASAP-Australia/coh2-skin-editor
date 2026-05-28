@@ -115,8 +115,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Build app for e2e
         run: npm run build
-      - name: Run Playwright e2e suite
-        run: npm run e2e
+      - name: Run Playwright e2e suite (chromium only)
+        run: npx playwright test --project=chromium
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v4
