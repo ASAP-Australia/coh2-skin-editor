@@ -1,0 +1,18 @@
+name: html-validate
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Validate HTML with html-validate
+        run: npx --yes html-validate dist/index.html --rule 'void-style:off' --rule 'no-inline-style:off' --rule 'long-title:off'
