@@ -1,13 +1,18 @@
 # CoH2 Skin Editor (community)
 
-[![CI](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/codeql.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/ASAP-australia/coh2-skin-editor/badge)](https://securityscorecards.dev/viewer/?uri=github.com/ASAP-australia/coh2-skin-editor)
-[![Accessibility (WCAG 2.1 AA)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/accessibility.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/accessibility.yml)
-[![Lighthouse](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/lighthouse.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/lighthouse.yml)
-[![Dependency Review](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/dependency-review.yml)
-[![OSV Scanner](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/osv-scanner.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/osv-scanner.yml)
-[![Gitleaks](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/ASAP-australia/coh2-skin-editor/actions/workflows/gitleaks.yml)
+<!-- Badges. Order: build → security → supply-chain → meta. Each badge
+     points at a workflow committed to .github/workflows/. Drafts for
+     accessibility / lighthouse / mutation / size-limit / html-validate
+     exist locally but reference npm scripts + devDeps that aren't
+     installed yet — they'll be re-added here once their workflows go
+     green so we never show a red badge on the README. -->
+
+[![CI](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/codeql.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/ASAP-Australia/coh2-skin-editor/badge)](https://securityscorecards.dev/viewer/?uri=github.com/ASAP-Australia/coh2-skin-editor)
+[![Gitleaks](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/gitleaks.yml)
+[![OSV Scanner](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/osv-scanner.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/osv-scanner.yml)
+[![Dependency Review](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/dependency-review.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A desktop skin / decal / faceplate editor for **Company of Heroes 2** that
