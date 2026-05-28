@@ -251,6 +251,16 @@ export interface Coh2DecalPackProject {
    * image-id reference into `sourceImages` — that table is for decal sources).
    */
   packIcon?: string
+  /**
+   * Whether the user has clicked the title pill at least once since this pack
+   * was created. Drives the one-time BorderBeam hint on new packs.
+   *
+   * - `false` — freshly created pack; beam shown until first title click.
+   * - `true`  — user has acknowledged; beam never shown again.
+   * - `undefined` (absent) — loaded from storage before this field existed;
+   *   treated as `true` (no beam for pre-existing packs).
+   */
+  titleAcknowledged?: boolean
   /** All source image assets in the project. Decals reference these by id. */
   sourceImages: Record<string, DecalSourceImage>
   /** Ordered list of decals. Order = pack-display order in-game. */
@@ -278,6 +288,7 @@ export function newDecalPackProject(packName = 'My Decal Pack'): Coh2DecalPackPr
     decals: [],
     activeDecalId: null,
     modifiedAt: new Date().toISOString(),
+    titleAcknowledged: false,
   }
 }
 

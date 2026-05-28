@@ -189,7 +189,7 @@ export default function StartScreen({
           }}
           className="bb-cta relative w-full text-left px-4 py-3 border border-white/[0.08]
                      hover:border-white/15 transition-all duration-150
-                     flex items-center gap-3"
+                     flex items-center gap-3 cursor-pointer"
           style={{
             borderRadius: 16,
             background: 'rgba(255, 255, 255, 0.06)',

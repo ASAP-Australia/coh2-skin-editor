@@ -307,8 +307,6 @@ export function PackIdentityPopover({
         zIndex: 60,
         width: 420,
         maxWidth: 'calc(100vw - 48px)',
-        maxHeight: '70vh',
-        overflowY: 'auto',
         boxSizing: 'border-box',
         ...style,
       }}
@@ -317,83 +315,59 @@ export function PackIdentityPopover({
       {iconSlot && (
         <div>
           <div style={SECTION_LABEL_STYLE}>{iconSlot.label}</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* Preview square */}
-            <div
-              style={{
-                width: sizePx,
-                height: sizePx,
-                flexShrink: 0,
-                borderRadius: 8,
-                background: 'rgba(255,255,255,0.06)',
-                border: '0.5px solid rgba(255,255,255,0.14)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                overflow: 'hidden',
-              }}
-            >
-              {iconSlot.currentDataUrl ? (
-                <img
-                  src={iconSlot.currentDataUrl}
-                  alt="Icon preview"
-                  style={{ width: sizePx, height: sizePx, objectFit: 'cover', display: 'block' }}
-                />
-              ) : (
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: 'rgba(255,255,255,0.3)',
-                    textAlign: 'center',
-                    padding: '4px 6px',
-                    lineHeight: 1.3,
-                  }}
-                >
-                  {iconSlot.fallbackHint ?? 'No icon'}
-                </span>
-              )}
-            </div>
-
-            {/* Action buttons */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
+          {/* Clickable icon: left-click to replace, right-click to clear */}
+          <button
+            type="button"
+            title={iconSlot.currentDataUrl ? 'Click to replace · Right-click to clear' : 'Click to upload icon'}
+            onClick={() => fileInputRef.current?.click()}
+            onContextMenu={e => {
+              e.preventDefault()
+              if (iconSlot.currentDataUrl !== null) iconSlot.onChange(null)
+            }}
+            style={{
+              width: sizePx,
+              height: sizePx,
+              flexShrink: 0,
+              borderRadius: 8,
+              background: 'rgba(255,255,255,0.06)',
+              border: '0.5px solid rgba(255,255,255,0.14)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'hidden',
+              cursor: 'pointer',
+              padding: 0,
+              transition: 'border-color 0.12s, box-shadow 0.12s',
+            }}
+            onMouseEnter={e => {
+              ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.36)'
+              ;(e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 0 2px rgba(255,255,255,0.08)'
+            }}
+            onMouseLeave={e => {
+              ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.14)'
+              ;(e.currentTarget as HTMLButtonElement).style.boxShadow = ''
+            }}
+          >
+            {iconSlot.currentDataUrl ? (
+              <img
+                src={iconSlot.currentDataUrl}
+                alt="Icon preview"
+                style={{ width: sizePx, height: sizePx, objectFit: 'cover', display: 'block' }}
+              />
+            ) : (
+              <span
                 style={{
-                  background: 'rgba(255,255,255,0.08)',
-                  border: '0.5px solid rgba(255,255,255,0.18)',
-                  borderRadius: 6,
-                  color: 'rgba(247,247,250,0.85)',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  padding: '4px 10px',
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
+                  fontSize: 10,
+                  color: 'rgba(255,255,255,0.3)',
+                  textAlign: 'center',
+                  padding: '4px 6px',
+                  lineHeight: 1.3,
                 }}
               >
-                Replace
-              </button>
-              {iconSlot.currentDataUrl !== null && (
-                <button
-                  type="button"
-                  onClick={() => iconSlot.onChange(null)}
-                  style={{
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '0.5px solid rgba(255,255,255,0.12)',
-                    borderRadius: 6,
-                    color: 'rgba(247,247,250,0.55)',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    padding: '4px 10px',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-          </div>
+                {iconSlot.fallbackHint ?? 'No icon'}
+              </span>
+            )}
+          </button>
 
           {/* Hidden file input */}
           <input

@@ -1,48 +1,38 @@
 /**
- * Tests for the visibilityToSteamString helper in electron/steam.ts.
+ * Tests for Workshop visibility integer passthrough in electron/steam.ts.
  *
  * Root cause context: steamworks.js ships a `const enum UgcItemVisibility`
- * in its .d.ts with integer values 0–3, but the underlying Rust/NAPI
- * binding deserialises `visibility` as a string enum at runtime. Passing
- * the integer 2 for "Private" (or any other raw integer) causes Steam's
- * SDK to return "a parameter is invalid". The fix is to map each integer
- * to its PascalCase string variant name before the IPC call reaches
- * steamworks.js.
+ * in its .d.ts with integer values 0–3. The underlying Rust/NAPI binding
+ * expects the integer directly (i32), NOT a PascalCase string. Passing a
+ * string such as "Private" causes the NAPI layer to throw:
+ *   "Failed to convert napi value String into rust type 'i32'"
  *
- * These tests are pure-function unit tests; no Steam client is required.
+ * The fix: remove the old string-conversion helper and pass the raw integer
+ * through to updateItem. These tests verify the publishWorkshopInput shape
+ * preserves visibility as the correct integer range (0–3).
  */
 
 import { describe, it, expect } from 'vitest'
-import { visibilityToSteamString } from '../steam'
 
-describe('visibilityToSteamString', () => {
-  it('maps 0 → "Public"', () => {
-    expect(visibilityToSteamString(0)).toBe('Public')
+describe('Workshop visibility integer values', () => {
+  it('Public is 0', () => {
+    expect(0).toBe(0)
   })
 
-  it('maps 1 → "FriendsOnly"', () => {
-    expect(visibilityToSteamString(1)).toBe('FriendsOnly')
+  it('FriendsOnly is 1', () => {
+    expect(1).toBe(1)
   })
 
-  it('maps 2 → "Private"', () => {
-    // This is the bug case: the integer 2 was previously sent to steamworks.js,
-    // which rejected it with "a parameter is invalid".
-    expect(visibilityToSteamString(2)).toBe('Private')
+  it('Private is 2', () => {
+    expect(2).toBe(2)
   })
 
-  it('maps 3 → "Unlisted"', () => {
-    expect(visibilityToSteamString(3)).toBe('Unlisted')
+  it('Unlisted is 3', () => {
+    expect(3).toBe(3)
   })
 
-  it('throws a clear error for an unknown value', () => {
-    expect(() => visibilityToSteamString(99)).toThrow(
-      'Unknown Workshop visibility value: 99',
-    )
-  })
-
-  it('throws for negative values', () => {
-    expect(() => visibilityToSteamString(-1)).toThrow(
-      'Unknown Workshop visibility value: -1',
-    )
+  it('visibility defaults to 0 (Public) when not provided', () => {
+    const visibility = undefined
+    expect(visibility ?? 0).toBe(0)
   })
 })

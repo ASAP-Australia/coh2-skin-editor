@@ -363,6 +363,15 @@ export async function makeTmpPublishDir(): Promise<string> {
   return api().makeTmpPublishDir()
 }
 
+/** Initialise the Steamworks pipe via IPC.
+ *  Returns the SteamInitResult on success, or `null` outside Electron.
+ *  Never throws — steam errors are returned as `{ ok: false, error }` so
+ *  callers can handle them without a try/catch. */
+export async function initSteamNative(): Promise<SteamInitResult | null> {
+  if (!isElectron()) return null
+  return api().steam.init()
+}
+
 /** Write binary bytes to a path on disk, creating parent directories as needed.
  *  No-op outside Electron. */
 export async function writeFile(p: string, bytes: ArrayBuffer | Uint8Array): Promise<void> {

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { isSupported, locateArchives, pickInstall } from '@/lib/coh2-fs'
 import { BorderBeam } from '@/components/ui/border-beam'
-import { isElectron, detectInstallPath, pickInstallPathNative, nativePathToHandle } from '@/lib/native-fs'
+import { isElectron, detectInstallPath, pickInstallPathNative, nativePathToHandle, initSteamNative } from '@/lib/native-fs'
+import type { SteamInitInfo } from '@/lib/native-fs'
 
 interface Props {
-  onConnected: (handle: FileSystemDirectoryHandle) => void
+  onConnected: (handle: FileSystemDirectoryHandle, steamInfo?: SteamInitInfo) => void
   /** When true, the screen plays its exit animation (caller-controlled
    *  transition flag). Does not affect internal behaviour. */
   exiting?: boolean
@@ -26,14 +27,16 @@ interface Props {
  * Editor" sub-heading, which read as two stacked cards under the
  * AuthShell brand mark on first run.
  */
-type Phase = 'idle' | 'picking' | 'scanning' | 'success' | 'error'
+type Phase = 'idle' | 'picking' | 'scanning' | 'linking-steam' | 'success' | 'error'
 
 export default function ConnectScreen({ onConnected }: Props) {
   const [supported] = useState(() => isSupported() || isElectron())
   const [phase, setPhase] = useState<Phase>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [steamWarning, setSteamWarning] = useState<string | null>(null)
+  const [steamInfo, setSteamInfo] = useState<SteamInitInfo | null>(null)
   const [detectedPath, setDetectedPath] = useState<string | null>(null)
-  const busy = phase === 'picking' || phase === 'scanning' || phase === 'success'
+  const busy = phase === 'picking' || phase === 'scanning' || phase === 'linking-steam' || phase === 'success'
 
   // In Electron: probe the OS for a default Steam path so we can show
   // it on the button (e.g. "Connect CoH2 install (auto-detected)") and
@@ -45,7 +48,7 @@ export default function ConnectScreen({ onConnected }: Props) {
   }, [])
 
   const connect = async () => {
-    setError(null); setPhase('picking')
+    setError(null); setSteamWarning(null); setPhase('picking')
     try {
       let handle: FileSystemDirectoryHandle | null | undefined
 
@@ -65,15 +68,45 @@ export default function ConnectScreen({ onConnected }: Props) {
 
       // Validate: archives folder must exist under the picked root.
       setPhase('scanning')
+      const t0 = Date.now()
       const archives = await locateArchives(handle)
+      const elapsed = Date.now() - t0
+      if (elapsed < 350) await new Promise(r => setTimeout(r, 350 - elapsed))
       if (!archives) {
         setError("That folder doesn't look like a Company of Heroes 2 install — couldn't find CoH2/Archives.")
         setPhase('error')
         return
       }
+
+      // Initialise Steam identity — soft failure only.
+      // We don't block the editor if Steam isn't running; the user can still
+      // edit skins locally. Publishing to Workshop will be unavailable.
+      let resolvedSteamInfo: SteamInitInfo | undefined
+      if (isElectron()) {
+        setPhase('linking-steam')
+        try {
+          const result = await initSteamNative()
+          if (result?.ok) {
+            resolvedSteamInfo = result.info
+            setSteamInfo(result.info)
+          } else if (result && !result.ok) {
+            const msg =
+              result.error.code === 'no-steam'
+                ? 'Steam not detected — you can still edit, but Workshop publishing is disabled.'
+                : result.error.code === 'no-game'
+                  ? 'CoH2 not found on your Steam account — publishing to Workshop is disabled.'
+                  : 'Steam init failed — Workshop publishing is disabled.'
+            setSteamWarning(msg)
+          }
+        } catch {
+          setSteamWarning('Steam not detected — you can still edit, but Workshop publishing is disabled.')
+        }
+        await new Promise(r => setTimeout(r, 250))
+      }
+
       setPhase('success')
-      await new Promise(r => setTimeout(r, 600))
-      onConnected(handle)
+      await new Promise(r => setTimeout(r, 1400))
+      onConnected(handle, resolvedSteamInfo)
     } catch (err: unknown) {
       const e = err as { name?: string; message?: string }
       if (e?.name === 'AbortError') {
@@ -96,6 +129,7 @@ export default function ConnectScreen({ onConnected }: Props) {
           'Reads vehicle meshes & base textures locally',
           'Nothing uploaded — files stay on your machine',
           detectedPath ? 'Steam install detected automatically' : 'Pick your Company of Heroes 2 folder',
+          ...(steamInfo ? [`Signed in to Steam as ${steamInfo.personaName}`] : []),
         ].map((line) => (
           <li key={line} className="flex items-start gap-2">
             <span aria-hidden className="mt-[6px] size-1 rounded-full shrink-0"
@@ -104,6 +138,12 @@ export default function ConnectScreen({ onConnected }: Props) {
           </li>
         ))}
       </ul>
+
+      {steamWarning && (
+        <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-yellow-400/25 bg-yellow-500/[0.06] text-[12px] text-yellow-200/90 leading-relaxed">
+          {steamWarning}
+        </div>
+      )}
 
       {!supported && (
         <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed">
@@ -145,6 +185,11 @@ export default function ConnectScreen({ onConnected }: Props) {
           ) : phase === 'scanning' ? (
             <span className="inline-flex items-center justify-center">
               <InlineSpinner />
+            </span>
+          ) : phase === 'linking-steam' ? (
+            <span className="inline-flex items-center justify-center gap-2 text-[13px]">
+              <InlineSpinner />
+              <span>Connecting Steam…</span>
             </span>
           ) : phase === 'success' ? (
             <span className="inline-flex items-center justify-center">

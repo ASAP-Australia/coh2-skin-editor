@@ -506,6 +506,16 @@ export interface Coh2FaceplateProject {
    * image-id reference into `images` — that table is for canvas layers).
    */
   inventoryIcon?: string
+  /**
+   * Whether the user has clicked the title pill at least once since this
+   * faceplate was created. Drives the one-time BorderBeam hint on new packs.
+   *
+   * - `false` — freshly created; beam shown until first title click.
+   * - `true`  — user has acknowledged; beam never shown again.
+   * - `undefined` (absent) — loaded from storage before this field existed;
+   *   treated as `true` (no beam for pre-existing faceplates).
+   */
+  titleAcknowledged?: boolean
   /** ISO timestamp of the last save — drives the recent-projects ordering. */
   modifiedAt: string
 }
@@ -530,6 +540,7 @@ export function newFaceplateProject(packName = 'My Faceplate'): Coh2FaceplatePro
     // auto-downsample of the banner. User can opt in via the Live Sync
     // popover's "Inventory icon" picker.
     modifiedAt: new Date().toISOString(),
+    titleAcknowledged: false,
   }
 }
 

@@ -17,7 +17,7 @@
  * The parent owns the build step (isBuildingTarget / onRequestBuild).
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { isElectron, makeTmpPublishDir, writeFile } from '@/lib/native-fs'
 import type {
@@ -256,15 +256,9 @@ export function PublishSection({
 }: PublishSectionProps) {
   const isUpdate = isRealWorkshopId(target?.workshopId)
 
-  const [title, setTitle] = useState(target?.packName ?? '')
-  const [description, setDescription] = useState(target?.description ?? '')
   const [visibility, setVisibility] = useState<0 | 1 | 2 | 3>(0)
   const [changeNote, setChangeNote] = useState('')
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
-
-  // Preview image state: null = use auto-generated, string = custom data URL
-  const [customPreviewDataUrl, setCustomPreviewDataUrl] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Reset phase when target transitions from non-null back to null
   // (popover was closed and re-opened → fresh start). setState in effect
@@ -275,11 +269,7 @@ export function PublishSection({
     if (target === null) {
       setPhase({ kind: 'idle' })
       setChangeNote('')
-      setCustomPreviewDataUrl(null)
     } else {
-      // Sync form fields when a new target arrives
-      setTitle(target.packName)
-      setDescription(target.description)
       setPhase({ kind: 'idle' })
     }
   }, [target])
@@ -306,17 +296,6 @@ export function PublishSection({
     }
   }, [target?.previewCanvas])
 
-  const handleCustomPreview = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') setCustomPreviewDataUrl(reader.result)
-    }
-    reader.readAsDataURL(file)
-    e.target.value = ''
-  }
-
   const handlePublish = useCallback(async () => {
     if (!target) return
 
@@ -338,22 +317,12 @@ export function PublishSection({
       await writeFile(sgaPath, target.sgaBytes.buffer as ArrayBuffer)
 
       // 3. Write preview PNG to temp dir
-      let previewPath: string
-      if (customPreviewDataUrl) {
-        const b64 = customPreviewDataUrl.replace(/^data:[^;]+;base64,/, '')
-        const binary = atob(b64)
-        const bytes = new Uint8Array(binary.length)
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-        previewPath = `${tmpDir}/preview.png`
-        await writeFile(previewPath, bytes.buffer as ArrayBuffer)
-      } else {
-        const pngBytes = generatePreviewPng()
-        if (!pngBytes) throw new Error('Failed to generate preview image. Make sure the editor canvas is loaded.')
-        previewPath = `${tmpDir}/preview.png`
-        await writeFile(previewPath, pngBytes.buffer as ArrayBuffer)
-      }
+      const pngBytes = generatePreviewPng()
+      if (!pngBytes) throw new Error('Failed to generate preview image. Make sure the editor canvas is loaded.')
+      const previewPath = `${tmpDir}/preview.png`
+      await writeFile(previewPath, pngBytes.buffer as ArrayBuffer)
 
-      // 4. Build publish input
+      // 4. Build publish input — title/description come from the pack itself
       const tagsByType: Record<WorkshopProjectType, string[]> = {
         skin: ['Skin'],
         faceplate: ['Faceplate'],
@@ -362,8 +331,8 @@ export function PublishSection({
       const input: PublishWorkshopInput = {
         contentPath: tmpDir,
         previewPath,
-        title: title.trim() || target.packName,
-        description: description.trim(),
+        title: target.packName,
+        description: target.description,
         tags: tagsByType[target.type],
         visibility,
         changeNote: changeNote.trim() || undefined,
@@ -390,11 +359,8 @@ export function PublishSection({
     }
   }, [
     target,
-    title,
-    description,
     visibility,
     changeNote,
-    customPreviewDataUrl,
     generatePreviewPng,
     isUpdate,
     onUploadStart,
@@ -403,22 +369,6 @@ export function PublishSection({
 
   const busy = phase.kind === 'uploading'
   const success = phase.kind === 'success'
-
-  // The preview thumbnail to show in the sidebar
-  const previewThumbUrl: string | null = (() => {
-    if (customPreviewDataUrl) return customPreviewDataUrl
-    if (!target?.previewCanvas) return null
-    try {
-      const c = document.createElement('canvas')
-      c.width = c.height = 128
-      const ctx = c.getContext('2d')
-      if (!ctx) return null
-      ctx.drawImage(target.previewCanvas, 0, 0, 128, 128)
-      return c.toDataURL('image/png')
-    } catch {
-      return null
-    }
-  })()
 
   // ── Idle: no target yet — show Build & Publish trigger ──────────────────
   if (!target) {
@@ -483,156 +433,56 @@ export function PublishSection({
         </div>
       )}
 
-      {/* Two-column: form fields + preview thumbnail */}
-      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-        {/* Form fields */}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <FieldGroup label="Title">
-            <input
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              disabled={busy}
-              maxLength={128}
-              placeholder={target.packName}
-              className="w-full"
-              style={inputStyle}
-            />
-          </FieldGroup>
-
-          <FieldGroup label="Description">
-            <textarea
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              disabled={busy}
-              rows={4}
-              placeholder="Describe your mod for Workshop browsers…"
-              style={{ ...inputStyle, resize: 'vertical' as const, minHeight: 80 }}
-            />
-          </FieldGroup>
-
-          <FieldGroup label="Visibility">
-            <div style={{ display: 'flex', gap: 6 }}>
-              {VISIBILITY_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setVisibility(opt.value)}
-                  style={{
-                    flex: 1,
-                    padding: '6px 4px',
-                    borderRadius: 8,
-                    fontSize: 11,
-                    fontWeight: 500,
-                    border: '1px solid',
-                    cursor: busy ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.12s',
-                    borderColor:
-                      visibility === opt.value
-                        ? 'var(--color-accent, #d97706)'
-                        : 'rgba(255,255,255,0.12)',
-                    background:
-                      visibility === opt.value
-                        ? 'rgba(217, 119, 6, 0.22)'
-                        : 'rgba(255,255,255,0.04)',
-                    color:
-                      visibility === opt.value
-                        ? '#fbbf24'
-                        : 'rgba(247,247,250,0.65)',
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </FieldGroup>
-
-          {isUpdate && (
-            <FieldGroup label="Change note (optional)">
-              <input
-                value={changeNote}
-                onChange={e => setChangeNote(e.target.value)}
-                disabled={busy}
-                placeholder="What changed in this update?"
-                maxLength={8000}
-                style={inputStyle}
-              />
-            </FieldGroup>
-          )}
-        </div>
-
-        {/* Preview thumbnail */}
-        <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' }}>
-          <div
-            style={{
-              width: 88,
-              height: 88,
-              borderRadius: 10,
-              border: '1px solid rgba(255,255,255,0.10)',
-              background: 'rgba(255,255,255,0.03)',
-              overflow: 'hidden',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {previewThumbUrl ? (
-              <img
-                src={previewThumbUrl}
-                alt="Workshop preview thumbnail"
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
-            ) : (
-              <div style={{ fontSize: 11, color: 'rgba(247,247,250,0.3)', textAlign: 'center', padding: 8 }}>
-                No preview
-              </div>
-            )}
-          </div>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => fileInputRef.current?.click()}
-            style={{
-              fontSize: 10,
-              color: 'var(--color-accent, #d97706)',
-              background: 'none',
-              border: 'none',
-              cursor: busy ? 'not-allowed' : 'pointer',
-              padding: 0,
-              textDecoration: 'underline',
-            }}
-          >
-            Upload custom PNG
-          </button>
-          {customPreviewDataUrl && (
+      {/* Visibility selector */}
+      <FieldGroup label="Visibility">
+        <div style={{ display: 'flex', gap: 6 }}>
+          {VISIBILITY_OPTIONS.map(opt => (
             <button
+              key={opt.value}
               type="button"
               disabled={busy}
-              onClick={() => setCustomPreviewDataUrl(null)}
+              onClick={() => setVisibility(opt.value)}
               style={{
-                fontSize: 10,
-                color: 'rgba(247,247,250,0.4)',
-                background: 'none',
-                border: 'none',
+                flex: 1,
+                padding: '6px 4px',
+                borderRadius: 8,
+                fontSize: 11,
+                fontWeight: 500,
+                border: '1px solid',
                 cursor: busy ? 'not-allowed' : 'pointer',
-                padding: 0,
+                transition: 'all 0.12s',
+                borderColor:
+                  visibility === opt.value
+                    ? 'var(--color-accent, #d97706)'
+                    : 'rgba(255,255,255,0.12)',
+                background:
+                  visibility === opt.value
+                    ? 'rgba(217, 119, 6, 0.22)'
+                    : 'rgba(255,255,255,0.04)',
+                color:
+                  visibility === opt.value
+                    ? '#fbbf24'
+                    : 'rgba(247,247,250,0.65)',
               }}
             >
-              Use auto-generated
+              {opt.label}
             </button>
-          )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            onChange={handleCustomPreview}
-          />
-          <div style={{ fontSize: 9, color: 'rgba(247,247,250,0.28)', textAlign: 'center', maxWidth: 88 }}>
-            512×512 min recommended
-          </div>
+          ))}
         </div>
-      </div>
+      </FieldGroup>
+
+      {isUpdate && (
+        <FieldGroup label="Change note (optional)">
+          <input
+            value={changeNote}
+            onChange={e => setChangeNote(e.target.value)}
+            disabled={busy}
+            placeholder="What changed in this update?"
+            maxLength={8000}
+            style={inputStyle}
+          />
+        </FieldGroup>
+      )}
 
       {/* Submit button */}
       <Button

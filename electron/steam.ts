@@ -185,45 +185,6 @@ function requireSteamClient(): SteamClient {
 
 // ── Workshop publish/update IPC surface ────────────────────────────────────
 
-/**
- * Map our integer visibility values (0–3) to the string variant names that
- * steamworks.js's NAPI binding actually expects at runtime.
- *
- * Background: steamworks.js ships a `const enum UgcItemVisibility` in its
- * `.d.ts`, which TypeScript inlines as integers (0/1/2/3) at compile time.
- * However the underlying Rust/NAPI layer deserialises `visibility` as a
- * string enum — sending the integer `2` for "Private" produces Steam SDK's
- * generic "a parameter is invalid" error. The correct wire values are the
- * PascalCase variant names ("Public", "FriendsOnly", "Private", "Unlisted").
- *
- * This mapping is the single source of truth; both publishWorkshopItem and
- * updateWorkshopItem pass through it.
- */
-const VISIBILITY_MAP = {
-  0: 'Public',
-  1: 'FriendsOnly',
-  2: 'Private',
-  3: 'Unlisted',
-} as const
-
-export type VisibilityInt = keyof typeof VISIBILITY_MAP
-
-/**
- * Convert a numeric visibility value (0–3) to the string variant name that
- * steamworks.js's NAPI layer accepts. Throws with a clear message for any
- * value outside the known range so regressions surface as an explicit error
- * instead of a generic Steam SDK rejection.
- */
-export function visibilityToSteamString(v: number): string {
-  if (v in VISIBILITY_MAP) {
-    return VISIBILITY_MAP[v as VisibilityInt]
-  }
-  throw new Error(
-    `Unknown Workshop visibility value: ${v}. ` +
-      `Expected 0 (Public), 1 (FriendsOnly), 2 (Private), or 3 (Unlisted).`,
-  )
-}
-
 /** All-in-one publish input. The renderer assembles this from project
  *  state + a metadata dialog. */
 export interface PublishWorkshopInput {
@@ -287,10 +248,9 @@ export async function publishWorkshopItem(
       previewPath: input.previewPath,
       contentPath: input.contentPath,
       tags: input.tags,
-      // steamworks.js's NAPI layer expects the string variant name, not an
-      // integer.  visibilityToSteamString converts 0→"Public", 1→"FriendsOnly",
-      // 2→"Private", 3→"Unlisted" and throws for any unknown value.
-      visibility: visibilityToSteamString(input.visibility ?? 0) as unknown as 0 | 1 | 2 | 3,
+      // UgcItemVisibility is a const enum (0=Public, 1=FriendsOnly, 2=Private,
+      // 3=Unlisted). Pass the integer directly — the NAPI binding expects i32.
+      visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
     },
     COH2_APP_ID,
   )
@@ -330,8 +290,9 @@ export async function updateWorkshopItem(
       previewPath: input.previewPath,
       contentPath: input.contentPath,
       tags: input.tags,
-      // Same string-enum fix as publishWorkshopItem — see visibilityToSteamString.
-      visibility: visibilityToSteamString(input.visibility ?? 0) as unknown as 0 | 1 | 2 | 3,
+      // UgcItemVisibility is a const enum (0=Public, 1=FriendsOnly, 2=Private,
+      // 3=Unlisted). Pass the integer directly — the NAPI binding expects i32.
+      visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
     },
     COH2_APP_ID,
   )
@@ -372,7 +333,7 @@ export async function getMyWorkshopItems(): Promise<MyWorkshopItem[]> {
     const result = await client.workshop.getUserItems(
       page,
       me.accountId,
-      5, // UserListType.Subscribed — closest enum value to "items I published"
+      0, // UserListType.Published — items created by this user
       0, // UGCType.Items (all UGC items)
       3, // UserListOrder.LastUpdatedDesc (newest first)
       { creator: COH2_APP_ID, consumer: COH2_APP_ID },

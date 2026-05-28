@@ -111,6 +111,7 @@ import {
 import ImageDropZone from './editor-shared/ImageDropZone'
 import CanvasHandles from './editor-shared/CanvasHandles'
 import { PackIdentityPopover } from './PackIdentityPopover'
+import { BorderBeam } from '@/components/ui/border-beam'
 import { makeFaceplatePublishTarget } from '@/components/PublishToWorkshopDialog'
 import { PublishSection } from '@/components/PublishSection'
 import {
@@ -1580,50 +1581,102 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           } as CSSProperties
         }
       >
-        <button
-          type="button"
-          title={liveSyncTitle}
-          aria-label={liveSyncAriaLabel}
-          onClick={() => {
-            setPackNameEditOpen(v => !v)
-          }}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-            height: 36,
-            paddingLeft: 14,
-            paddingRight: 14,
-            borderRadius: 12,
-            background: 'rgba(15, 17, 22, 0.75)',
-            backgroundImage:
-              'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
-            backdropFilter: 'blur(40px) saturate(150%)',
-            WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-            border: '0.5px solid rgba(255, 255, 255, 0.08)',
-            boxShadow:
-              'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-            color: 'rgba(247,247,250,0.88)',
-            cursor: 'pointer',
-            padding: '0 14px',
-            fontSize: 14,
-            fontWeight: 700,
-            letterSpacing: '0.01em',
-            whiteSpace: 'nowrap',
-            maxWidth: 'calc(100vw - 200px)',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-          }}
-        >
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {project.packName || 'Unnamed Faceplate'}
-          </span>
-          <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
-            <StateIcon state={sync.state} />
-          </span>
-        </button>
+        {project.titleAcknowledged === false ? (
+          <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={12} borderWidth={1}>
+            <button
+              type="button"
+              title={liveSyncTitle}
+              aria-label={liveSyncAriaLabel}
+              onClick={() => {
+                if (project.titleAcknowledged === false) {
+                  mutate(p => ({ ...p, titleAcknowledged: true }), { undoable: false })
+                }
+                setPackNameEditOpen(v => !v)
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                height: 36,
+                paddingLeft: 14,
+                paddingRight: 14,
+                borderRadius: 12,
+                background: 'rgba(15, 17, 22, 0.75)',
+                backgroundImage:
+                  'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
+                backdropFilter: 'blur(40px) saturate(150%)',
+                WebkitBackdropFilter: 'blur(40px) saturate(150%)',
+                border: '0.5px solid rgba(255, 255, 255, 0.08)',
+                boxShadow:
+                  'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
+                color: 'rgba(247,247,250,0.88)',
+                cursor: 'pointer',
+                padding: '0 14px',
+                fontSize: 14,
+                fontWeight: 700,
+                letterSpacing: '0.01em',
+                whiteSpace: 'nowrap',
+                maxWidth: 'calc(100vw - 200px)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+              }}
+            >
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {project.packName || 'Unnamed Faceplate'}
+              </span>
+              <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
+                <StateIcon state={sync.state} />
+              </span>
+            </button>
+          </BorderBeam>
+        ) : (
+          <button
+            type="button"
+            title={liveSyncTitle}
+            aria-label={liveSyncAriaLabel}
+            onClick={() => {
+              setPackNameEditOpen(v => !v)
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              height: 36,
+              paddingLeft: 14,
+              paddingRight: 14,
+              borderRadius: 12,
+              background: 'rgba(15, 17, 22, 0.75)',
+              backgroundImage:
+                'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
+              backdropFilter: 'blur(40px) saturate(150%)',
+              WebkitBackdropFilter: 'blur(40px) saturate(150%)',
+              border: '0.5px solid rgba(255, 255, 255, 0.08)',
+              boxShadow:
+                'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
+              color: 'rgba(247,247,250,0.88)',
+              cursor: 'pointer',
+              padding: '0 14px',
+              fontSize: 14,
+              fontWeight: 700,
+              letterSpacing: '0.01em',
+              whiteSpace: 'nowrap',
+              maxWidth: 'calc(100vw - 200px)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+            }}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {project.packName || 'Unnamed Faceplate'}
+            </span>
+            <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
+              <StateIcon state={sync.state} />
+            </span>
+          </button>
+        )}
 
         {/* Rename popover — appears directly below the title button */}
         <PackIdentityPopover
