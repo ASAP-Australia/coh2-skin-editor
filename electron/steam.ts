@@ -83,7 +83,8 @@ interface WorkshopNative {
 }
 
 let nativeAddon: WorkshopNative | null = null
-let nativeAddonLoadAttempted = false
+/** null = never attempted; non-null = first require() failed, message preserved */
+let nativeAddonLoadError: string | null = null
 
 /**
  * Load the native coh2-workshop addon (lazy, idempotent).
@@ -95,44 +96,68 @@ let nativeAddonLoadAttempted = false
  */
 function requireNativeAddon(): WorkshopNative {
   if (nativeAddon) return nativeAddon
-  if (nativeAddonLoadAttempted) {
-    throw new Error('[workshop] native addon failed to load previously')
+  if (nativeAddonLoadError !== null) {
+    throw new Error(`[workshop] native addon load failed earlier: ${nativeAddonLoadError}`)
   }
-  nativeAddonLoadAttempted = true
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const path = require('path') as typeof import('path')
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require('fs') as typeof import('fs')
 
   // Belt-and-suspenders: set LD_LIBRARY_PATH to include the steamworks.js
   // dist dir BEFORE the first require() so the dynamic linker can find
   // libsteam_api.so even if the addon's DT_RUNPATH is wrong.
   //
-  // The addon's binding.gyp uses $$ORIGIN (which becomes $ORIGIN in the ELF
-  // DT_RUNPATH) so the linker looks relative to the .node file — but as a
-  // fallback in case of future RPATH regressions, we also set LD_LIBRARY_PATH
-  // here. Both dev (node_modules/) and AppImage (app.asar.unpacked/…) paths
-  // are covered: in production __dirname is inside the asar so walking ../
-  // lands at the asar root, and app.asar.unpacked/ is a sibling on disk.
+  // Bug fix (v1.0.8): in a packaged AppImage, __dirname resolves to the asar
+  // virtual path (app.asar/dist-electron/) which does NOT exist on disk.
+  // The real unpacked files live under app.asar.unpacked/. We detect the
+  // packaged case by checking whether __dirname contains "app.asar" and, if
+  // so, build the path from process.resourcesPath instead.
   //
   // Dev path:        <repo>/dist-electron/ → <repo>/node_modules/steamworks.js/dist/linux64
-  // AppImage path:   <asar>/dist-electron/ → <asar.unpacked>/node_modules/steamworks.js/dist/linux64
-  const steamworksLibDir = path.resolve(
-    __dirname,
-    '..', 'node_modules', 'steamworks.js', 'dist', 'linux64',
-  )
-  const existingLdPath = process.env.LD_LIBRARY_PATH ?? ''
-  process.env.LD_LIBRARY_PATH = existingLdPath
-    ? `${steamworksLibDir}:${existingLdPath}`
-    : steamworksLibDir
+  // AppImage path:   process.resourcesPath/app.asar.unpacked/node_modules/steamworks.js/dist/linux64
+  const isPackaged = __dirname.includes('app.asar')
+  const steamworksLibDir = isPackaged
+    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'steamworks.js', 'dist', 'linux64')
+    : path.resolve(__dirname, '..', 'node_modules', 'steamworks.js', 'dist', 'linux64')
+
+  if (fs.existsSync(steamworksLibDir)) {
+    const existingLdPath = process.env.LD_LIBRARY_PATH ?? ''
+    process.env.LD_LIBRARY_PATH = existingLdPath
+      ? `${steamworksLibDir}:${existingLdPath}`
+      : steamworksLibDir
+    console.log('[workshop] LD_LIBRARY_PATH prepended:', steamworksLibDir)
+  } else {
+    console.warn('[workshop] LD_LIBRARY_PATH skipped: dir not found at', steamworksLibDir)
+  }
 
   // In production (AppImage), __dirname is inside the asar — the .node binary
   // is in an asarUnpack'd directory. We navigate relative to __dirname.
   // In dev, __dirname is dist-electron/.
   const addonDir = path.join(__dirname, '..', 'native', 'coh2-workshop')
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  nativeAddon = require(addonDir) as WorkshopNative
-  console.log('[workshop] native addon loaded from', addonDir)
-  return nativeAddon
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    nativeAddon = require(addonDir) as WorkshopNative
+    console.log('[workshop] native addon loaded from', addonDir)
+    return nativeAddon
+  } catch (e) {
+    const err = e instanceof Error ? e : new Error(String(e))
+    const detail = err.stack ?? err.message ?? String(e)
+    nativeAddonLoadError = detail
+
+    // Persist to log file so the user can find the real error even after
+    // the UI banner is dismissed. Failure to write must not compound the issue.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { app } = require('electron') as typeof import('electron')
+      const logPath = path.join(app.getPath('userData'), 'workshop-error.log')
+      const timestamp = new Date().toISOString()
+      fs.appendFileSync(logPath, `[${timestamp}] native addon load failed:\n${detail}\n\n`)
+    } catch { /* ignore log-write errors */ }
+
+    throw new Error(`[workshop] native addon failed to load: ${detail}`, { cause: e })
+  }
 }
 
 // ── Cached init result ─────────────────────────────────────────────────────
@@ -204,8 +229,10 @@ export function initSteam(): SteamInitState {
         pumpStarted = true
         console.log('[workshop] callback pump started')
       } catch (pumpErr) {
-        console.warn('[workshop] could not start callback pump:', pumpErr)
-        // Not fatal — the pump can be started lazily at publish time too
+        // Not fatal — don't crash the app or block local editing.
+        // requireNativeAddon() already captured the real error into
+        // nativeAddonLoadError so the next publish attempt will surface it.
+        console.warn('[workshop] could not start callback pump (real error captured for later):', pumpErr)
       }
     }
 
