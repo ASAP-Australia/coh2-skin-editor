@@ -1,0 +1,47 @@
+name: bench
+
+# Vitest benchmark suite — measures real perf of the faceplate mod
+# pipeline hot paths (BC3 encode, DDS wrap, full mod build).
+#
+# Configuration lives in src/lib/__tests__/perf.bench.ts.
+#
+# Runs:
+#   - Weekly (Monday 05:00 UTC) so the maintainer gets a fresh
+#     historical record without paying the ~5s cost on every PR.
+#   - On manual workflow_dispatch — for spot-checks before a release
+#     or when investigating a perf regression report.
+#
+# Not on PR. Microbenchmarks are noisy on shared GitHub runners
+# (variable CPU contention, no thermal headroom) so per-PR gating
+# would produce too many false positives. CI gates perf indirectly
+# via size-limit (bundle size) and lighthouse (runtime perf).
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run vitest benchmarks
+        run: npm run bench | tee bench-report.txt
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-report
+          path: bench-report.txt
+          retention-days: 90

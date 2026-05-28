@@ -23,7 +23,8 @@
     "a11y": "npx tsx scripts/a11y-axe.mts",
     "a11y:pa11y": "pa11y-ci",
     "knip": "knip",
-    "lockfile:lint": "lockfile-lint"
+    "lockfile:lint": "lockfile-lint",
+    "bench": "vitest bench --run"
   },
   "size-limit": [
     {
