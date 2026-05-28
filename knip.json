@@ -1,0 +1,28 @@
+{
+  "entry": [
+    "electron/main.ts",
+    "scripts/build-test-faceplate.mts",
+    "scripts/visual-walkthrough.mts",
+    "scripts/check-build-determinism.mts",
+    "scripts/dump-sga.mts"
+  ],
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignore": [
+    "src/components/ui/**",
+    "**/*.test.tsx",
+    "**/*.test.ts",
+    "**/__tests__/**",
+    "tools/**",
+    "scripts/**",
+    "e2e/**"
+  ],
+  "ignoreDependencies": [
+    "tw-animate-css",
+    "tailwindcss",
+    "shadcn",
+    "@playwright/test"
+  ],
+  "ignoreBinaries": ["python3", "tsx", "cross-env"],
+  "ignoreExportsUsedInFile": true,
+  "tags": ["+public"]
+}

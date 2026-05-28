@@ -1,0 +1,31 @@
+name: knip
+
+# Dead-code detection via knip.
+#
+# Runs on every PR targeting main so the team gets early visibility of
+# unused exports/files/dependencies. Marked continue-on-error until
+# the existing unused-file backlog (see knip.json) is fully cleaned up.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  knip:
+    name: Knip dead-code scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run knip
+        run: npm run knip
