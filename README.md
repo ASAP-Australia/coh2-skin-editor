@@ -13,6 +13,7 @@
 [![Gitleaks](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/gitleaks.yml)
 [![OSV Scanner](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/osv-scanner.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/osv-scanner.yml)
 [![Dependency Review](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/dependency-review.yml)
+[![codecov](https://codecov.io/gh/ASAP-Australia/coh2-skin-editor/branch/main/graph/badge.svg)](https://codecov.io/gh/ASAP-Australia/coh2-skin-editor)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A desktop skin / decal / faceplate editor for **Company of Heroes 2** that
@@ -96,12 +97,10 @@ CI runs on every PR:
 - **CodeQL** — static analysis for JS/TS security issues
 - **OpenSSF Scorecard** — supply-chain & repository-hygiene scoring
 - **Accessibility** — axe-core + pa11y-ci against WCAG 2.1 AA
-- **Lighthouse** — performance / a11y / best-practices score
 - **Dependency Review** — flags new direct deps with known CVEs
 - **OSV Scanner** — Google's vulnerability database lookup
 - **Gitleaks** — secret-scanning on every commit
 - **Size limit** — guards against bundle-size regressions
-- **Mutation testing** — Stryker on core libs
 
 ## License
 
