@@ -1,0 +1,32 @@
+name: lockfile-lint
+
+# Supply-chain guard: ensures every resolved package in package-lock.json
+# originates from the official npm registry (https://registry.npmjs.org).
+# A non-npm source (GitHub raw, private registry, etc.) in the lockfile
+# is a supply-chain red flag and should block the merge.
+#
+# This check is intentionally blocking (no continue-on-error) so that
+# dependency-registry drift is caught before it can be merged.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lockfile-lint:
+    name: Lockfile registry audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Validate lockfile sources
+        run: npm run lockfile:lint

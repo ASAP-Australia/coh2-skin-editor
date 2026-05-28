@@ -22,7 +22,8 @@
     "size": "size-limit",
     "a11y": "npx tsx scripts/a11y-axe.mts",
     "a11y:pa11y": "pa11y-ci",
-    "knip": "knip"
+    "knip": "knip",
+    "lockfile:lint": "lockfile-lint"
   },
   "size-limit": [
     {
@@ -110,6 +111,7 @@
     "globals": "^17.5.0",
     "jsdom": "^29.1.1",
     "knip": "^6.14.2",
+    "lockfile-lint": "^5.0.0",
     "pa11y-ci": "^4.1.1",
     "playwright": "^1.60.0",
     "shadcn": "^4.6.0",
