@@ -279,6 +279,23 @@ export async function publishWorkshopItem(
     )
   }
 
+  // ── Diagnostic: log preview PNG dimensions from IHDR header bytes ─────────
+  // PNG IHDR: bytes 0-7 = signature, byte 8-11 = chunk length (4),
+  // bytes 12-15 = "IHDR", bytes 16-19 = width (BE uint32), 20-23 = height (BE uint32).
+  try {
+    const previewBuf = fs.readFileSync(input.previewPath)
+    if (previewBuf.length >= 24) {
+      const w = previewBuf.readUInt32BE(16)
+      const h = previewBuf.readUInt32BE(20)
+      console.log(
+        '[workshop:publish] step=preview-dimensions width=%d height=%d bytes=%d',
+        w, h, previewBuf.length,
+      )
+    }
+  } catch (e) {
+    console.warn('[workshop:publish] step=preview-dimensions-failed', e)
+  }
+
   // Step 1: allocate the Workshop file ID. `createItem` triggers the
   // Subscriber Agreement check — the returned `needsToAcceptAgreement`
   // flag is the signal we surface to the renderer.
@@ -287,10 +304,24 @@ export async function publishWorkshopItem(
   const itemId = created.itemId
   const needsAgreement = created.needsToAcceptAgreement
   console.log(
-    '[workshop:publish] step=createItem-resolved publishedFileId=%s needsAgreement=%s',
+    '[workshop:publish] step=createItem-resolved publishedFileId=%s needsToAcceptAgreement=%s (typeof=%s)',
     itemId.toString(),
     needsAgreement,
+    typeof needsAgreement,
   )
+
+  // CRITICAL: if needsToAcceptAgreement is true, Steam will reject updateItem
+  // with "a parameter is invalid". The user must accept the Subscriber Agreement
+  // at https://steamcommunity.com/workshop/workshoplegalagreement before retrying.
+  // Do NOT call updateItem — throw an actionable error instead.
+  if (needsAgreement) {
+    throw new Error(
+      `Steam Workshop Subscriber Agreement not accepted.\n\n` +
+      `Please visit https://steamcommunity.com/workshop/workshoplegalagreement ` +
+      `and accept the agreement, then click Publish again.\n\n` +
+      `(Item ID ${itemId.toString()} was allocated but not populated — it will be overwritten on retry.)`,
+    )
+  }
 
   // Step 2: upload content + metadata in a single call. steamworks.js's
   // updateItem bundles SetItem{Title,Description,Content,Preview,Visibility,Tags}
@@ -307,19 +338,26 @@ export async function publishWorkshopItem(
     visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
   }
   console.log(
-    '[workshop:publish] step=updateItem itemId=%s payload=%o',
+    '[workshop:publish] step=updateItem itemId=%s payload=%o types={title:%s,description:%s,changeNote:%s,previewPath:%s,contentPath:%s,tags:%s,visibility:%s}',
     itemId.toString(),
     updatePayload,
+    typeof updatePayload.title,
+    typeof updatePayload.description,
+    typeof updatePayload.changeNote,
+    typeof updatePayload.previewPath,
+    typeof updatePayload.contentPath,
+    typeof updatePayload.tags,
+    typeof updatePayload.visibility,
   )
   const updateResult = await client.workshop.updateItem(itemId, updatePayload, COH2_APP_ID)
   console.log(
-    '[workshop:publish] step=updateItem-resolved needsAgreement=%s',
+    '[workshop:publish] step=updateItem-resolved needsToAcceptAgreement=%s',
     updateResult.needsToAcceptAgreement,
   )
 
   return {
     workshopId: itemId.toString(),
-    needsAgreement,
+    needsAgreement: updateResult.needsToAcceptAgreement,
   }
 }
 
@@ -395,6 +433,21 @@ export async function updateWorkshopItem(
     )
   }
 
+  // ── Diagnostic: log preview PNG dimensions from IHDR header bytes ─────────
+  try {
+    const previewBuf = fs.readFileSync(input.previewPath)
+    if (previewBuf.length >= 24) {
+      const w = previewBuf.readUInt32BE(16)
+      const h = previewBuf.readUInt32BE(20)
+      console.log(
+        '[workshop:update] step=preview-dimensions width=%d height=%d bytes=%d',
+        w, h, previewBuf.length,
+      )
+    }
+  } catch (e) {
+    console.warn('[workshop:update] step=preview-dimensions-failed', e)
+  }
+
   const updatePayload = {
     title: input.title,
     description: input.description,
@@ -407,13 +460,20 @@ export async function updateWorkshopItem(
     visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
   }
   console.log(
-    '[workshop:update] step=updateItem itemId=%s payload=%o',
+    '[workshop:update] step=updateItem itemId=%s payload=%o types={title:%s,description:%s,changeNote:%s,previewPath:%s,contentPath:%s,tags:%s,visibility:%s}',
     itemId.toString(),
     updatePayload,
+    typeof updatePayload.title,
+    typeof updatePayload.description,
+    typeof updatePayload.changeNote,
+    typeof updatePayload.previewPath,
+    typeof updatePayload.contentPath,
+    typeof updatePayload.tags,
+    typeof updatePayload.visibility,
   )
   const result = await client.workshop.updateItem(itemId, updatePayload, COH2_APP_ID)
   console.log(
-    '[workshop:update] step=updateItem-resolved needsAgreement=%s',
+    '[workshop:update] step=updateItem-resolved needsToAcceptAgreement=%s',
     result.needsToAcceptAgreement,
   )
   return { needsAgreement: result.needsToAcceptAgreement }
