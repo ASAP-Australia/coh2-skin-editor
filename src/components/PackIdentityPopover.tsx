@@ -54,9 +54,13 @@ export interface PackIdentityPopoverProps {
   extraSection?: ReactNode
 
   /** Optional render slot at the bottom of the popover (after Author). Used by
-   *  Faceplate/DecalPack editors to embed the "Publish to Workshop" button here
+   *  Faceplate/DecalPack editors to embed the inline PublishSection component
    *  instead of a separate floating top-right button. */
-  publishSlot?: ReactNode
+  publishSection?: ReactNode
+
+  /** When true, click-outside does NOT close the popover.
+   *  Lock prevents click-outside from aborting an in-flight workshop upload. */
+  locked?: boolean
 
   /** Anchor positioning override — forwarded to the root div. */
   style?: CSSProperties
@@ -159,7 +163,8 @@ export function PackIdentityPopover({
   onSave,
   iconSlot,
   extraSection,
-  publishSlot,
+  publishSection,
+  locked,
   style,
 }: PackIdentityPopoverProps) {
   // ----- Draft state -------------------------------------------------------
@@ -229,7 +234,8 @@ export function PackIdentityPopover({
   )
 
   // ----- Click outside closes (cancels) ------------------------------------
-  const handleClose = useCallback(() => onClose(), [onClose])
+  // Lock prevents click-outside from aborting an in-flight workshop upload.
+  const handleClose = useCallback(() => { if (!locked) onClose() }, [onClose, locked])
   useClickOutside(popoverRef, handleClose, mounted)
 
   // ----- Autosync helper ----------------------------------------------------
@@ -299,7 +305,8 @@ export function PackIdentityPopover({
         flexDirection: 'column',
         gap: 12,
         zIndex: 60,
-        width: 320,
+        width: 420,
+        maxWidth: 'calc(100vw - 48px)',
         maxHeight: '70vh',
         overflowY: 'auto',
         boxSizing: 'border-box',
@@ -464,12 +471,8 @@ export function PackIdentityPopover({
       {/* ── Extra section (caller-supplied) ──────────────────────────────── */}
       {extraSection}
 
-      {/* ── Publish slot (caller-supplied) ───────────────────────────────── */}
-      {publishSlot && (
-        <div style={{ marginTop: 4 }}>
-          {publishSlot}
-        </div>
-      )}
+      {/* ── Publish section (caller-supplied) ────────────────────────────── */}
+      {publishSection}
     </div>
   )
 }

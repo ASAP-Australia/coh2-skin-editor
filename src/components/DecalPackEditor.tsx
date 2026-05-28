@@ -79,7 +79,8 @@ import {
 } from '@/lib/atlas-view-settings'
 import ImageDropZone, { type ImageDropZoneHandle } from './editor-shared/ImageDropZone'
 import { PackIdentityPopover } from './PackIdentityPopover'
-import PublishToWorkshopDialog, { makeDecalPublishTarget } from '@/components/PublishToWorkshopDialog'
+import { makeDecalPublishTarget } from '@/components/PublishToWorkshopDialog'
+import { PublishSection } from '@/components/PublishSection'
 import {
   BlendModeSelect,
   BottomToolPill,
@@ -98,6 +99,7 @@ import {
 interface Props {
   project: Coh2DecalPackProject
   onBack: () => void
+  installRoot?: FileSystemDirectoryHandle | null
 }
 
 const UNDO_LIMIT = 50
@@ -113,7 +115,7 @@ const BATCH_IMPORT_MAX = 32
 const BLANK_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 
-export default function DecalPackEditor({ project: initialProject, onBack }: Props) {
+export default function DecalPackEditor({ project: initialProject, onBack, installRoot }: Props) {
   const [project, setProject] = useState<Coh2DecalPackProject>(initialProject)
   const [activeTool, setActiveTool] = useState<DecalToolId>('select')
   /** Non-null when the batch-import picker hit the 32-file cap. */
@@ -180,8 +182,9 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
     : 'Pack name — click to rename. Live Sync is off'
 
   // ── Publish-to-Workshop dialog ────────────────────────────────────────
-  const [publishDialogOpen, setPublishDialogOpen] = useState(false)
   const [publishTarget, setPublishTarget] = useState<import('@/components/PublishToWorkshopDialog').WorkshopPublishTarget | null>(null)
+  const [isBuildingTarget, setIsBuildingTarget] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
 
   // ── Project mutation ─────────────────────────────────────────────────────
   const mutate = useCallback(
@@ -789,8 +792,9 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
     { id: 'draw', icon: <Pencil size={20} />, label: 'Draw' },
   ]
 
-  // ── Publish handler (stable callback so publishSlot doesn't re-render) ──
-  const handlePublishClick = useCallback(async () => {
+  // ── Publish build handler — builds SGA, then sets target for inline form ──
+  const handleRequestBuild = useCallback(async () => {
+    setIsBuildingTarget(true)
     try {
       const { buildDecalMod, DECAL_ICON_SIZE, DECAL_TEXTURE_SIZE } =
         await import('@/lib/decal-mod-build')
@@ -848,11 +852,12 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
         },
       )
       setPublishTarget(target)
-      setPublishDialogOpen(true)
     } catch (e) {
       console.error('Decal pack publish build failed:', e)
+    } finally {
+      setIsBuildingTarget(false)
     }
-  }, [project, setProject, setPublishTarget, setPublishDialogOpen])
+  }, [project, setProject])
 
   // Whether to show the placeholder for the active decal canvas.
   const showDecalPlaceholder =
@@ -1182,7 +1187,10 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
             stay in sync. Escape / outside-click closes (autosync, no Save). */}
         <PackIdentityPopover
           open={packNameEditOpen}
-          onClose={() => setPackNameEditOpen(false)}
+          onClose={() => {
+            setPackNameEditOpen(false)
+            setPublishTarget(null)
+          }}
           name={project.packName}
           description={project.packDescription}
           author={project.author}
@@ -1223,34 +1231,16 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
               decal grid and on the equip card in CoH2.
             </p>
           }
-          publishSlot={
-            <button
-              type="button"
-              aria-label="Publish to Workshop"
-              onClick={handlePublishClick}
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                padding: '8px 12px',
-                borderRadius: 10,
-                background: 'linear-gradient(135deg, rgba(31,84,147,0.85), rgba(12,48,100,0.85))',
-                backdropFilter: 'blur(40px) saturate(150%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-                border: '0.5px solid rgba(96,165,250,0.25)',
-                boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.08), 0 4px 12px -4px rgba(0,0,0,0.3)',
-                color: 'rgba(147,197,253,0.95)',
-                cursor: 'pointer',
-                fontSize: 12,
-                fontWeight: 600,
-                letterSpacing: '0.01em',
-                whiteSpace: 'nowrap',
-                transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-                textAlign: 'center',
-              }}
-            >
-              ↑ Publish to Workshop
-            </button>
+          publishSection={
+            <PublishSection
+              target={publishTarget}
+              isBuildingTarget={isBuildingTarget}
+              onRequestBuild={handleRequestBuild}
+              onUploadStart={() => setIsUploading(true)}
+              onUploadEnd={() => setIsUploading(false)}
+            />
           }
+          locked={isUploading || isBuildingTarget}
         />
       </div>
 
@@ -1629,21 +1619,9 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
           }}
         >
           <div style={{ maxWidth: 520, width: '100%' }}>
-            <DecalPackInGamePreview project={project} />
+            <DecalPackInGamePreview project={project} installRoot={installRoot} />
           </div>
         </div>
-      )}
-
-      {/* Publish to Workshop dialog */}
-      {publishDialogOpen && publishTarget && (
-        <PublishToWorkshopDialog
-          open={publishDialogOpen}
-          onClose={() => {
-            setPublishDialogOpen(false)
-            setPublishTarget(null)
-          }}
-          target={publishTarget}
-        />
       )}
 
       {/* Insignia library modal */}

@@ -1,3 +1,5 @@
+// TODO: migrate skin-pack callsite (TopMenu ExportPanel) to PublishSection, then delete this file
+
 /**
  * PublishToWorkshopDialog — generic Steam Workshop publish/update dialog.
  *
