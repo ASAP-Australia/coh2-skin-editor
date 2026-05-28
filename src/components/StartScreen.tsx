@@ -355,7 +355,7 @@ function GridButton({
   return (
     <button
       onClick={onClick}
-      className="action-row group relative w-full min-h-[64px] text-left px-3.5 py-3 rounded-2xl
+      className="action-row group relative w-full min-h-[64px] cursor-pointer text-left px-3.5 py-3 rounded-2xl
                  border border-white/[0.08] bg-white/[0.04]
                  transition-all duration-200 flex items-center gap-2.5"
     >

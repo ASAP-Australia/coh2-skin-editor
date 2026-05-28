@@ -143,19 +143,15 @@ export default function ConnectScreen({ onConnected }: Props) {
               <InlineSpinner />
             </span>
           ) : phase === 'scanning' ? (
-            <span className="inline-flex items-center justify-center gap-2">
+            <span className="inline-flex items-center justify-center">
               <InlineSpinner />
-              <span>Scanning archives…</span>
             </span>
           ) : phase === 'success' ? (
-            <span className="inline-flex items-center justify-center gap-2">
+            <span className="inline-flex items-center justify-center">
               <InlineSuccessTick />
-              <span>Connected</span>
             </span>
           ) : (
-            <span>
-              {detectedPath ? 'Connect (auto-detected)' : 'Connect CoH2 install'}
-            </span>
+            <span>Connect CoH2 install</span>
           )}
         </button>
       </BorderBeam>
