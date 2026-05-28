@@ -96,10 +96,10 @@ export default function App() {
   /** Hydrated decal-pack project, set just before navigating into the
    *  decal-pack editor. Cleared on back-to-start. */
   const [decalPackProject, setDecalPackProject] = useState<Coh2DecalPackProject | null>(null)
-  /** Pending-load error surfaced to StartScreen / SavedProjects via the
-   *  toast or inline panel. (Currently swallowed — TODO surface via
-   *  the inline error pattern StartScreen already supports.) */
-  const [, setLoadError] = useState<string | null>(null)
+  /** Pending-load error surfaced above the AuthShell-hosted screens when
+   *  a project file fails to open (corrupt JSON, unrecognised extension,
+   *  unknown saved id, etc.). Dismissed explicitly by the user. */
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const diskFileInputRef = useRef<HTMLInputElement>(null)
 
@@ -348,6 +348,22 @@ export default function App() {
     return (
       <>
         <WindowControls />
+        {loadError && (
+          <div
+            className="fixed top-10 left-1/2 -translate-x-1/2 z-50 max-w-sm w-full px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed flex items-start gap-2"
+            role="alert"
+          >
+            <span className="flex-1 whitespace-pre-line">{loadError}</span>
+            <button
+              type="button"
+              aria-label="Dismiss error"
+              onClick={() => setLoadError(null)}
+              className="shrink-0 text-red-200/60 hover:text-red-200/90 transition-colors leading-none"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <AuthShell phase={phase}>{panel}</AuthShell>
         <input
           ref={diskFileInputRef}
