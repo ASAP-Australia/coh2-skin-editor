@@ -132,19 +132,15 @@ class LiveSyncManager {
   private _syncedAt = 0
 
   constructor() {
-    // v1.0 (Steam-first): Live Sync is DISABLED. The Steam-first design
-    // (.llm/steam-first-design.md) removes all writes to
-    // <modsRoot>/{decals,faceplates,extension,skins}/subscriptions/ from
-    // app code — Steam handles those as a side effect of publishing. The
-    // user explicitly chose this ("I don't want a local version of the
-    // mod"). The class + observable API are kept so existing UI bindings
-    // (LiveSyncBadge etc.) continue to compile, but every schedule()
-    // call is a no-op and the badge reports the disabled state to the
-    // user. Re-enabling would require reverting this change and the
-    // strip in schedule() below.
-    localStorage.setItem(LS_ENABLED_KEY, 'false')
-    this._state = 'disabled'
-    this._reason = 'Workshop publishing only — local sync disabled in v1.0'
+    // v1.0: Live Sync is always ON. Every edit (decal drag, camo change,
+    // name/icon update) is debounced and written into the user's CoH2
+    // mods folder automatically — no opt-out. The localStorage flag is
+    // persisted as 'true' so the badge reflects the correct state across
+    // sessions and the _resolveModsHandle() path can prompt for a folder
+    // on first use.
+    localStorage.setItem(LS_ENABLED_KEY, 'true')
+    this._state = 'idle'
+    this._reason = 'No changes yet'
   }
 
   // ── Observable ──────────────────────────────────────────────────────────────
@@ -261,23 +257,36 @@ class LiveSyncManager {
   }
 
   /**
-   * Schedule a sync after 1500 ms of inactivity. Re-calling resets the timer.
-   *
-   * v1.0 (Steam-first): permanently a no-op. The Steam-first design
-   * forbids any app-side writes to <modsRoot>/.../subscriptions/.
-   * Edits are saved to localStorage (as before) and only become visible
-   * in CoH2 once the user clicks Publish-to-Workshop and Steam writes
-   * the subscribed mod into the local mods tree. The schedule() entry
-   * point is kept on the API so the per-project edit hooks that call
-   * it (vehicle decal drag, faceplate atlas mutation, etc.) compile,
-   * but the body returns immediately.
+   * Schedule a sync after 1500 ms of inactivity. Re-calling resets the
+   * debounce timer so rapid mutations (e.g. dragging a slider) coalesce
+   * into a single write. If a sync is already in flight the incoming work
+   * is stored as `_queued` and replayed when the flight lands.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for API compatibility
-  schedule(_kind: SyncKind, _project: AnyProject) {
-    // No-op in v1.0. Edits live in localStorage; they only reach the
-    // game by way of Steam Workshop publish + subscribe. See the
-    // class-level constructor comment for rationale.
-    return
+  schedule(kind: SyncKind, project: AnyProject) {
+    if (!this.isEnabled()) return
+
+    // Always store the latest work so a late-arriving mutation beats an
+    // earlier one that hasn't fired yet.
+    this._queued = { kind, project }
+    this._setState('queued', 'Changes pending…')
+
+    // Reset the debounce window.
+    if (this._debounceTimer != null) {
+      window.clearTimeout(this._debounceTimer)
+    }
+
+    if (this._inFlight) {
+      // A sync is already running — the queued work will be picked up in
+      // _runSync's finally block.
+      return
+    }
+
+    this._debounceTimer = window.setTimeout(() => {
+      this._debounceTimer = null
+      if (this._queued) {
+        void this._runSync(this._queued.kind, this._queued.project)
+      }
+    }, 1500)
   }
 
   /** Fire immediately, bypassing the debounce. */

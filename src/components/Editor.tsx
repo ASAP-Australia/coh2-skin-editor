@@ -15,6 +15,7 @@ import { paintDecals, type RenderContext } from '@/lib/decal-painter'
 import { SgaArchive } from '@/lib/sga'
 import { generateCamo, type CamoPreset } from '@/lib/camo-generator'
 import { type PresetId, loadPresetId, persistPresetId } from '@/lib/scene-settings'
+import { scheduleLiveSync } from '@/lib/live-sync'
 
 interface Props {
   root: FileSystemDirectoryHandle
@@ -159,6 +160,11 @@ export default function Editor({ root, onDisconnect }: Props) {
   useEffect(() => {
     repaint()
     persistActive(project)
+    // Schedule live-sync on every project mutation (decals, camo, name,
+    // pack icon — anything that changes `project`). Debounced inside the
+    // manager so rapid mutations (drag ticks, keystroke-per-keystroke name
+    // editing) coalesce into a single .sga write.
+    scheduleLiveSync('skin', project)
   }, [repaint, project])
 
   // ---- decal manipulation helpers
