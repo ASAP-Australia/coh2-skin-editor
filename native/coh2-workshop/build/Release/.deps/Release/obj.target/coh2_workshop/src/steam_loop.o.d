@@ -1,0 +1,18 @@
+cmd_Release/obj.target/coh2_workshop/src/steam_loop.o := g++ -o Release/obj.target/coh2_workshop/src/steam_loop.o ../src/steam_loop.cpp '-DNODE_GYP_MODULE_NAME=coh2_workshop' '-DUSING_UV_SHARED=1' '-DUSING_V8_SHARED=1' '-DV8_DEPRECATION_WARNINGS=1' '-D_GLIBCXX_USE_CXX11_ABI=1' '-D_FILE_OFFSET_BITS=64' '-DELECTRON_ENSURE_CONFIG_GYPI' '-D_LARGEFILE_SOURCE' '-DUSING_ELECTRON_CONFIG_GYPI' '-DV8_COMPRESS_POINTERS' '-DV8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES' '-DV8_31BIT_SMIS_ON_64BIT_ARCH' '-DV8_ENABLE_SANDBOX' '-DV8_EXTERNAL_CODE_SPACE' '-D__STDC_FORMAT_MACROS' '-DOPENSSL_NO_PINSHARED' '-DOPENSSL_THREADS' '-DOPENSSL_NO_ASM' '-DNAPI_VERSION=8' '-DNODE_ADDON_API_DISABLE_DEPRECATED' '-DBUILDING_NODE_EXTENSION' -I/home/jflessenkemper/.electron-gyp/41.5.0/include/node -I/home/jflessenkemper/.electron-gyp/41.5.0/src -I/home/jflessenkemper/.electron-gyp/41.5.0/deps/openssl/config -I/home/jflessenkemper/.electron-gyp/41.5.0/deps/openssl/openssl/include -I/home/jflessenkemper/.electron-gyp/41.5.0/deps/uv/include -I/home/jflessenkemper/.electron-gyp/41.5.0/deps/zlib -I/home/jflessenkemper/.electron-gyp/41.5.0/deps/v8/include -I/var/home/jflessenkemper/dev/coh2-skin-editor/node_modules/node-addon-api -I/var/home/jflessenkemper/.nvm/versions/node/v24.14.0/include/node -I/home/jflessenkemper/.cache/node-gyp/24.14.0/include/node  -fPIC -pthread -Wall -Wextra -Wno-unused-parameter -m64 -O3 -fno-omit-frame-pointer -fno-rtti -fno-strict-aliasing -std=gnu++20 -fexceptions -std=c++17 -fvisibility=hidden -MMD -MF ./Release/.deps/Release/obj.target/coh2_workshop/src/steam_loop.o.d.raw   -c
+Release/obj.target/coh2_workshop/src/steam_loop.o: ../src/steam_loop.cpp \
+ ../src/steam_loop.h ../src/callback_bridge.h \
+ /home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv.h \
+ /home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv/errno.h \
+ /home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv/version.h \
+ /home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv/unix.h \
+ /home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv/threadpool.h \
+ /home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv/linux.h
+../src/steam_loop.cpp:
+../src/steam_loop.h:
+../src/callback_bridge.h:
+/home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv.h:
+/home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv/errno.h:
+/home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv/version.h:
+/home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv/unix.h:
+/home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv/threadpool.h:
+/home/jflessenkemper/.electron-gyp/41.5.0/include/node/uv/linux.h:

@@ -28,6 +28,13 @@
  *      but the renderer-side TypeScript treats Workshop file IDs as
  *      strings everywhere else (URL routing, project.workshopId, etc.),
  *      so we normalise here.
+ *
+ *   5. Workshop publish/update uses the LEGACY ISteamRemoteStorage API
+ *      (PublishWorkshopFile / CommitPublishedFileUpdate). CoH2 (app 231430)
+ *      does NOT have a modern ISteamUGC content depot — the modern path
+ *      via steamworks.js createItem+updateItem always fails with "a
+ *      parameter is invalid". The native addon at
+ *      native/coh2-workshop/ implements the proven legacy path.
  */
 
 const COH2_APP_ID = 231430
@@ -35,11 +42,6 @@ const COH2_APP_ID = 231430
 import type { localplayer as LP, workshop as W } from 'steamworks.js/client'
 
 // ── steamworks.js type surface ─────────────────────────────────────────────
-// steamworks.js exports its own .d.ts. We re-declare the small subset we
-// need to (a) avoid pulling the whole file into intellisense and (b) keep
-// this module's API typed even when the native binding isn't loadable
-// (CI box, web build, dev machine without Steam).
-
 type SteamClient = {
   localplayer: typeof LP
   workshop: typeof W
@@ -49,12 +51,68 @@ type SteamClient = {
   }
 }
 
+// ── Native addon type surface ──────────────────────────────────────────────
+// Mirrors native/coh2-workshop/index.d.ts. We re-declare here to avoid
+// a rootDir-crossing import in the electron tsconfig.
+
+interface NativePublishInput {
+  sgaPath: string
+  previewPath: string
+  appId: number
+  title: string
+  description: string
+  visibility: 0 | 1 | 2 | 3
+  tags: string[]
+  changeNote?: string
+}
+
+interface NativeUpdateInput extends NativePublishInput {
+  publishedFileId: bigint
+}
+
+interface NativePublishResult {
+  publishedFileId: bigint
+  agreementNeeded: boolean
+}
+
+interface WorkshopNative {
+  publishNewItem(input: NativePublishInput): Promise<NativePublishResult>
+  updateExistingItem(input: NativeUpdateInput): Promise<NativePublishResult>
+  startCallbackPump(): void
+  stopCallbackPump(): void
+}
+
+let nativeAddon: WorkshopNative | null = null
+let nativeAddonLoadAttempted = false
+
+/**
+ * Load the native coh2-workshop addon (lazy, idempotent).
+ *
+ * We defer loading until the first publish/update call so that the
+ * addon's steam_bridge_init() runs after steamworks.js has already called
+ * SteamAPI_Init — which is required for the dlsym lookups to find the
+ * already-loaded libsteam_api.so symbols.
+ */
+function requireNativeAddon(): WorkshopNative {
+  if (nativeAddon) return nativeAddon
+  if (nativeAddonLoadAttempted) {
+    throw new Error('[workshop] native addon failed to load previously')
+  }
+  nativeAddonLoadAttempted = true
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const path = require('path') as typeof import('path')
+  // In production (AppImage), __dirname is inside the asar — the .node binary
+  // is in an asarUnpack'd directory. We navigate relative to __dirname.
+  // In dev, __dirname is dist-electron/.
+  const addonDir = path.join(__dirname, '..', 'native', 'coh2-workshop')
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  nativeAddon = require(addonDir) as WorkshopNative
+  console.log('[workshop] native addon loaded from', addonDir)
+  return nativeAddon
+}
+
 // ── Cached init result ─────────────────────────────────────────────────────
-// The result of the FIRST initSteam() call. Either:
-//   - { client, info }   → Steam running, all good, info has the persona data
-//   - { error }          → init threw, error.code distinguishes failure modes
-// We cache so repeated IPC calls (renderer often calls steam.init() defensively)
-// don't restart the Steamworks pipe.
 
 interface SteamInitSuccess {
   ok: true
@@ -69,8 +127,7 @@ interface SteamInitFailure {
 
 type SteamInitState = SteamInitSuccess | SteamInitFailure
 
-/** Public-facing init result returned to the renderer over IPC. Mirrors
- *  the shape the StartScreen renders against. */
+/** Public-facing init result returned to the renderer over IPC. */
 export interface SteamInitInfo {
   steamId: string
   personaName: string
@@ -78,29 +135,24 @@ export interface SteamInitInfo {
   installPath: string | null
 }
 
-/** Discriminated failure reasons. The renderer maps these to the
- *  three branches of the StartScreen (NoSteam / NoGame / generic error). */
+/** Discriminated failure reasons. */
 export type SteamInitError =
   | { code: 'no-steam'; message: string }
   | { code: 'no-game'; message: string }
   | { code: 'init-failed'; message: string }
 
 let cached: SteamInitState | null = null
+let pumpStarted = false
 
 /**
  * Initialise the Steamworks pipe (idempotent).
  *
  * Returns the persona info on success, or a structured error the renderer
- * can use to decide which branch of StartScreen to render. Never throws —
- * the renderer doesn't have a try/catch around its boot path and a thrown
- * error here would crash the whole app at the worst possible moment.
+ * can use to decide which branch of StartScreen to render. Never throws.
  */
 export function initSteam(): SteamInitState {
   if (cached) return cached
   try {
-    // steamworks.js is loaded on-demand. require() not import — the
-    // electron tsconfig compiles to CommonJS and we want runtime resolution
-    // so a missing native binary on CI doesn't crash the whole bundle.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const steamworks = require('steamworks.js') as {
       init: (appId?: number) => SteamClient
@@ -111,19 +163,29 @@ export function initSteam(): SteamInitState {
       client = steamworks.init(COH2_APP_ID)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      // Steam SDK returns one of a handful of fatal messages here.
-      // The most common is "Steam is not running" which we surface as a
-      // distinct error code so the StartScreen can render the NoSteamScreen
-      // branch with its "Start Steam, then click Retry" CTA.
       const code = /steam.*not.*running|init.*steam/i.test(msg) ? 'no-steam' : 'init-failed'
       cached = { ok: false, error: { code, message: msg } }
       return cached
     }
 
-    // CoH2 ownership check. `isSubscribedApp` returns true if the user
-    // OWNS the app on this Steam account (purchased, gifted, family
-    // sharing). This is the cheapest first-line check; if it's false
-    // there's no point trying to publish.
+    // Start the callback pump once after Steam is initialised.
+    // The native addon's startCallbackPump() installs a 100ms libuv timer
+    // that calls SteamAPI_RunCallbacks on the main thread. This is required
+    // for ISteamRemoteStorage async results (FileShare, PublishWorkshopFile,
+    // CommitPublishedFileUpdate) to fire. steamworks.js v0.4 does not run
+    // its own pump from the main process.
+    if (!pumpStarted) {
+      try {
+        const addon = requireNativeAddon()
+        addon.startCallbackPump()
+        pumpStarted = true
+        console.log('[workshop] callback pump started')
+      } catch (pumpErr) {
+        console.warn('[workshop] could not start callback pump:', pumpErr)
+        // Not fatal — the pump can be started lazily at publish time too
+      }
+    }
+
     const ownsApp = client.apps.isSubscribedApp(COH2_APP_ID)
     if (!ownsApp) {
       cached = {
@@ -165,9 +227,6 @@ export function initSteam(): SteamInitState {
 
 /**
  * Get the live Steam client, or throw with a user-actionable message.
- * Used internally by workshop publish/update calls — those are gated
- * behind a successful init() in the renderer, so reaching the throw
- * branch means the user clicked Publish before Steam was ready.
  */
 function requireSteamClient(): SteamClient {
   const s = initSteam()
@@ -189,47 +248,78 @@ function requireSteamClient(): SteamClient {
  *  state + a metadata dialog. */
 export interface PublishWorkshopInput {
   /** Absolute path to the directory containing the .sga + manifest. The
-   *  whole tree is uploaded as a single Workshop item. */
+   *  single .sga file in this directory is the Workshop item content. */
   contentPath: string
-  /** Absolute path to a PNG thumbnail. 256×256 minimum, < 1 MB recommended
-   *  by Steam — anything larger gets transcoded on the Steam side and
-   *  loses sharpness. */
+  /** Absolute path to a PNG thumbnail. 256×256 minimum, < 1 MB recommended. */
   previewPath: string
   title: string
   description: string
-  /** Workshop tags. We pass through whatever the project type uses
-   *  ('Skin' | 'Faceplate' | 'Decal') so CoH2's launcher buckets the
-   *  download into the right subscriptions/ subdirectory. */
+  /** Workshop tags: 'Skin' | 'Faceplate' | 'Decal' */
   tags: string[]
-  /** `0` Public, `1` FriendsOnly, `2` Private, `3` Unlisted. Defaults to
-   *  Public (chosen as the v1.0 default by user). */
+  /** `0` Public, `1` FriendsOnly, `2` Private, `3` Unlisted. Default Public. */
   visibility?: 0 | 1 | 2 | 3
-  /** Free-text changelog string shown on the Workshop page next to the
-   *  upload timestamp. Optional. */
+  /** Free-text changelog string shown on the Workshop page. Optional. */
   changeNote?: string
 }
 
-/** Result of a successful first publish. The workshopId is the
- *  Steam-allocated UGC file ID that the user's project should record so
- *  subsequent edits route to `updateWorkshopItem` instead of `publish`. */
+/** Result of a successful first publish. */
 export interface PublishWorkshopResult {
   workshopId: string
   needsAgreement: boolean
 }
 
+export interface UpdateWorkshopResult {
+  needsAgreement: boolean
+}
+
 /**
- * First-time publish. Allocates a fresh UGC item then uploads the
- * content. The `needsAgreement` flag is true when the user hasn't
- * accepted the Steam Workshop Subscriber Agreement yet — the renderer
- * shows a banner with a link to the item's edit page where the user
- * accepts on the web, then retries.
+ * Find the single .sga file inside a directory (the Workshop content dir
+ * the renderer creates via tmp:make-publish-dir + write-file).
+ *
+ * Throws if zero or more than one .sga is found.
+ */
+function findSgaInDir(contentPath: string): string {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require('fs') as typeof import('fs')
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const path = require('path') as typeof import('path')
+  let entries: string[]
+  try {
+    entries = fs.readdirSync(contentPath)
+  } catch (e) {
+    throw new Error(`[workshop] content directory not readable: ${contentPath} — ${e}`)
+  }
+  const sgas = entries.filter(f => f.toLowerCase().endsWith('.sga'))
+  if (sgas.length === 0) {
+    throw new Error(
+      `[workshop] no .sga file found in content directory: ${contentPath} (files: ${entries.join(', ')})`,
+    )
+  }
+  if (sgas.length > 1) {
+    console.warn(
+      `[workshop] multiple .sga files in content dir, using first: ${sgas[0]} (others: ${sgas.slice(1).join(', ')})`,
+    )
+  }
+  return path.join(contentPath, sgas[0])
+}
+
+/**
+ * First-time publish via the legacy ISteamRemoteStorage API.
+ *
+ * Uses our native addon (native/coh2-workshop) which calls:
+ *   FileWrite → FileShare → PublishWorkshopFile
+ *
+ * CoH2 does NOT have a modern ISteamUGC content depot. The steamworks.js
+ * createItem + updateItem path always fails with "a parameter is invalid".
  */
 export async function publishWorkshopItem(
   input: PublishWorkshopInput,
 ): Promise<PublishWorkshopResult> {
-  const client = requireSteamClient()
+  // Ensure Steam is initialised (and the callback pump is running)
+  requireSteamClient()
 
-  // ── Diagnostic: verify content dir and preview file before any Steam call ─
+  // ── Pre-flight checks ─────────────────────────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const fs = require('fs') as typeof import('fs')
   let contentDirExists = false
   let contentDirIsDir = false
@@ -241,12 +331,12 @@ export async function publishWorkshopItem(
     contentDirExists = true
     contentDirIsDir = cs.isDirectory()
     if (contentDirIsDir) contentDirFiles = fs.readdirSync(input.contentPath)
-  } catch { /* stat failed — logged below */ }
+  } catch { /* logged below */ }
   try {
     const ps = fs.statSync(input.previewPath)
     previewExists = true
     previewSize = ps.size
-  } catch { /* stat failed — logged below */ }
+  } catch { /* logged below */ }
 
   console.log(
     '[workshop:publish] step=pre-flight appId=%d title=%j contentPath=%s contentDirExists=%s isDir=%s files=%j previewPath=%s previewExists=%s previewSize=%d tags=%j visibility=%s changeNote=%j',
@@ -261,7 +351,7 @@ export async function publishWorkshopItem(
     previewSize,
     input.tags,
     input.visibility ?? 0,
-    input.changeNote ?? '(default: Initial publish)',
+    input.changeNote ?? '(default: Initial upload)',
   )
 
   if (!contentDirExists || !contentDirIsDir) {
@@ -279,110 +369,75 @@ export async function publishWorkshopItem(
     )
   }
 
-  // ── Diagnostic: log preview PNG dimensions from IHDR header bytes ─────────
-  // PNG IHDR: bytes 0-7 = signature, byte 8-11 = chunk length (4),
-  // bytes 12-15 = "IHDR", bytes 16-19 = width (BE uint32), 20-23 = height (BE uint32).
+  // ── Log preview dimensions ────────────────────────────────────────────────
   try {
     const previewBuf = fs.readFileSync(input.previewPath)
     if (previewBuf.length >= 24) {
       const w = previewBuf.readUInt32BE(16)
       const h = previewBuf.readUInt32BE(20)
-      console.log(
-        '[workshop:publish] step=preview-dimensions width=%d height=%d bytes=%d',
-        w, h, previewBuf.length,
-      )
+      console.log('[workshop:publish] step=preview-dimensions width=%d height=%d bytes=%d', w, h, previewBuf.length)
     }
   } catch (e) {
     console.warn('[workshop:publish] step=preview-dimensions-failed', e)
   }
 
-  // Step 1: allocate the Workshop file ID. `createItem` triggers the
-  // Subscriber Agreement check — the returned `needsToAcceptAgreement`
-  // flag is the signal we surface to the renderer.
-  console.log('[workshop:publish] step=createItem appId=%d', COH2_APP_ID)
-  const created = await client.workshop.createItem(COH2_APP_ID)
-  const itemId = created.itemId
-  const needsAgreement = created.needsToAcceptAgreement
+  // ── Find the .sga file ────────────────────────────────────────────────────
+  const sgaPath = findSgaInDir(input.contentPath)
+  console.log('[workshop:publish] step=sga-resolved sgaPath=%s', sgaPath)
+
+  // ── Call native addon ─────────────────────────────────────────────────────
+  const addon = requireNativeAddon()
+  console.log('[workshop:publish] step=publishNewItem')
+  const result = await addon.publishNewItem({
+    sgaPath,
+    previewPath: input.previewPath,
+    appId: COH2_APP_ID,
+    title: input.title,
+    description: input.description ?? '',
+    visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
+    tags: input.tags ?? [],
+    changeNote: input.changeNote ?? 'Initial upload',
+  })
+
   console.log(
-    '[workshop:publish] step=createItem-resolved publishedFileId=%s needsToAcceptAgreement=%s (typeof=%s)',
-    itemId.toString(),
-    needsAgreement,
-    typeof needsAgreement,
+    '[workshop:publish] step=publishNewItem-resolved publishedFileId=%s agreementNeeded=%s',
+    result.publishedFileId.toString(),
+    result.agreementNeeded,
   )
 
-  // CRITICAL: if needsToAcceptAgreement is true, Steam will reject updateItem
-  // with "a parameter is invalid". The user must accept the Subscriber Agreement
-  // at https://steamcommunity.com/workshop/workshoplegalagreement before retrying.
-  // Do NOT call updateItem — throw an actionable error instead.
-  if (needsAgreement) {
+  if (result.agreementNeeded) {
+    const id = result.publishedFileId.toString()
     throw new Error(
       `Steam Workshop Subscriber Agreement not accepted.\n\n` +
-      `Please visit https://steamcommunity.com/workshop/workshoplegalagreement ` +
+      `Please visit https://steamcommunity.com/sharedfiles/itemedit/?id=${id} ` +
       `and accept the agreement, then click Publish again.\n\n` +
-      `(Item ID ${itemId.toString()} was allocated but not populated — it will be overwritten on retry.)`,
+      `(Item ID ${id} was allocated.)`,
     )
   }
 
-  // Step 2: upload content + metadata in a single call. steamworks.js's
-  // updateItem bundles SetItem{Title,Description,Content,Preview,Visibility,Tags}
-  // + SubmitItemUpdate behind the one promise.
-  const updatePayload = {
-    title: input.title,
-    description: input.description,
-    changeNote: input.changeNote ?? 'Initial publish',
-    previewPath: input.previewPath,
-    contentPath: input.contentPath,
-    tags: input.tags,
-    // UgcItemVisibility is a const enum (0=Public, 1=FriendsOnly, 2=Private,
-    // 3=Unlisted). Pass the integer directly — the NAPI binding expects i32.
-    visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
-  }
-  console.log(
-    '[workshop:publish] step=updateItem itemId=%s payload=%o types={title:%s,description:%s,changeNote:%s,previewPath:%s,contentPath:%s,tags:%s,visibility:%s}',
-    itemId.toString(),
-    updatePayload,
-    typeof updatePayload.title,
-    typeof updatePayload.description,
-    typeof updatePayload.changeNote,
-    typeof updatePayload.previewPath,
-    typeof updatePayload.contentPath,
-    typeof updatePayload.tags,
-    typeof updatePayload.visibility,
-  )
-  const updateResult = await client.workshop.updateItem(itemId, updatePayload, COH2_APP_ID)
-  console.log(
-    '[workshop:publish] step=updateItem-resolved needsToAcceptAgreement=%s',
-    updateResult.needsToAcceptAgreement,
-  )
-
   return {
-    workshopId: itemId.toString(),
-    needsAgreement: updateResult.needsToAcceptAgreement,
+    workshopId: result.publishedFileId.toString(),
+    needsAgreement: result.agreementNeeded,
   }
 }
 
-/** Update input — same shape as publish but the caller already knows the
- *  workshopId. */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- intentional alias; UpdateWorkshopInput is the same shape as PublishWorkshopInput
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- intentional alias
 export interface UpdateWorkshopInput extends PublishWorkshopInput {}
 
-export interface UpdateWorkshopResult {
-  needsAgreement: boolean
-}
-
 /**
- * Re-publish content under an existing Workshop file ID. Used when the
- * user edits a project and clicks Publish again. The `workshopId` is
- * read from the project's saved state.
+ * Re-publish content under an existing Workshop file ID via legacy
+ * ISteamRemoteStorage update path.
+ *
+ * NOTE: Only items originally published via publishWorkshopItem (this legacy
+ * path) can be updated. Items created via the modern ISteamUGC API cannot.
  */
 export async function updateWorkshopItem(
   workshopId: string,
   input: UpdateWorkshopInput,
 ): Promise<UpdateWorkshopResult> {
-  const client = requireSteamClient()
-  const itemId = BigInt(workshopId)
+  requireSteamClient()
 
-  // ── Diagnostic: verify content dir and preview file before the API call ──
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const fs = require('fs') as typeof import('fs')
   let contentDirExists = false
   let contentDirIsDir = false
@@ -394,12 +449,12 @@ export async function updateWorkshopItem(
     contentDirExists = true
     contentDirIsDir = cs.isDirectory()
     if (contentDirIsDir) contentDirFiles = fs.readdirSync(input.contentPath)
-  } catch { /* stat failed — logged below */ }
+  } catch { /* logged below */ }
   try {
     const ps = fs.statSync(input.previewPath)
     previewExists = true
     previewSize = ps.size
-  } catch { /* stat failed — logged below */ }
+  } catch { /* logged below */ }
 
   console.log(
     '[workshop:update] step=pre-flight workshopId=%s appId=%d title=%j contentPath=%s contentDirExists=%s isDir=%s files=%j previewPath=%s previewExists=%s previewSize=%d tags=%j visibility=%s changeNote=%j',
@@ -433,89 +488,73 @@ export async function updateWorkshopItem(
     )
   }
 
-  // ── Diagnostic: log preview PNG dimensions from IHDR header bytes ─────────
   try {
     const previewBuf = fs.readFileSync(input.previewPath)
     if (previewBuf.length >= 24) {
       const w = previewBuf.readUInt32BE(16)
       const h = previewBuf.readUInt32BE(20)
-      console.log(
-        '[workshop:update] step=preview-dimensions width=%d height=%d bytes=%d',
-        w, h, previewBuf.length,
-      )
+      console.log('[workshop:update] step=preview-dimensions width=%d height=%d bytes=%d', w, h, previewBuf.length)
     }
   } catch (e) {
     console.warn('[workshop:update] step=preview-dimensions-failed', e)
   }
 
-  const updatePayload = {
-    title: input.title,
-    description: input.description,
-    changeNote: input.changeNote ?? 'Update',
+  const sgaPath = findSgaInDir(input.contentPath)
+  console.log('[workshop:update] step=sga-resolved sgaPath=%s', sgaPath)
+
+  const addon = requireNativeAddon()
+  console.log('[workshop:update] step=updateExistingItem itemId=%s', workshopId)
+  const result = await addon.updateExistingItem({
+    publishedFileId: BigInt(workshopId),
+    sgaPath,
     previewPath: input.previewPath,
-    contentPath: input.contentPath,
-    tags: input.tags,
-    // UgcItemVisibility is a const enum (0=Public, 1=FriendsOnly, 2=Private,
-    // 3=Unlisted). Pass the integer directly — the NAPI binding expects i32.
+    appId: COH2_APP_ID,
+    title: input.title,
+    description: input.description ?? '',
     visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
-  }
+    tags: input.tags ?? [],
+    changeNote: input.changeNote ?? 'Update',
+  })
+
   console.log(
-    '[workshop:update] step=updateItem itemId=%s payload=%o types={title:%s,description:%s,changeNote:%s,previewPath:%s,contentPath:%s,tags:%s,visibility:%s}',
-    itemId.toString(),
-    updatePayload,
-    typeof updatePayload.title,
-    typeof updatePayload.description,
-    typeof updatePayload.changeNote,
-    typeof updatePayload.previewPath,
-    typeof updatePayload.contentPath,
-    typeof updatePayload.tags,
-    typeof updatePayload.visibility,
+    '[workshop:update] step=updateExistingItem-resolved publishedFileId=%s agreementNeeded=%s',
+    result.publishedFileId.toString(),
+    result.agreementNeeded,
   )
-  const result = await client.workshop.updateItem(itemId, updatePayload, COH2_APP_ID)
-  console.log(
-    '[workshop:update] step=updateItem-resolved needsToAcceptAgreement=%s',
-    result.needsToAcceptAgreement,
-  )
-  return { needsAgreement: result.needsToAcceptAgreement }
+
+  return { needsAgreement: result.agreementNeeded }
 }
 
-/** A Workshop item published by the current user. Subset of steamworks.js's
- *  WorkshopItem — we surface only what the renderer renders. */
+/** A Workshop item published by the current user. */
 export interface MyWorkshopItem {
   workshopId: string
   title: string
   description: string
   tags: string[]
   visibility: number
-  /** Unix seconds. The renderer converts to a relative timestamp. */
   timeUpdated: number
   previewUrl: string | null
   url: string
 }
 
 /**
- * Enumerate the current user's published items for CoH2. Used by the
- * StartScreen's "Browse my Workshop items" branch + the per-project
- * publish dialog's "this project is already published" check.
- *
- * Pages through results until the totalResults count is reached, so the
- * renderer doesn't have to handle pagination. CoH2 community has ~5
- * decals/faceplates/skins per typical author, so 1–2 pages tops.
+ * Enumerate the current user's published items for CoH2.
+ * Uses steamworks.js getUserItems (ISteamUGC::GetUserItems) — this is a
+ * READ-ONLY query, not a publish, so it works fine with the modern UGC API.
  */
 export async function getMyWorkshopItems(): Promise<MyWorkshopItem[]> {
   const client = requireSteamClient()
   const me = client.localplayer.getSteamId()
   const out: MyWorkshopItem[] = []
   let page = 1
-  // Hard cap to prevent infinite loops if Steam returns 0/0 forever.
   const MAX_PAGES = 20
   while (page <= MAX_PAGES) {
     const result = await client.workshop.getUserItems(
       page,
       me.accountId,
-      0, // UserListType.Published — items created by this user
-      0, // UGCType.Items (all UGC items)
-      3, // UserListOrder.LastUpdatedDesc (newest first)
+      0, // UserListType.Published
+      0, // UGCType.Items
+      3, // UserListOrder.LastUpdatedDesc
       { creator: COH2_APP_ID, consumer: COH2_APP_ID },
       { includeMetadata: true, language: 'english' },
     )

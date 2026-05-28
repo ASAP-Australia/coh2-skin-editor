@@ -1,0 +1,13 @@
+{
+  "name": "coh2-workshop",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "install": "node-gyp rebuild"
+  },
+  "dependencies": {
+    "node-addon-api": "*"
+  }
+}

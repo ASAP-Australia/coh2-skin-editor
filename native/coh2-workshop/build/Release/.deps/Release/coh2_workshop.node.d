@@ -1,0 +1,1 @@
+cmd_Release/coh2_workshop.node := ln -f "Release/obj.target/coh2_workshop.node" "Release/coh2_workshop.node" 2>/dev/null || (rm -rf "Release/coh2_workshop.node" && cp -af "Release/obj.target/coh2_workshop.node" "Release/coh2_workshop.node")
