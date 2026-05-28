@@ -781,6 +781,71 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
     { id: 'draw', icon: <Pencil size={20} />, label: 'Draw' },
   ]
 
+  // ── Publish handler (stable callback so publishSlot doesn't re-render) ──
+  const handlePublishClick = useCallback(async () => {
+    try {
+      const { buildDecalMod, DECAL_ICON_SIZE, DECAL_TEXTURE_SIZE } =
+        await import('@/lib/decal-mod-build')
+      const { deriveGuidFromId } = await import('@/lib/live-sync')
+
+      const guid = deriveGuidFromId(project.id)
+
+      // Render icon canvas (64×64) from the first visible decal
+      const iconCanvas = document.createElement('canvas')
+      iconCanvas.width = iconCanvas.height = DECAL_ICON_SIZE
+      const iconCtx = iconCanvas.getContext('2d')
+      const visibleDecal = project.decals.find(d => d.visible)
+      if (visibleDecal && iconCtx) {
+        const src = project.sourceImages[visibleDecal.sourceImageId]
+        if (src) {
+          const img = new Image()
+          img.src = src.dataUrl
+          await new Promise<void>(r => { img.onload = () => r(); img.onerror = () => r() })
+          const rendered = rasteriseDecal(visibleDecal, img)
+          iconCtx.drawImage(rendered, 0, 0, DECAL_ICON_SIZE, DECAL_ICON_SIZE)
+        }
+      }
+      const iconRgba = iconCtx
+        ? iconCtx.getImageData(0, 0, DECAL_ICON_SIZE, DECAL_ICON_SIZE).data
+        : new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
+
+      // Render decal texture (128×128)
+      const texCanvas = document.createElement('canvas')
+      texCanvas.width = texCanvas.height = DECAL_TEXTURE_SIZE
+      const texCtx = texCanvas.getContext('2d')
+      if (visibleDecal && texCtx) {
+        const src = project.sourceImages[visibleDecal.sourceImageId]
+        if (src) {
+          const img = new Image()
+          img.src = src.dataUrl
+          await new Promise<void>(r => { img.onload = () => r(); img.onerror = () => r() })
+          const rendered = rasteriseDecal(visibleDecal, img)
+          texCtx.drawImage(rendered, 0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE)
+        }
+      }
+      const decalRgba = texCtx
+        ? texCtx.getImageData(0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE).data
+        : new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
+
+      const result = await buildDecalMod({ project, iconRgba, decalRgba, guid })
+      const target = makeDecalPublishTarget(
+        project,
+        result.sga,
+        result.sgaFilename,
+        iconCanvas,
+        workshopId => {
+          const next = { ...project, workshopId }
+          setProject(next)
+          saveDecalPackToLocal(next)
+        },
+      )
+      setPublishTarget(target)
+      setPublishDialogOpen(true)
+    } catch (e) {
+      console.error('Decal pack publish build failed:', e)
+    }
+  }, [project, setProject, setPublishTarget, setPublishDialogOpen])
+
   // Whether to show the placeholder for the active decal canvas.
   const showDecalPlaceholder =
     !activeDecal ||
@@ -1032,109 +1097,14 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
         }}
       />
 
-      {/* ── Top-right: Publish to Workshop button ───────────────────────── */}
-      <button
-        type="button"
-        title="Publish this decal pack to Steam Workshop"
-        aria-label="Publish to Workshop"
-        onClick={async () => {
-          try {
-            const { buildDecalMod, DECAL_ICON_SIZE, DECAL_TEXTURE_SIZE } =
-              await import('@/lib/decal-mod-build')
-            const { deriveGuidFromId } = await import('@/lib/live-sync')
-
-            const guid = deriveGuidFromId(project.id)
-
-            // Render icon canvas (64×64) from the first visible decal
-            const iconCanvas = document.createElement('canvas')
-            iconCanvas.width = iconCanvas.height = DECAL_ICON_SIZE
-            const iconCtx = iconCanvas.getContext('2d')
-            const visibleDecal = project.decals.find(d => d.visible)
-            if (visibleDecal && iconCtx) {
-              const src = project.sourceImages[visibleDecal.sourceImageId]
-              if (src) {
-                const img = new Image()
-                img.src = src.dataUrl
-                await new Promise<void>(r => { img.onload = () => r(); img.onerror = () => r() })
-                const rendered = rasteriseDecal(visibleDecal, img)
-                iconCtx.drawImage(rendered, 0, 0, DECAL_ICON_SIZE, DECAL_ICON_SIZE)
-              }
-            }
-            const iconRgba = iconCtx
-              ? iconCtx.getImageData(0, 0, DECAL_ICON_SIZE, DECAL_ICON_SIZE).data
-              : new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
-
-            // Render decal texture (128×128)
-            const texCanvas = document.createElement('canvas')
-            texCanvas.width = texCanvas.height = DECAL_TEXTURE_SIZE
-            const texCtx = texCanvas.getContext('2d')
-            if (visibleDecal && texCtx) {
-              const src = project.sourceImages[visibleDecal.sourceImageId]
-              if (src) {
-                const img = new Image()
-                img.src = src.dataUrl
-                await new Promise<void>(r => { img.onload = () => r(); img.onerror = () => r() })
-                const rendered = rasteriseDecal(visibleDecal, img)
-                texCtx.drawImage(rendered, 0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE)
-              }
-            }
-            const decalRgba = texCtx
-              ? texCtx.getImageData(0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE).data
-              : new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
-
-            const result = await buildDecalMod({ project, iconRgba, decalRgba, guid })
-            const target = makeDecalPublishTarget(
-              project,
-              result.sga,
-              result.sgaFilename,
-              iconCanvas,
-              workshopId => {
-                const next = { ...project, workshopId }
-                setProject(next)
-                saveDecalPackToLocal(next)
-              },
-            )
-            setPublishTarget(target)
-            setPublishDialogOpen(true)
-          } catch (e) {
-            console.error('Decal pack publish build failed:', e)
-          }
-        }}
-        style={
-          {
-            position: 'fixed',
-            top: 'calc(12px + var(--app-top-inset, 0px))',
-            right: 12,
-            zIndex: 50,
-            height: 36,
-            paddingLeft: 14,
-            paddingRight: 14,
-            borderRadius: 12,
-            background: 'linear-gradient(135deg, rgba(31,84,147,0.85), rgba(12,48,100,0.85))',
-            backdropFilter: 'blur(40px) saturate(150%)',
-            WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-            border: '0.5px solid rgba(96,165,250,0.25)',
-            boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.08), 0 4px 12px -4px rgba(0,0,0,0.3)',
-            color: 'rgba(147,197,253,0.95)',
-            cursor: 'pointer',
-            fontSize: 12,
-            fontWeight: 600,
-            letterSpacing: '0.01em',
-            whiteSpace: 'nowrap',
-            transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-            WebkitAppRegion: 'no-drag',
-          } as CSSProperties
-        }
-      >
-        ↑ Publish to Workshop
-      </button>
-
-      {/* ── Centered pack-name title — top-centre of viewport ─────────────
+      {/* ── Centered pack-name title pill — top-centre of viewport ──────────
           Mirrors FaceplateEditor's centered title pattern so the user
           always sees which pack they're editing. Click to open the identity
           popover (name / description / author / icon). These ARE the
           in-game text fields — name appears above the decal grid and on
-          the equip card; description is the body text on that card. */}
+          the equip card; description is the body text on that card.
+          LiveSyncBadge sits as a sibling to the rename button, visually
+          adjacent but isolated from rename-toggle click events. */}
       <div
         style={
           {
@@ -1144,6 +1114,10 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
             transform: 'translateX(-50%)',
             zIndex: 50,
             WebkitAppRegion: 'no-drag',
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
           } as CSSProperties
         }
       >
@@ -1185,6 +1159,12 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
         >
           {project.packName || 'Unnamed Decal Pack'}
         </button>
+
+        {/* LiveSyncBadge — adjacent to title, clicks do not propagate to
+            the rename toggle. */}
+        <div onClick={(e) => e.stopPropagation()}>
+          <LiveSyncBadge />
+        </div>
 
         {/* Pack identity popover — name / description / author / icon.
             Name and Description ARE the in-game text fields: name appears
@@ -1234,6 +1214,34 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
               Name and Description are the in-game fields — shown above the
               decal grid and on the equip card in CoH2.
             </p>
+          }
+          publishSlot={
+            <button
+              type="button"
+              aria-label="Publish to Workshop"
+              onClick={handlePublishClick}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '8px 12px',
+                borderRadius: 10,
+                background: 'linear-gradient(135deg, rgba(31,84,147,0.85), rgba(12,48,100,0.85))',
+                backdropFilter: 'blur(40px) saturate(150%)',
+                WebkitBackdropFilter: 'blur(40px) saturate(150%)',
+                border: '0.5px solid rgba(96,165,250,0.25)',
+                boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.08), 0 4px 12px -4px rgba(0,0,0,0.3)',
+                color: 'rgba(147,197,253,0.95)',
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: '0.01em',
+                whiteSpace: 'nowrap',
+                transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+                textAlign: 'center',
+              }}
+            >
+              ↑ Publish to Workshop
+            </button>
           }
         />
       </div>
@@ -1576,9 +1584,6 @@ export default function DecalPackEditor({ project: initialProject, onBack }: Pro
               }}
             />
           </ToolOptionsPeel>
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
-            <LiveSyncBadge />
-          </div>
         </div>
         {/* Bottom row — the tool pill. The alpha-preview Eye toggle that
          *  used to live here is now a segment of the right-edge

@@ -597,6 +597,44 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
     { id: 'mask', icon: <Layers size={20} />, label: 'Mask' },
   ]
 
+  // ── Publish handler (stable callback so publishSlot doesn't re-render) ──
+  const handlePublishClick = useCallback(async () => {
+    try {
+      const { buildFaceplateMod, generateGuid } =
+        await import('@/lib/faceplate-mod-build')
+      const { ATLAS_WIDTH, ATLAS_HEIGHT } =
+        await import('@/lib/faceplate-templates')
+      const bannerCanvas = await composeFaceplateCanvas(project)
+      const atlasCanvas = document.createElement('canvas')
+      atlasCanvas.width = ATLAS_WIDTH
+      atlasCanvas.height = ATLAS_HEIGHT
+      const atlasCtx = atlasCanvas.getContext('2d')
+      if (atlasCtx) {
+        atlasCtx.drawImage(bannerCanvas, 0, 0)
+      }
+      const atlasRgba = atlasCtx
+        ? atlasCtx.getImageData(0, 0, ATLAS_WIDTH, ATLAS_HEIGHT).data
+        : new Uint8ClampedArray(ATLAS_WIDTH * ATLAS_HEIGHT * 4)
+      const guid = generateGuid()
+      const result = await buildFaceplateMod({ project, atlasRgba, guid })
+      const target = makeFaceplatePublishTarget(
+        project,
+        result.sga,
+        result.sgaFilename,
+        bannerCanvas,
+        workshopId => {
+          const next = { ...project, workshopId }
+          setProject(next)
+          persistFaceplate(next)
+        },
+      )
+      setPublishTarget(target)
+      setPublishDialogOpen(true)
+    } catch (e) {
+      console.error('Faceplate publish build failed:', e)
+    }
+  }, [project, setProject, setPublishTarget, setPublishDialogOpen])
+
   return (
     <div
       className="fixed inset-0 z-10"
@@ -1509,84 +1547,12 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         }}
       />
 
-      {/* ── Top-right: Publish to Workshop button ───────────────────────── */}
-      <button
-        type="button"
-        title="Publish this faceplate to Steam Workshop"
-        aria-label="Publish to Workshop"
-        onClick={async () => {
-          // Build the SGA on demand so the dialog always publishes fresh bytes.
-          // composeFaceplateCanvas is defined at the bottom of this file; we
-          // call it directly (no dynamic import needed — same module).
-          try {
-            const { buildFaceplateMod, generateGuid } =
-              await import('@/lib/faceplate-mod-build')
-            const { ATLAS_WIDTH, ATLAS_HEIGHT } =
-              await import('@/lib/faceplate-templates')
-            const bannerCanvas = await composeFaceplateCanvas(project)
-            const atlasCanvas = document.createElement('canvas')
-            atlasCanvas.width = ATLAS_WIDTH
-            atlasCanvas.height = ATLAS_HEIGHT
-            const atlasCtx = atlasCanvas.getContext('2d')
-            if (atlasCtx) {
-              atlasCtx.drawImage(bannerCanvas, 0, 0)
-            }
-            const atlasRgba = atlasCtx
-              ? atlasCtx.getImageData(0, 0, ATLAS_WIDTH, ATLAS_HEIGHT).data
-              : new Uint8ClampedArray(ATLAS_WIDTH * ATLAS_HEIGHT * 4)
-            const guid = generateGuid()
-            const result = await buildFaceplateMod({ project, atlasRgba, guid })
-            const target = makeFaceplatePublishTarget(
-              project,
-              result.sga,
-              result.sgaFilename,
-              bannerCanvas,
-              workshopId => {
-                const next = { ...project, workshopId }
-                setProject(next)
-                persistFaceplate(next)
-              },
-            )
-            setPublishTarget(target)
-            setPublishDialogOpen(true)
-          } catch (e) {
-            console.error('Faceplate publish build failed:', e)
-          }
-        }}
-        style={
-          {
-            position: 'fixed',
-            top: 'calc(12px + var(--app-top-inset, 0px))',
-            right: 12,
-            zIndex: 50,
-            height: 36,
-            paddingLeft: 14,
-            paddingRight: 14,
-            borderRadius: 12,
-            background: 'linear-gradient(135deg, rgba(31,84,147,0.85), rgba(12,48,100,0.85))',
-            backgroundImage: 'none',
-            backdropFilter: 'blur(40px) saturate(150%)',
-            WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-            border: '0.5px solid rgba(96,165,250,0.25)',
-            boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.08), 0 4px 12px -4px rgba(0,0,0,0.3)',
-            color: 'rgba(147,197,253,0.95)',
-            cursor: 'pointer',
-            fontSize: 12,
-            fontWeight: 600,
-            letterSpacing: '0.01em',
-            whiteSpace: 'nowrap',
-            transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-            WebkitAppRegion: 'no-drag',
-          } as CSSProperties
-        }
-      >
-        ↑ Publish to Workshop
-      </button>
-
-      {/* ── Centered project title button — top center of viewport ───────
+      {/* ── Centered project title pill — top center of viewport ────────
           Mirrors EditorHomeButton's glass styling. Clicking opens a small
           rename popover so the user can rename the pack inline. Shows ONLY
-          packName (never author). */}
+          packName (never author). LiveSyncBadge sits as a sibling to the
+          rename button inside the same fixed-position wrapper, visually
+          adjacent but isolated from rename-toggle click events. */}
       <div
         style={
           {
@@ -1596,6 +1562,10 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             transform: 'translateX(-50%)',
             zIndex: 50,
             WebkitAppRegion: 'no-drag',
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
           } as CSSProperties
         }
       >
@@ -1638,6 +1608,21 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           {project.packName || 'Unnamed Faceplate'}
         </button>
 
+        {/* LiveSyncBadge — adjacent to title, clicks do not propagate to
+            the rename toggle. Wrap in a div with stopPropagation so badge
+            interactions (e.g. opening icon picker) stay isolated. */}
+        <div onClick={(e) => e.stopPropagation()}>
+          <LiveSyncBadge
+            iconPicker={{
+              current: project.inventoryIcon ?? null,
+              onSet: dataUrl =>
+                mutate(p => ({ ...p, inventoryIcon: dataUrl ?? undefined }), {
+                  undoable: true,
+                }),
+            }}
+          />
+        </div>
+
         {/* Rename popover — appears directly below the title button */}
         <PackIdentityPopover
           open={packNameEditOpen}
@@ -1675,6 +1660,34 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
               mutate(p => ({ ...p, inventoryIcon: next ?? undefined }), { undoable: false }),
             sizePx: 64,
           }}
+          publishSlot={
+            <button
+              type="button"
+              aria-label="Publish to Workshop"
+              onClick={handlePublishClick}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '8px 12px',
+                borderRadius: 10,
+                background: 'linear-gradient(135deg, rgba(31,84,147,0.85), rgba(12,48,100,0.85))',
+                backdropFilter: 'blur(40px) saturate(150%)',
+                WebkitBackdropFilter: 'blur(40px) saturate(150%)',
+                border: '0.5px solid rgba(96,165,250,0.25)',
+                boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.08), 0 4px 12px -4px rgba(0,0,0,0.3)',
+                color: 'rgba(147,197,253,0.95)',
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: '0.01em',
+                whiteSpace: 'nowrap',
+                transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+                textAlign: 'center',
+              }}
+            >
+              ↑ Publish to Workshop
+            </button>
+          }
         />
       </div>
 
@@ -2305,21 +2318,6 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                 <Sliders size={18} aria-hidden />
               </button>
             )}
-            {/* Pass the inventory-icon picker context so clicking the
-             *  badge opens the popover with the upload UI. The picker
-             *  callback mutates the project's optional v7+ field;
-             *  mutate() persists the project AND triggers a Live Sync
-             *  re-export, so the user sees their new icon appear in
-             *  the .sga within ~1.5s (the debounce window). */}
-            <LiveSyncBadge
-              iconPicker={{
-                current: project.inventoryIcon ?? null,
-                onSet: dataUrl =>
-                  mutate(p => ({ ...p, inventoryIcon: dataUrl ?? undefined }), {
-                    undoable: true,
-                  }),
-              }}
-            />
           </div>
         </div>
         {/* Bottom row — the tool pill with eye-preview as an extra */}

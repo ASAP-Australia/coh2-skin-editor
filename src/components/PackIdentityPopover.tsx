@@ -53,6 +53,11 @@ export interface PackIdentityPopoverProps {
   /** Extra content rendered below the icon slot. */
   extraSection?: ReactNode
 
+  /** Optional render slot at the bottom of the popover (after Author). Used by
+   *  Faceplate/DecalPack editors to embed the "Publish to Workshop" button here
+   *  instead of a separate floating top-right button. */
+  publishSlot?: ReactNode
+
   /** Anchor positioning override — forwarded to the root div. */
   style?: CSSProperties
 }
@@ -154,6 +159,7 @@ export function PackIdentityPopover({
   onSave,
   iconSlot,
   extraSection,
+  publishSlot,
   style,
 }: PackIdentityPopoverProps) {
   // ----- Draft state -------------------------------------------------------
@@ -457,6 +463,13 @@ export function PackIdentityPopover({
 
       {/* ── Extra section (caller-supplied) ──────────────────────────────── */}
       {extraSection}
+
+      {/* ── Publish slot (caller-supplied) ───────────────────────────────── */}
+      {publishSlot && (
+        <div style={{ marginTop: 4 }}>
+          {publishSlot}
+        </div>
+      )}
     </div>
   )
 }
