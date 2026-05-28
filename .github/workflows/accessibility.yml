@@ -25,6 +25,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
       - run: npm run build
       - name: Start preview server
         run: npm run preview &
