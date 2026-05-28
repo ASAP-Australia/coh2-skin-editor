@@ -26,7 +26,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, Clock, Plus, Sticker, Upload, UserSquare } from 'lucide-react'
+import { ArrowRight, Clock, IdCard, Paintbrush, Sticker, Upload } from 'lucide-react'
 import { BorderBeam } from '@/components/ui/border-beam'
 import { type Coh2SkinProject, loadActive, readProjectFile } from '@/lib/project'
 import {
@@ -230,51 +230,36 @@ export default function StartScreen({
   // (so anything saved elsewhere — e.g. the per-kind "Load Project" file
   // picker — keeps working), it just doesn't surface here.
 
-  // ── Four primary action rows (iOS Settings–style coloured tiles) ──────
-  //
-  // Each row's icon sits inside a tinted gradient square — a direct lift
-  // from Apple's Settings.app pattern (orange Music, blue Mail, green
-  // Messages…) so the user can scan the menu by colour instead of by
-  // text. The four actions read at a glance:
-  //
-  //   • New Skin Pack   — Brigade orange (matches the app's accent
-  //                       colour + reads as "paint / livery")
-  //   • New Faceplate   — Apple blue (profile / identity)
-  //   • New Decal Pack  — Apple purple (creative compose / sticker)
-  //   • Load Project    — Apple green (positive, "open from disk")
-  //
-  // The colours are kept low-saturation against the glass card so they
-  // don't fight the dark background; the icon glyph stays white for
-  // contrast (Apple's convention).
+  // ── Project type buttons: 2-column half-width grid + full-width Load ──
+  // The three "new project" buttons sit in a CSS grid (2 cols, gap-3).
+  // With three items the first two share row 1 and the third sits
+  // half-width on row 2 (left-aligned), matching the grid cell size.
+  // Each button uses a neutral glass background; colour is expressed only
+  // through the lucide icon (Paintbrush amber / IdCard sky / Sticker emerald)
+  // so the visual hierarchy is icon-led rather than background-led.
+  // Load Project keeps the full-width ActionRow treatment below the grid.
+  // ── Half-width 2-column grid for the three "new project" buttons ─────
   rows.push(
-    <ActionRow
-      key="new-skin"
-      icon={<Plus className="size-5 text-white" aria-hidden strokeWidth={2.2} />}
-      tone="orange"
-      title="New Skin Pack"
-      sublabel="Paint a vehicle livery"
-      onClick={onNewSkin}
-    />,
-  )
-  rows.push(
-    <ActionRow
-      key="new-faceplate"
-      icon={<UserSquare className="size-5 text-white" aria-hidden strokeWidth={2.2} />}
-      tone="blue"
-      title="New Faceplate"
-      sublabel="Player profile banner"
-      onClick={onNewFaceplate}
-    />,
-  )
-  rows.push(
-    <ActionRow
-      key="new-decal-pack"
-      icon={<Sticker className="size-5 text-white" aria-hidden strokeWidth={2.2} />}
-      tone="purple"
-      title="New Decal Pack"
-      sublabel="A set of vehicle decals"
-      onClick={onNewDecalPack}
-    />,
+    <div key="new-project-grid" className="grid grid-cols-2 gap-3 mb-3">
+      <GridButton
+        icon={<Paintbrush className="size-5 text-amber-400 flex-shrink-0" aria-hidden strokeWidth={2} />}
+        title="New Skin Pack"
+        sublabel="Paint a vehicle livery"
+        onClick={onNewSkin}
+      />
+      <GridButton
+        icon={<IdCard className="size-5 text-sky-400 flex-shrink-0" aria-hidden strokeWidth={2} />}
+        title="New Faceplate"
+        sublabel="Player profile banner"
+        onClick={onNewFaceplate}
+      />
+      <GridButton
+        icon={<Sticker className="size-5 text-emerald-400 flex-shrink-0" aria-hidden strokeWidth={2} />}
+        title="New Decal Pack"
+        sublabel="A set of vehicle decals"
+        onClick={onNewDecalPack}
+      />
+    </div>,
   )
   rows.push(
     <ActionRow
@@ -348,6 +333,39 @@ export default function StartScreen({
         }
       `}</style>
     </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// GridButton — compact half-width card used in the 2-column new-project
+// grid. Neutral glass background; the colour lives on the icon only so
+// the visual hierarchy is icon-led rather than background-led.
+// ─────────────────────────────────────────────────────────────────────────
+
+function GridButton({
+  icon,
+  title,
+  sublabel,
+  onClick,
+}: {
+  icon: React.ReactNode
+  title: string
+  sublabel: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="action-row group relative w-full text-left px-3.5 py-3 rounded-2xl
+                 border border-white/[0.08] bg-white/[0.04]
+                 transition-all duration-200 flex items-center gap-2.5"
+    >
+      {icon}
+      <div className="flex-1 min-w-0">
+        <div className="text-[14px] font-medium text-foreground leading-tight">{title}</div>
+        <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">{sublabel}</div>
+      </div>
+    </button>
   )
 }
 
