@@ -54,7 +54,7 @@ jobs:
           cp release/*.AppImage dist-release/ 2>/dev/null || true
           cp release/latest-linux.yml dist-release/ 2>/dev/null || true
           ls -lh dist-release/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-appimage
           path: dist-release/
@@ -81,7 +81,7 @@ jobs:
           cp release/*.exe dist-release/ 2>/dev/null || true
           cp release/latest.yml dist-release/ 2>/dev/null || true
           ls -lh dist-release/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-nsis
           path: dist-release/
