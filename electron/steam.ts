@@ -102,6 +102,29 @@ function requireNativeAddon(): WorkshopNative {
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const path = require('path') as typeof import('path')
+
+  // Belt-and-suspenders: set LD_LIBRARY_PATH to include the steamworks.js
+  // dist dir BEFORE the first require() so the dynamic linker can find
+  // libsteam_api.so even if the addon's DT_RUNPATH is wrong.
+  //
+  // The addon's binding.gyp uses $$ORIGIN (which becomes $ORIGIN in the ELF
+  // DT_RUNPATH) so the linker looks relative to the .node file — but as a
+  // fallback in case of future RPATH regressions, we also set LD_LIBRARY_PATH
+  // here. Both dev (node_modules/) and AppImage (app.asar.unpacked/…) paths
+  // are covered: in production __dirname is inside the asar so walking ../
+  // lands at the asar root, and app.asar.unpacked/ is a sibling on disk.
+  //
+  // Dev path:        <repo>/dist-electron/ → <repo>/node_modules/steamworks.js/dist/linux64
+  // AppImage path:   <asar>/dist-electron/ → <asar.unpacked>/node_modules/steamworks.js/dist/linux64
+  const steamworksLibDir = path.resolve(
+    __dirname,
+    '..', 'node_modules', 'steamworks.js', 'dist', 'linux64',
+  )
+  const existingLdPath = process.env.LD_LIBRARY_PATH ?? ''
+  process.env.LD_LIBRARY_PATH = existingLdPath
+    ? `${steamworksLibDir}:${existingLdPath}`
+    : steamworksLibDir
+
   // In production (AppImage), __dirname is inside the asar — the .node binary
   // is in an asarUnpack'd directory. We navigate relative to __dirname.
   // In dev, __dirname is dist-electron/.

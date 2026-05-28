@@ -34,9 +34,9 @@
       "conditions": [
         ["OS=='linux'", {
           "ldflags": [
-            "-Wl,-rpath,$ORIGIN/../../../node_modules/steamworks.js/dist/linux64",
-            "-Wl,-rpath,$ORIGIN/../../../../node_modules/steamworks.js/dist/linux64",
-            "-Wl,-rpath,$ORIGIN/../../../../../node_modules/steamworks.js/dist/linux64"
+            "-Wl,-rpath,\\$$ORIGIN/../../../node_modules/steamworks.js/dist/linux64",
+            "-Wl,-rpath,\\$$ORIGIN/../../../../node_modules/steamworks.js/dist/linux64",
+            "-Wl,-rpath,\\$$ORIGIN/../../../../../node_modules/steamworks.js/dist/linux64"
           ]
         }]
       ]
