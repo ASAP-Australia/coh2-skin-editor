@@ -28,7 +28,7 @@ interface Props {
  * Editor" sub-heading, which read as two stacked cards under the
  * AuthShell brand mark on first run.
  */
-type Phase = 'idle' | 'picking' | 'scanning' | 'linking-steam' | 'success' | 'error'
+type Phase = 'idle' | 'picking' | 'scanning' | 'linking-steam' | 'success' | 'warning'
 
 export default function ConnectScreen({ onConnected }: Props) {
   const [supported] = useState(() => isSupported() || isElectron())
@@ -40,6 +40,7 @@ export default function ConnectScreen({ onConnected }: Props) {
   // async detection can't mutate bullet #3 text mid-click. Kept in state (not
   // a ref) so it's safe to read during render.
   const [bulletThreeSnapshot, setBulletThreeSnapshot] = useState<string | null>(null)
+  // 'warning' is intentionally NOT busy — the user can click again immediately.
   const busy = phase === 'picking' || phase === 'scanning' || phase === 'linking-steam' || phase === 'success'
 
   // In Electron: probe the OS for a default Steam path so we can show
@@ -80,13 +81,15 @@ export default function ConnectScreen({ onConnected }: Props) {
       if (elapsed < 350) await new Promise(r => setTimeout(r, 350 - elapsed))
       if (!archives) {
         setError("That folder doesn't look like a Company of Heroes 2 install — couldn't find CoH2/Archives.")
-        setPhase('error')
+        setPhase('warning')
+        await new Promise(r => setTimeout(r, 1500))
+        setPhase('idle')
         return
       }
 
-      // Initialise Steam identity — soft failure only.
-      // We don't block the editor if Steam isn't running; the user can still
-      // edit skins locally. Publishing to Workshop will be unavailable.
+      // Initialise Steam identity — HARD requirement.
+      // If Steam isn't running or CoH2 isn't owned, block and show an inline
+      // message beneath the button. The user must launch Steam and retry.
       let resolvedSteamInfo: SteamInitInfo | undefined
       if (isElectron()) {
         setPhase('linking-steam')
@@ -97,16 +100,32 @@ export default function ConnectScreen({ onConnected }: Props) {
           } else if (result && !result.ok) {
             const msg =
               result.error.code === 'no-steam'
-                ? 'Steam not detected — you can still edit, but Workshop publishing is disabled.'
+                ? "Steam isn't running. Launch Steam, then click Connect again."
                 : result.error.code === 'no-game'
-                  ? 'CoH2 not found on your Steam account — publishing to Workshop is disabled.'
-                  : 'Steam init failed — Workshop publishing is disabled.'
+                  ? "CoH2 isn't found on your Steam account. Make sure you own the game, then click Connect again."
+                  : "Steam init failed. Make sure Steam is running, then click Connect again."
             setSteamWarning(msg)
+            setPhase('warning')
+            await new Promise(r => setTimeout(r, 1500))
+            setPhase('idle')
+            return
           }
         } catch {
-          setSteamWarning('Steam not detected — you can still edit, but Workshop publishing is disabled.')
+          setSteamWarning("Steam isn't running. Launch Steam, then click Connect again.")
+          setPhase('warning')
+          await new Promise(r => setTimeout(r, 1500))
+          setPhase('idle')
+          return
         }
-        await new Promise(r => setTimeout(r, 250))
+
+        // resolvedSteamInfo must be set to proceed
+        if (!resolvedSteamInfo) {
+          setSteamWarning("Steam isn't running. Launch Steam, then click Connect again.")
+          setPhase('warning')
+          await new Promise(r => setTimeout(r, 1500))
+          setPhase('idle')
+          return
+        }
       }
 
       setPhase('success')
@@ -118,7 +137,9 @@ export default function ConnectScreen({ onConnected }: Props) {
         setPhase('idle')
       } else {
         setError(e?.message ?? String(err))
-        setPhase('error')
+        setPhase('warning')
+        await new Promise(r => setTimeout(r, 1500))
+        setPhase('idle')
       }
     }
   }
@@ -147,14 +168,14 @@ export default function ConnectScreen({ onConnected }: Props) {
         ))}
       </ul>
 
-      {/* Steam warning banner — animates in/out with the downward cascade.
-          Key cycles between 'shown' and 'hidden' so the swap fires when
-          the warning appears or clears. */}
+      {/* Steam requirement note — inline small, amber tone, beneath bullet list.
+          Visible until user clicks Connect again (cleared at top of connect()). */}
       <AnimatedSwap swapKey={steamWarning ? 'shown' : 'hidden'} block>
         {steamWarning ? (
-          <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-yellow-400/25 bg-yellow-500/[0.06] text-[12px] text-yellow-200/90 leading-relaxed">
+          <p className="mb-4 text-[12px] leading-relaxed"
+             style={{ color: 'oklch(0.85 0.12 75)' }}>
             {steamWarning}
-          </div>
+          </p>
         ) : null}
       </AnimatedSwap>
 
@@ -177,8 +198,8 @@ export default function ConnectScreen({ onConnected }: Props) {
 
       {/* Single primary action — auto-detects when in Electron, else
           opens the FS picker. Button morphs its content per phase:
-          idle → label, picking → spinner, scanning → spinner + text,
-          success → inline green tick + "Connected". */}
+          idle → label, picking/scanning/linking-steam → spinner only (no text),
+          success → inline green tick, warning → inline yellow warning icon. */}
       <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={16} borderWidth={1} className="bb-pressable">
         <button
           disabled={!supported || busy}
@@ -195,32 +216,27 @@ export default function ConnectScreen({ onConnected }: Props) {
           }}
         >
           {/* AnimatedSwap drives the downward-cascade transition between
-              button states. `picking` and `scanning` share the same key so
-              they don't animate between each other (both show the plain
-              spinner and the visual difference would be imperceptible). */}
+              button states. picking/scanning/linking-steam all share the same
+              key 'spinning' so they don't animate between each other (all show
+              the plain spinner and the visual difference would be imperceptible). */}
           <AnimatedSwap
             swapKey={
-              phase === 'picking' || phase === 'scanning'
+              phase === 'picking' || phase === 'scanning' || phase === 'linking-steam'
                 ? 'spinning'
                 : phase
             }
           >
-            {phase === 'picking' ? (
+            {phase === 'picking' || phase === 'scanning' || phase === 'linking-steam' ? (
               <span className="inline-flex items-center justify-center" style={{ minWidth: 180 }}>
                 <InlineSpinner />
-              </span>
-            ) : phase === 'scanning' ? (
-              <span className="inline-flex items-center justify-center" style={{ minWidth: 180 }}>
-                <InlineSpinner />
-              </span>
-            ) : phase === 'linking-steam' ? (
-              <span className="inline-flex items-center justify-center gap-2 text-[13px]" style={{ minWidth: 180 }}>
-                <InlineSpinner />
-                <span>Connecting Steam…</span>
               </span>
             ) : phase === 'success' ? (
               <span className="inline-flex items-center justify-center" style={{ minWidth: 180 }}>
                 <InlineSuccessTick />
+              </span>
+            ) : phase === 'warning' ? (
+              <span className="inline-flex items-center justify-center" style={{ minWidth: 180 }}>
+                <InlineWarningIcon />
               </span>
             ) : (
               <span style={{ minWidth: 180, display: 'inline-flex', justifyContent: 'center' }}>Connect CoH2 install</span>
@@ -279,6 +295,21 @@ function InlineSuccessTick() {
       <circle cx="12" cy="12" r="11" fill="oklch(0.78 0.18 150)" />
       <path d="M7 12.5 L10.5 16 L17 9"
             stroke="#0b1410" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  )
+}
+
+/** Inline-sized (18 px) amber warning triangle for use inside the connect button.
+ *  Shown during the 'warning' phase (1500 ms hold) when any error path fires. */
+function InlineWarningIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden style={{ flex: 'none' }}>
+      {/* Filled amber triangle */}
+      <path d="M12 2.5 L22 20.5 H2 Z" fill="oklch(0.85 0.18 85)" />
+      {/* Exclamation stem */}
+      <rect x="11" y="9" width="2" height="6" rx="1" fill="#2a1a00" />
+      {/* Exclamation dot */}
+      <rect x="11" y="16.5" width="2" height="2" rx="1" fill="#2a1a00" />
     </svg>
   )
 }
