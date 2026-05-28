@@ -12,6 +12,7 @@
  * These tests are pure-function unit tests; no Steam client is required.
  */
 
+import { describe, it, expect } from 'vitest'
 import { visibilityToSteamString } from '../steam'
 
 describe('visibilityToSteamString', () => {
