@@ -265,7 +265,7 @@ export default function StartScreen({
       <GridButton
         icon={<GiOpenFolder className="text-violet-400 flex-shrink-0" style={{ width: 24, height: 24 }} aria-hidden />}
         title="Load Project"
-        sublabel="Browse saved projects"
+        sublabel="Open saved project"
         onClick={onShowSavedProjects}
       />
     </div>,
@@ -355,14 +355,14 @@ function GridButton({
   return (
     <button
       onClick={onClick}
-      className="action-row group relative w-full text-left px-3.5 py-3 rounded-2xl
+      className="action-row group relative w-full min-h-[64px] text-left px-3.5 py-3 rounded-2xl
                  border border-white/[0.08] bg-white/[0.04]
                  transition-all duration-200 flex items-center gap-2.5"
     >
       {icon}
       <div className="flex-1 min-w-0">
-        <div className="text-[14px] font-medium text-foreground leading-tight">{title}</div>
-        <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">{sublabel}</div>
+        <div className="text-[14px] font-medium text-foreground leading-tight truncate">{title}</div>
+        <div className="text-[11px] text-muted-foreground leading-tight mt-0.5 truncate">{sublabel}</div>
       </div>
     </button>
   )
