@@ -79,7 +79,6 @@ export default function ShortcutHelpSheet() {
         className="absolute inset-0 bg-black/40 backdrop-blur-sm"
         onClick={() => setOpen(false)}
       />
-      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- dialog is ARIA-interactive; jsx-a11y rule is a known false-positive for role="dialog" */}
       <div
         role="dialog"
         aria-modal="true"

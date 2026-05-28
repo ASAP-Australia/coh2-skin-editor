@@ -95,13 +95,15 @@ export default function Editor({ root, onDisconnect }: Props) {
   const vehicle = useMemo(() => VEHICLES.find(v => v.id === vehicleId) ?? VEHICLES[0], [vehicleId])
   const veh = useMemo(() => getOrInitVehicle(project, vehicle.id), [project, vehicle.id])
 
-  // ---- offscreen 2048² canvas where we composite the diffuse + decals
-  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null)
-  if (!overlayCanvasRef.current) {
+  // ---- offscreen 2048² canvas where we composite the diffuse + decals.
+  // Stored in state (lazy initializer) so the canvas reference is stable
+  // and accessible in JSX without touching a ref during render.
+  const [overlayCanvas] = useState<HTMLCanvasElement>(() => {
     const c = document.createElement('canvas')
     c.width = c.height = 2048
-    overlayCanvasRef.current = c
-  }
+    return c
+  })
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(overlayCanvas)
   const baseDiffuseRef = useRef<HTMLCanvasElement | null>(null)
 
   // Apply camo to the base diffuse canvas
@@ -267,7 +269,7 @@ export default function Editor({ root, onDisconnect }: Props) {
       <Viewport
         root={root}
         vehicle={vehicle}
-        overlayCanvas={overlayCanvasRef.current}
+        overlayCanvas={overlayCanvas}
         onModelLoaded={(_model, diffuseImg) => {
           baseDiffuseRef.current = diffuseImg
           repaint()
@@ -304,7 +306,7 @@ export default function Editor({ root, onDisconnect }: Props) {
           removeDecal={removeDecal}
           clearDecals={clearDecals}
           onDisconnect={onDisconnect}
-          overlayCanvas={overlayCanvasRef.current}
+          overlayCanvas={overlayCanvas}
           toast={toast.push}
           pendingImageId={pendingImageId}
           setPendingImageId={setPendingImageId}

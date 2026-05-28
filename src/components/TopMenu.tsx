@@ -334,7 +334,7 @@ function ExportPanel(p: Props) {
     try {
       const proj = await readProjectFile(file)
       p.setProject(proj)
-    } catch (err: any) { alert(err?.message ?? String(err)) }
+    } catch (err: unknown) { alert((err as { message?: string })?.message ?? String(err)) }
     e.target.value = ''
   }
   const onSavePng = () => {
@@ -551,7 +551,7 @@ function ScenePanel(p: Props) {
 
   const pickEnvFile = async () => {
     try {
-      const [handle] = await (window as any).showOpenFilePicker({
+      const [handle] = await (window as unknown as { showOpenFilePicker: (opts: { types: { description: string; accept: Record<string, string[]> }[]; multiple: boolean }) => Promise<FileSystemFileHandle[]> }).showOpenFilePicker({
         types: [{ description: 'SGA Archive', accept: { 'application/octet-stream': ['.sga'] } }],
         multiple: false,
       })
@@ -642,8 +642,8 @@ function ExportSkinPackButton({ p }: { p: Props }) {
       setBuilt(result)
       p.toast(`Built ${result.textureCount} vehicle${result.textureCount === 1 ? '' : 's'} — install or download below`, 'success')
       setProgress(null)
-    } catch (err: any) {
-      p.toast(err?.message ?? 'Export failed', 'error')
+    } catch (err: unknown) {
+      p.toast((err as { message?: string })?.message ?? 'Export failed', 'error')
       setProgress(null)
     } finally { setBusy(false) }
   }
@@ -670,8 +670,8 @@ function ExportSkinPackButton({ p }: { p: Props }) {
       if (!mods) return
       const r = await installSkinPack(mods, built.numericId, built.bytes)
       p.toast(`Installed → ${r.path} — restart CoH2 to pick it up`, 'success')
-    } catch (err: any) {
-      p.toast(err?.message ?? 'Install failed', 'error')
+    } catch (err: unknown) {
+      p.toast((err as { message?: string })?.message ?? 'Install failed', 'error')
     }
   }
 

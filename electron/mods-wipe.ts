@@ -141,7 +141,7 @@ export function scanFakeIdSgas(modsRoot: string): FakeIdEntry[] {
       const base = entry.slice(0, -'.sga'.length)
       const verdict = classifyFakeId(base)
       if (!verdict) continue
-      let size = 0
+      let size: number
       try {
         size = fs.statSync(full).size
       } catch {

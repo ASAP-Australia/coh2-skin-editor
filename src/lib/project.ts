@@ -603,5 +603,6 @@ export async function readProjectFile(file: File): Promise<Coh2SkinProject> {
 }
 
 function sanitiseFilename(s: string) {
+  // eslint-disable-next-line no-control-regex -- \x00-\x1f are valid binary control chars to strip from filenames
   return s.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/\s+/g, '-').slice(0, 64) || 'project'
 }

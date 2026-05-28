@@ -217,7 +217,7 @@ async function composeVehicleDiffuse(
 /** Fetch the bundled template files from the deployed app's `/template/`. */
 async function fetchTemplate(): Promise<Record<string, Uint8Array>> {
   const out: Record<string, Uint8Array> = {}
-  const base = (import.meta as any).env?.BASE_URL ?? '/'
+  const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/'
   for (const path of TEMPLATE_FILES) {
     const url = `${base}template/${path}`
     const r = await fetch(url)
@@ -306,7 +306,7 @@ interface Manifest {
 
 /** Check whether a signed key pool is available in the app's static assets. */
 export async function hasKeyPool(): Promise<boolean> {
-  const base = (import.meta as any).env?.BASE_URL ?? '/'
+  const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/'
   try {
     const r = await fetch(`${base}keys/manifest.json`, { method: 'HEAD' })
     return r.ok
@@ -327,7 +327,7 @@ export async function patchExport(
   project: Coh2SkinProject,
   onProgress: (p: ExportProgress) => void,
 ): Promise<ExportResult> {
-  const base = (import.meta as any).env?.BASE_URL ?? '/'
+  const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/'
 
   onProgress({ phase: 'init', message: 'Loading key manifest…' })
   const manifestResp = await fetch(`${base}keys/manifest.json`)

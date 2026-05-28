@@ -112,7 +112,7 @@ function decodeColourBlock(
     palette[10] = (palette[2] + palette[6]) / 2
     palette[12] = 0; palette[13] = 0; palette[14] = 0; palette[15] = 0  // BC1 punchthrough
   }
-  let idx = src[off + 4] | (src[off + 5] << 8) | (src[off + 6] << 16) | (src[off + 7] << 24)
+  const idx = src[off + 4] | (src[off + 5] << 8) | (src[off + 6] << 16) | (src[off + 7] << 24)
   for (let py = 0; py < 4; py++) {
     for (let px = 0; px < 4; px++) {
       const code = (idx >>> ((py * 4 + px) * 2)) & 3

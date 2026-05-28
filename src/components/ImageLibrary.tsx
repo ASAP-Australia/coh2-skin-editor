@@ -28,8 +28,8 @@ export default function ImageLibrary({ project, setProject, onImageReady, toast 
       setProject(copy)
       onImageReady(id)
       toast(`Imported ${file.name}`, 'success')
-    } catch (err: any) {
-      toast(err?.message ?? 'Import failed', 'error')
+    } catch (err: unknown) {
+      toast((err as { message?: string })?.message ?? 'Import failed', 'error')
     }
   }
 

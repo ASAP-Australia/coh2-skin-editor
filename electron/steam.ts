@@ -261,6 +261,7 @@ export async function publishWorkshopItem(
 
 /** Update input — same shape as publish but the caller already knows the
  *  workshopId. */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- intentional alias; UpdateWorkshopInput is the same shape as PublishWorkshopInput
 export interface UpdateWorkshopInput extends PublishWorkshopInput {}
 
 export interface UpdateWorkshopResult {

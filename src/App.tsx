@@ -83,7 +83,13 @@ const EDITOR_LOADING_MS = 1200
 
 export default function App() {
   const [installRoot, setInstallRoot] = useState<FileSystemDirectoryHandle | null>(null)
-  const [phase, setPhase] = useState<Phase>('probing')
+  const [phase, setPhase] = useState<Phase>(() => {
+    // Synchronous flags that can be resolved on first render without any async work.
+    const sParams = new URLSearchParams(location.search)
+    if (sParams.get('screenshot') === '1') return 'connect'
+    if (isElectron()) return 'connect'
+    return 'probing'
+  })
   /** Hydrated faceplate project, set just before navigating into the
    *  faceplate editor. Cleared on back-to-start. */
   const [faceplateProject, setFaceplateProject] = useState<Coh2FaceplateProject | null>(null)
@@ -105,12 +111,12 @@ export default function App() {
 
   // Boot: probe for a saved handle / Electron auto-detect / screenshot
   // harness flags, then settle on the appropriate first phase.
+  // Note: synchronous phase initialization (screenshot/Electron) is handled
+  // in the useState lazy initializer above; this effect only handles async probing.
   useEffect(() => {
     const sParams = new URLSearchParams(location.search)
     if (sParams.get('screenshot') === '1') {
-      // Headless screenshot harness — render ConnectScreen with no
-      // WebGL viewport mounted. Caller drives the capture from there.
-      setPhase('connect')
+      // Already set to 'connect' via lazy useState initializer — nothing async to do.
       return
     }
     if (isElectron() && sParams.get('headless') === 'editor') {
@@ -128,10 +134,7 @@ export default function App() {
       return
     }
     if (isElectron()) {
-      // Desktop: always start at ConnectScreen so the user makes a
-      // deliberate choice. ConnectScreen auto-detects the install
-      // path under the hood; the user only has to click once.
-      setPhase('connect')
+      // Desktop: already set to 'connect' via lazy useState initializer — nothing to do.
       return
     }
     // Browser: try the saved File System Access handle. If it's still

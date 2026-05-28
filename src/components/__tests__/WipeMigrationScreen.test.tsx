@@ -95,8 +95,7 @@ function findText(text: string | RegExp): HTMLElement | null {
   const matcher =
     typeof text === 'string' ? new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) : text
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT, null)
-  let node: Node | null = walker.currentNode
-  while ((node = walker.nextNode())) {
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
     const el = node as HTMLElement
     // Only consider elements whose direct text matches — avoids parents
     // that "contain" the text in their descendant subtree.

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { FACTIONS, VEHICLES, type Faction } from '@/lib/vehicles'
 import type { Coh2SkinProject } from '@/lib/project'
 
@@ -12,13 +12,20 @@ interface Props {
  *  active faction in a single horizontally-scrollable row. The whole bar
  *  is a single line of UI so the 3D viewport gets max vertical real-estate. */
 export default function FactionNav({ project, currentId, onPick }: Props) {
-  // Auto-select the faction that owns the currentId
-  const initialFaction: Faction = (VEHICLES.find(v => v.id === currentId)?.faction) ?? 'german'
-  const [active, setActive] = useState<Faction>(initialFaction)
-  useEffect(() => {
-    const f = VEHICLES.find(v => v.id === currentId)?.faction
-    if (f) setActive(f)
-  }, [currentId])
+  // Derive the faction that owns the currentId — this is the "canonical" faction
+  // for the currently selected vehicle.
+  const vehicleFaction = useMemo(
+    () => VEHICLES.find(v => v.id === currentId)?.faction ?? 'german',
+    [currentId],
+  )
+  // Allow the user to switch faction tabs independently; snap back to the
+  // vehicle's faction whenever `currentId` changes to a new vehicle.
+  const [active, setActive] = useState<Faction>(vehicleFaction)
+  const prevVehicleFaction = useRef(vehicleFaction)
+  if (prevVehicleFaction.current !== vehicleFaction) {
+    prevVehicleFaction.current = vehicleFaction
+    setActive(vehicleFaction)
+  }
 
   const list = VEHICLES.filter(v => v.faction === active)
   const rowRef = useRef<HTMLDivElement>(null)

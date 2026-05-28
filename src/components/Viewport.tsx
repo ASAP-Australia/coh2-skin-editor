@@ -289,7 +289,7 @@ export default function Viewport({
       targetPosRef.current = new Map()
       explodeProgressRef.current = 1
       onPartsLoaded?.([])
-      onModelLoaded?.({ meshes: [], textureSets: [], materials: new Map() } as any, null)
+      onModelLoaded?.({ meshes: [], textureSets: [], materials: new Map() } as unknown as RgmModel, null)
     }
 
     const run = async () => {
@@ -614,8 +614,8 @@ export default function Viewport({
           const cacheKey = materialName ?? '__body__'
           if (texCache.has(cacheKey)) return texCache.get(cacheKey)!
           const token = materialName ? tokenFor(materialName) : ''
-          let difPath: string | null = null
-          let nrmPath: string | null = null
+          let difPath: string | null
+          let nrmPath: string | null
           if (token) {
             difPath = findTset(p => p.includes(`_${token}_`) && /_dif$/.test(p))
             nrmPath = findTset(p => p.includes(`_${token}_`) && /_nrm$|_norm$/.test(p))
@@ -674,7 +674,7 @@ export default function Viewport({
           // Mark whether this submesh uses the BODY diffuse — only those
           // get the editable overlay rebound onto them. Tracks/wheels/wrecks
           // keep their own (non-editable) tile/wreck textures.
-          ;(mat as any).__usesBodyDiffuse = isBodyMaterial(sub.materialName)
+          ;(mat as THREE.MeshStandardMaterial & { __usesBodyDiffuse?: boolean }).__usesBodyDiffuse = isBodyMaterial(sub.materialName)
           const m = new THREE.Mesh(sub.geometry, mat)
           m.name = sub.name
           group.add(m)
@@ -737,9 +737,9 @@ export default function Viewport({
         // texture and decals wouldn't show.
         setModelTick(t => t + 1)
         setLoading(false)
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error(e)
-        if (!cancelled) { setErr(e?.message ?? String(e)); setLoading(false) }
+        if (!cancelled) { setErr((e as { message?: string })?.message ?? String(e)); setLoading(false) }
       }
     }
     run()
@@ -769,7 +769,7 @@ export default function Viewport({
           // Only rebind the editable overlay onto submeshes that use the
           // BODY diffuse. Tracks/wheels keep their own (tile) textures so
           // we don't smear the hull atlas across treads.
-          if ((mat as any).__usesBodyDiffuse) {
+          if ((mat as THREE.MeshStandardMaterial & { __usesBodyDiffuse?: boolean }).__usesBodyDiffuse) {
             mat.map = overlayTexRef.current
             mat.needsUpdate = true
           }
@@ -780,7 +780,7 @@ export default function Viewport({
         const m = o as THREE.Mesh
         if (m.isMesh) {
           const mat = m.material as THREE.MeshStandardMaterial
-          if ((mat as any).__usesBodyDiffuse) {
+          if ((mat as THREE.MeshStandardMaterial & { __usesBodyDiffuse?: boolean }).__usesBodyDiffuse) {
             mat.map = baseTextureRef.current
             mat.needsUpdate = true
           }

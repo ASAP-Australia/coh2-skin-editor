@@ -107,8 +107,10 @@ export default function SteamGate({ onAuthed }: Props) {
     void probe()
   }, [probe])
 
-  // Auto-probe on mount.
+  // Auto-probe on mount. probe() is async — setState calls happen in the
+  // Promise resolution, not synchronously; the rule fires a false positive here.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- probe() is async; setState happens in Promise resolution, not synchronously
     void probe()
   }, [probe])
 

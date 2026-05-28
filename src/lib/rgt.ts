@@ -91,7 +91,7 @@ export function decodeRgt(buf: ArrayBuffer | Uint8Array): DecodedRgt {
   const compressed = u8.subarray(tdat.payloadOffset + offset, tdat.payloadOffset + offset + last.cmp)
   let pixels: Uint8Array
   try { pixels = inflate(compressed) }
-  catch (e) { throw new Error(`Failed to inflate top mip: ${(e as Error).message}`) }
+  catch (e) { throw new Error(`Failed to inflate top mip: ${(e as Error).message}`, { cause: e }) }
 
   // Strip optional 16-byte per-mip header when present. Real CoH2 RGTs sometimes
   // prepend a per-mip header: [4 zero bytes | width u32LE | height u32LE | 4 bytes | 0x?? 0x20].

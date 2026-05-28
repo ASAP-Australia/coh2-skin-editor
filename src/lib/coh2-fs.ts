@@ -52,7 +52,7 @@ async function idbSet(key: string, val: unknown): Promise<void> {
 
 /** Test whether the FS Access API is available in this browser. */
 export function isSupported(): boolean {
-  return typeof (globalThis as any).showDirectoryPicker === 'function'
+  return typeof (globalThis as unknown as Record<string, unknown>).showDirectoryPicker === 'function'
 }
 
 /** Returns the saved install handle, or null if none / permission expired. */
@@ -61,9 +61,9 @@ export async function loadSavedHandle(): Promise<FileSystemDirectoryHandle | nul
   if (!handle) return null
   // Verify the user still grants permission. With queryPermission we can
   // detect a revoked grant before we hit a hard error mid-scan.
-  const status = await (handle as any).queryPermission?.({ mode: 'read' })
+  const status = await (handle as unknown as { queryPermission?: (opts: { mode: string }) => Promise<string> }).queryPermission?.({ mode: 'read' })
   if (status !== 'granted') {
-    const re = await (handle as any).requestPermission?.({ mode: 'read' })
+    const re = await (handle as unknown as { requestPermission?: (opts: { mode: string }) => Promise<string> }).requestPermission?.({ mode: 'read' })
     if (re !== 'granted') return null
   }
   return handle
@@ -74,7 +74,7 @@ export async function pickInstall(): Promise<FileSystemDirectoryHandle | null> {
   if (!isSupported()) {
     throw new Error('File System Access API not available — use Chrome, Edge, or another Chromium-based browser.')
   }
-  const handle: FileSystemDirectoryHandle = await (globalThis as any).showDirectoryPicker({
+  const handle: FileSystemDirectoryHandle = await (globalThis as unknown as { showDirectoryPicker: (opts: { id: string; mode: string; startIn: string }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker({
     id: 'coh2-install',
     mode: 'read',
     startIn: 'documents',
@@ -88,9 +88,9 @@ export async function pickInstall(): Promise<FileSystemDirectoryHandle | null> {
 export async function loadSavedModsHandle(): Promise<FileSystemDirectoryHandle | null> {
   const handle = await idbGet<FileSystemDirectoryHandle>(KEY_MODS)
   if (!handle) return null
-  const status = await (handle as any).queryPermission?.({ mode: 'readwrite' })
+  const status = await (handle as unknown as { queryPermission?: (opts: { mode: string }) => Promise<string> }).queryPermission?.({ mode: 'readwrite' })
   if (status !== 'granted') {
-    const re = await (handle as any).requestPermission?.({ mode: 'readwrite' })
+    const re = await (handle as unknown as { requestPermission?: (opts: { mode: string }) => Promise<string> }).requestPermission?.({ mode: 'readwrite' })
     if (re !== 'granted') return null
   }
   return handle
@@ -103,7 +103,7 @@ export async function pickModsFolder(): Promise<FileSystemDirectoryHandle | null
   if (!isSupported()) {
     throw new Error('File System Access API not available — use Chrome, Edge, or another Chromium-based browser.')
   }
-  const handle: FileSystemDirectoryHandle = await (globalThis as any).showDirectoryPicker({
+  const handle: FileSystemDirectoryHandle = await (globalThis as unknown as { showDirectoryPicker: (opts: { id: string; mode: string; startIn: string }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker({
     id: 'coh2-mods',
     mode: 'readwrite',
     startIn: 'documents',
@@ -131,8 +131,8 @@ export async function writeFile(
   bytes: Uint8Array,
 ): Promise<void> {
   const fh = await dir.getFileHandle(name, { create: true })
-  // The TS lib type for createWritable is sometimes missing. Cast to any.
-  const w = await (fh as any).createWritable()
+  // The TS lib type for createWritable is sometimes missing. Cast via unknown.
+  const w = await (fh as unknown as { createWritable: () => Promise<{ write: (d: Uint8Array) => Promise<void>; close: () => Promise<void> }> }).createWritable()
   await w.write(bytes)
   await w.close()
 }
@@ -167,7 +167,7 @@ export async function* walkDir(
   dir: FileSystemDirectoryHandle,
   prefix = '',
 ): AsyncGenerator<{ path: string; file: File }> {
-  for await (const [name, entry] of (dir as any).entries() as AsyncIterable<[string, FileSystemHandle]>) {
+  for await (const [name, entry] of (dir as unknown as { entries: () => AsyncIterable<[string, FileSystemHandle]> }).entries()) {
     const path = prefix ? `${prefix}/${name}` : name
     if (entry.kind === 'file') {
       const file = await (entry as FileSystemFileHandle).getFile()
