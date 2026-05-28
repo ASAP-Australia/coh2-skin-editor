@@ -26,7 +26,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, Clock } from 'lucide-react'
+import { Clock } from 'lucide-react'
 import { GiPaintBrush, GiShield, GiPaintBucket, GiOpenFolder } from 'react-icons/gi'
 import { BorderBeam } from '@/components/ui/border-beam'
 import { type Coh2SkinProject, loadActive, readProjectFile } from '@/lib/project'
@@ -364,120 +364,6 @@ function GridButton({
         <div className="text-[14px] font-medium text-foreground leading-tight">{title}</div>
         <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">{sublabel}</div>
       </div>
-    </button>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// ActionRow — faction-picker-style row used for the three primary CTAs.
-// 40-px icon on the left, stacked title + sublabel in the middle, chevron
-// on the right. The chevron is hidden by default and fades in on hover so
-// the row feels alive rather than always-noisy.
-// ─────────────────────────────────────────────────────────────────────────
-
-/** Colour tones supported by `ActionRow`. These map to the iOS Settings-
- *  style icon tile palette — saturated-enough to read at a glance against
- *  the dark glass card, dim-enough not to compete with the rest of the
- *  UI. Each tone is a top-to-bottom gradient so the tile reads as a tiny
- *  3D pillow under glass; the inset white highlight at the top mimics
- *  light hitting a curved bevel (same trick the glass-N utilities use).
- *  Inner shadow at the bottom adds depth. */
-type ActionTone = 'orange' | 'blue' | 'purple' | 'green'
-
-const TONE_BG: Record<ActionTone, string> = {
-  // Brigade orange — matches `--color-accent` defined in index.css.
-  orange: 'linear-gradient(180deg, oklch(0.72 0.20 45) 0%, oklch(0.58 0.18 45) 100%)',
-  // Apple system blue.
-  blue: 'linear-gradient(180deg, oklch(0.72 0.18 245) 0%, oklch(0.55 0.18 250) 100%)',
-  // Apple system purple — slightly cooler than the OS hue to harmonise
-  // with the cool-tinted dark background tokens.
-  purple: 'linear-gradient(180deg, oklch(0.66 0.22 305) 0%, oklch(0.50 0.20 305) 100%)',
-  // Apple system green.
-  green: 'linear-gradient(180deg, oklch(0.74 0.16 145) 0%, oklch(0.55 0.16 145) 100%)',
-}
-
-/** Matching focus-ring hue for each tone. Kept distinct from the tile
- *  background so keyboard focus is still visible against the gradient. */
-const TONE_RING: Record<ActionTone, string> = {
-  orange: 'oklch(0.72 0.20 45 / 0.55)',
-  blue: 'oklch(0.72 0.18 245 / 0.55)',
-  purple: 'oklch(0.66 0.22 305 / 0.55)',
-  green: 'oklch(0.74 0.16 145 / 0.55)',
-}
-
-function ActionRow({
-  icon,
-  title,
-  sublabel,
-  tone,
-  onClick,
-}: {
-  icon: React.ReactNode
-  title: string
-  sublabel: string
-  /** Optional. When omitted, falls back to the original neutral glass
-   *  tile (kept for any future caller that doesn't want a coloured
-   *  icon). All four StartScreen rows opt in. */
-  tone?: ActionTone
-  onClick: () => void
-}) {
-  // Resolve the tile background + focus ring for the requested tone.
-  // Falling back to the original neutral glass tile when `tone` is
-  // undefined preserves the old visual for any non-StartScreen reuse.
-  const tileBg = tone ? TONE_BG[tone] : 'rgba(255,255,255,0.06)'
-  const tileRing = tone ? TONE_RING[tone] : 'rgba(255,255,255,0.08)'
-  return (
-    <button
-      onClick={onClick}
-      // Vertical gap between adjacent action tiles. Bumped from the
-      // previous 20 px (mb-5) → 28 px so the four coloured tiles read
-      // as distinct cards rather than a single grouped slab. Explicit
-      // pixel value via the arbitrary-value bracket so the spacing is
-      // impossible to confuse with a typo in the Tailwind step scale.
-      // Vertical gap between adjacent action tiles. Earlier revision
-      // used mb-[28px] which made a Continue + 4-action stack visibly
-      // taller than the card padding allowance — the bottom tile read
-      // as "breaking out of the menu" (user feedback). 12 px keeps the
-      // tiles distinct (each one still reads as its own card thanks to
-      // the border + tonal icon) without producing dead space between
-      // them. The card's HeightTransition ratchet picks up the new
-      // height automatically.
-      className="action-row group relative w-full text-left px-4 py-3 rounded-2xl
-                 border border-white/[0.08] bg-white/[0.04]
-                 transition-all duration-200 flex items-center gap-3
-                 mb-3 last:mb-0"
-    >
-      <span
-        aria-hidden
-        className="flex items-center justify-center flex-shrink-0"
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: 10,
-          background: tileBg,
-          // Hairline that softens the tile edge against the glass card.
-          // The inset highlight on top + soft inset shadow at the bottom
-          // give the tile a tiny pillow-under-glass depth, matching the
-          // iOS Settings icons exactly.
-          border: `1px solid ${tileRing}`,
-          boxShadow:
-            tone != null
-              ? 'inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.15), 0 1px 2px rgba(0,0,0,0.35)'
-              : 'none',
-        }}
-      >
-        {icon}
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="text-[14px] font-medium text-foreground leading-tight">{title}</div>
-        <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">{sublabel}</div>
-      </div>
-      <ArrowRight
-        size={16}
-        strokeWidth={2}
-        className="action-row__chevron text-muted-foreground opacity-0 transition-all duration-200"
-        aria-hidden
-      />
     </button>
   )
 }

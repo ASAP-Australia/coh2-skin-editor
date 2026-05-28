@@ -203,37 +203,6 @@ function InlineSpinner() {
   )
 }
 
-/** Apple-style indeterminate loading ring scaled up for the full-card
- *  scanning view. */
-function BigSpinner() {
-  return (
-    <span
-      aria-hidden
-      style={{
-        width: 36, height: 36, display: 'inline-block', flex: 'none',
-        borderRadius: '50%',
-        background:
-          'conic-gradient(from 0deg, transparent 0%, rgba(255,255,255,0.25) 30%, rgba(255,255,255,0.95) 100%)',
-        WebkitMask:
-          'radial-gradient(circle, transparent 12px, #000 12.8px)',
-        mask:
-          'radial-gradient(circle, transparent 12px, #000 12.8px)',
-        animation: 'bb-spinner-rotate 0.9s linear infinite',
-      }}
-    />
-  )
-}
-
-function SuccessTick() {
-  return (
-    <svg width="36" height="36" viewBox="0 0 24 24" aria-hidden>
-      <circle cx="12" cy="12" r="11" fill="oklch(0.78 0.18 150)" />
-      <path d="M7 12.5 L10.5 16 L17 9"
-            stroke="#0b1410" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-    </svg>
-  )
-}
-
 /** Inline-sized (18 px) green tick for use inside the connect button. */
 function InlineSuccessTick() {
   return (
