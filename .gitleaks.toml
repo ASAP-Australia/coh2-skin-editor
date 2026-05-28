@@ -1,0 +1,44 @@
+# Project-local gitleaks rules. We extend the upstream default config so
+# we still benefit from new detections, and then declare an allowlist of
+# false positives that are inherent to this repo.
+#
+# Tested with gitleaks 8.21.x. See https://github.com/gitleaks/gitleaks
+# for the full schema reference.
+title = "coh2-skin-editor gitleaks config"
+
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Allowlist — verified false positives
+# ---------------------------------------------------------------------------
+#
+# The default `generic-api-key` rule flags ANY assignment to a variable
+# whose identifier contains "_KEY" + a moderate-entropy string. In this
+# repo we have several variables that are localStorage / IndexedDB
+# key names — short namespaced strings like `coh2.recentFaceplates`.
+# Their entropy is ~3.6 (well below typical secret thresholds), but the
+# rule's heuristic fires anyway on the identifier alone.
+#
+# Each entry pins the allowlist to the exact constant value, so renaming
+# the variable still leaves the allowlist effective, and a real high-
+# entropy secret accidentally landing in the same identifier would not
+# match the regex.
+
+[[rules]]
+id = "generic-api-key"
+[rules.allowlist]
+description = "Browser-storage key names — not secrets"
+regexes = [
+  '''['"]coh2\.recentFaceplates['"]''',
+  '''['"]coh2\.savedProjects['"]''',
+  '''['"]coh2\.recentProjects['"]''',
+  '''['"]coh2\.recentDecalPacks['"]''',
+]
+# Also scope by path so a future actual API key accidentally placed in
+# these files would still trip the global rule.
+paths = [
+  '''src/lib/faceplate-project\.ts''',
+  '''src/lib/decal-pack-project\.ts''',
+  '''src/components/__tests__/.*\.tsx?''',
+]

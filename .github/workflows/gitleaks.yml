@@ -37,4 +37,7 @@ jobs:
       - name: Run gitleaks
         # Use `detect` with explicit exit code so the job fails when
         # secrets are found. `--no-banner` keeps the log readable.
-        run: gitleaks detect --source . --no-banner --verbose --redact
+        # `--config` points at the repo-local allowlist for verified
+        # false-positives (browser-storage key names misidentified as
+        # API keys by the generic-api-key rule).
+        run: gitleaks detect --source . --no-banner --verbose --redact --config .gitleaks.toml
