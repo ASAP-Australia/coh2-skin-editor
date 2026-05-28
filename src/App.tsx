@@ -6,7 +6,7 @@ import Editor from '@/components/Editor'
 import FaceplateEditor from '@/components/FaceplateEditor'
 import DecalPackEditor from '@/components/DecalPackEditor'
 import AuthShell from '@/components/AuthShell'
-import TitleBar from '@/components/TitleBar'
+import WindowControls from '@/components/WindowControls'
 import {
   type Coh2SkinProject,
   loadById as loadSkinById,
@@ -103,7 +103,7 @@ export default function App() {
 
   const diskFileInputRef = useRef<HTMLInputElement>(null)
 
-  // Mark body so CSS can shift top-anchored chrome below the TitleBar pill.
+  // Mark body so CSS can shift top-anchored chrome below the WindowControls pill.
   useEffect(() => {
     if (isElectron()) document.body.classList.add('is-electron')
     return () => document.body.classList.remove('is-electron')
@@ -347,7 +347,7 @@ export default function App() {
 
     return (
       <>
-        <TitleBar />
+        <WindowControls />
         <AuthShell phase={phase}>{panel}</AuthShell>
         <input
           ref={diskFileInputRef}
@@ -364,7 +364,7 @@ export default function App() {
   if (phase === 'editor' && installRoot) {
     return (
       <>
-        <TitleBar />
+        <WindowControls />
         <Editor root={installRoot} onDisconnect={() => setPhase('start')} />
       </>
     )
@@ -372,7 +372,7 @@ export default function App() {
   if (phase === 'faceplate' && faceplateProject) {
     return (
       <>
-        <TitleBar />
+        <WindowControls />
         <FaceplateEditor
           project={faceplateProject}
           onBack={() => {
@@ -386,7 +386,7 @@ export default function App() {
   if (phase === 'decal-pack' && decalPackProject) {
     return (
       <>
-        <TitleBar />
+        <WindowControls />
         <DecalPackEditor
           project={decalPackProject}
           onBack={() => {
@@ -402,7 +402,7 @@ export default function App() {
   // to the connect phase so the user can recover.
   return (
     <>
-      <TitleBar />
+      <WindowControls />
       <AuthShell phase="connect">
         <ConnectScreen
           onConnected={h => {
