@@ -1,14 +1,14 @@
 # CoH2 Skin Editor (community)
 
-<!-- Badges. Order: build → security → supply-chain → meta. Each badge
-     points at a workflow committed to .github/workflows/. Drafts for
-     accessibility / lighthouse / mutation / size-limit / html-validate
-     exist locally but reference npm scripts + devDeps that aren't
-     installed yet — they'll be re-added here once their workflows go
-     green so we never show a red badge on the README. -->
+<!-- Badges. Order: build → quality → security → supply-chain → meta. Each
+     badge points at a workflow committed to .github/workflows/. Drafts for
+     lighthouse / mutation exist locally but are out of scope for v1.0. -->
 
 [![CI](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/codeql.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/codeql.yml)
+[![html-validate](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/html-validate.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/html-validate.yml)
+[![size-limit](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/size-limit.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/size-limit.yml)
+[![accessibility](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/accessibility.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/accessibility.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/ASAP-Australia/coh2-skin-editor/badge)](https://securityscorecards.dev/viewer/?uri=github.com/ASAP-Australia/coh2-skin-editor)
 [![Gitleaks](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/gitleaks.yml)
 [![OSV Scanner](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/osv-scanner.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/osv-scanner.yml)
