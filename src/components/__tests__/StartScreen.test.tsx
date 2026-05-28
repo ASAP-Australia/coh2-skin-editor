@@ -223,7 +223,7 @@ describe('StartScreen — four primary action rows', () => {
     expect(container!.textContent).toContain('Paint a vehicle livery')
     expect(container!.textContent).toContain('Player profile banner')
     expect(container!.textContent).toContain('A set of vehicle decals')
-    expect(container!.textContent).toContain('Browse saved projects')
+    expect(container!.textContent).toContain('Open saved project')
   })
 
   it('clicking "New Skin Pack" fires onNewSkin exactly once', () => {
