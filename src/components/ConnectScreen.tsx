@@ -18,14 +18,18 @@ interface Props {
  * back to the native folder picker. In a browser (no Electron) we use
  * the File System Access API picker instead.
  *
- * Apple-style dark glass card, BorderBeam ocean accent on the action,
- * spring-bounce press, no per-OS helpers, no path hints, no instructions
- * sheet. The button does the right thing automatically.
+ * Renders ONLY the inner content (heading + bullets + button). The
+ * outer chrome — ASAP wordmark, "CoH2 · Community Modding Tool" eyebrow,
+ * dark glass card, ambient halo, drop shadow — is owned by AuthShell.
+ * Earlier revisions of this file shipped their own outer card with a
+ * duplicate ASAP logo + product eyebrow + "CoH2 · Community Skin
+ * Editor" sub-heading, which read as two stacked cards under the
+ * AuthShell brand mark on first run.
  */
 type Phase = 'idle' | 'picking' | 'scanning' | 'success' | 'error'
 
 export default function ConnectScreen({ onConnected }: Props) {
-  const [supported, setSupported] = useState(true)
+  const [supported] = useState(() => isSupported() || isElectron())
   const [phase, setPhase] = useState<Phase>('idle')
   const [error, setError] = useState<string | null>(null)
   const [detectedPath, setDetectedPath] = useState<string | null>(null)
@@ -35,7 +39,6 @@ export default function ConnectScreen({ onConnected }: Props) {
   // it on the button (e.g. "Connect CoH2 install (auto-detected)") and
   // skip the picker entirely.
   useEffect(() => {
-    setSupported(isSupported() || isElectron())
     if (isElectron()) {
       detectInstallPath().then(p => setDetectedPath(p)).catch(() => {/* ignore */})
     }
@@ -71,11 +74,12 @@ export default function ConnectScreen({ onConnected }: Props) {
       setPhase('success')
       await new Promise(r => setTimeout(r, 600))
       onConnected(handle)
-    } catch (err: any) {
-      if (err?.name === 'AbortError') {
+    } catch (err: unknown) {
+      const e = err as { name?: string; message?: string }
+      if (e?.name === 'AbortError') {
         setPhase('idle')
       } else {
-        setError(err?.message ?? String(err))
+        setError(e?.message ?? String(err))
         setPhase('error')
       }
     }
@@ -89,148 +93,99 @@ export default function ConnectScreen({ onConnected }: Props) {
                            'Connect CoH2 install'
 
   return (
-    <div className="min-h-dvh grid place-items-center px-6">
-      {/* glass-3 already supplies border + inset highlight + radius. Adding
-          the outer drop shadow on top of that gave a doubled-up "stamped"
-          ring. Now we let the utility handle the surface and add ONE soft
-          ambient drop shadow. */}
-      <div
-        className="relative max-w-md w-full glass-3 p-10 overflow-hidden"
-        style={{
-          borderRadius: 28,
-          boxShadow: '0 30px 80px -24px rgb(0 0 0 / 0.55)',
-        }}
-      >
-        {/* Aussie-blue ambient halo */}
-        <div
-          aria-hidden
-          className="absolute -top-20 -left-16 w-56 h-56 rounded-full pointer-events-none opacity-50 blur-3xl"
-          style={{ background: 'rgba(1, 33, 105, 0.55)' }}
-        />
+    <div>
+      <h1 className="text-[26px] font-semibold tracking-tight text-white leading-[1.15] mb-4">
+        {phase === 'scanning' ? 'Loading vehicle models…'
+          : phase === 'success' ? 'Installation found'
+          : 'Connect your CoH2 install'}
+      </h1>
 
-        <div className="relative">
-          {/* Brand mark */}
-          <a
-            href="https://github.com/ASAP-Australia"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="ASAP Australia on GitHub"
-            className="inline-block mb-7 transition hover:scale-[1.03] active:scale-[0.98]"
-            style={{
-              filter:
-                'drop-shadow(0 0 14px rgba(1, 33, 105, 0.55)) ' +
-                'drop-shadow(0 6px 18px rgba(1, 33, 105, 0.35))',
-            }}
-          >
-            <img
-              src={`${(import.meta as any).env?.BASE_URL ?? '/'}asap-logo.png`}
-              alt="ASAP Australia"
-              width={56}
-              height={56}
-              className="block rounded-2xl"
-              draggable={false}
-            />
-          </a>
-
-          <div className="text-[10px] uppercase tracking-[2.5px] font-semibold mb-3"
-               style={{ color: 'oklch(0.86 0.05 220)' }}>
-            CoH2 · Community Skin Editor
+      {phase === 'scanning' || phase === 'success' ? (
+        <div className="py-6 flex flex-col items-center text-center gap-3">
+          {phase === 'scanning' ? <BigSpinner /> : <SuccessTick />}
+          <div className="text-[13px] text-[var(--color-text-2)] leading-relaxed max-w-[260px]">
+            {phase === 'scanning'
+              ? 'Indexing your installation and pre-loading vehicle archives — usually a couple of seconds.'
+              : 'Found CoH2 archives. Loading the editor…'}
           </div>
+        </div>
+      ) : (
+        <>
+          <ul className="mb-5 space-y-1.5 text-[13px] text-[var(--color-text-2)] leading-snug">
+            {[
+              'Reads vehicle meshes & base textures locally',
+              'Nothing uploaded — files stay on your machine',
+              detectedPath ? 'Steam install detected automatically' : 'Pick your Company of Heroes 2 folder',
+            ].map((line) => (
+              <li key={line} className="flex items-start gap-2">
+                <span aria-hidden className="mt-[6px] size-1 rounded-full shrink-0"
+                  style={{ background: 'oklch(0.85 0.10 220)' }} />
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
 
-          <h1 className="text-[26px] font-semibold tracking-tight text-white leading-[1.15] mb-4">
-            {phase === 'scanning' ? 'Loading vehicle models…'
-              : phase === 'success' ? 'Installation found'
-              : 'Connect your CoH2 install'}
-          </h1>
-
-          {phase === 'scanning' || phase === 'success' ? (
-            <div className="py-6 flex flex-col items-center text-center gap-3">
-              {phase === 'scanning' ? <BigSpinner /> : <SuccessTick />}
-              <div className="text-[13px] text-[var(--color-text-2)] leading-relaxed max-w-[260px]">
-                {phase === 'scanning'
-                  ? 'Indexing your installation and pre-loading vehicle archives — usually a couple of seconds.'
-                  : 'Found CoH2 archives. Loading the editor…'}
-              </div>
+          {!supported && (
+            <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed">
+              <b>Browser not supported.</b> This app uses the File System
+              Access API — please open it in Chrome, Edge, Brave or Opera,
+              or use the desktop app.
             </div>
-          ) : (
-            <>
-              <ul className="mb-5 space-y-1.5 text-[13px] text-[var(--color-text-2)] leading-snug">
-                {[
-                  'Reads vehicle meshes & base textures locally',
-                  'Nothing uploaded — files stay on your machine',
-                  detectedPath ? 'Steam install detected automatically' : 'Pick your Company of Heroes 2 folder',
-                ].map((line) => (
-                  <li key={line} className="flex items-start gap-2">
-                    <span aria-hidden className="mt-[6px] size-1 rounded-full shrink-0"
-                      style={{ background: 'oklch(0.85 0.10 220)' }} />
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
-
-              {!supported && (
-                <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed">
-                  <b>Browser not supported.</b> This app uses the File System
-                  Access API — please open it in Chrome, Edge, Brave or Opera,
-                  or use the desktop app.
-                </div>
-              )}
-
-              {error && (
-                <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed whitespace-pre-line">
-                  {error}
-                </div>
-              )}
-
-              {/* Single primary action — auto-detects when in Electron, else
-                  opens the FS picker. No per-OS instructions UI. */}
-              <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={16} borderWidth={1} className="bb-pressable">
-                <button
-                  disabled={!supported || busy}
-                  onClick={connect}
-                  className="bb-connect relative w-full text-white font-semibold h-12 text-[14px] tracking-tight
-                             disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/[0.10]"
-                  style={{
-                    borderRadius: 16,
-                    cursor: busy ? 'progress' : 'pointer',
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    backdropFilter: 'blur(20px) saturate(160%)',
-                    WebkitBackdropFilter: 'blur(20px) saturate(160%)',
-                    // Single subtle inset top-edge highlight only. The
-                    // BorderBeam parent already paints the perimeter glow,
-                    // so a second inset border-line + outer halo (previous
-                    // version) read as a doubled drop shadow.
-                    boxShadow: '0 1px 0 rgb(255 255 255 / 0.14) inset',
-                  }}
-                >
-                  {phase === 'picking'
-                    ? <span className="inline-flex items-center justify-center"><InlineSpinner /></span>
-                    : <span>{buttonLabel}</span>}
-                </button>
-              </BorderBeam>
-            </>
           )}
 
-          <style>{`
-            .bb-pressable {
-              transition: transform 240ms cubic-bezier(.4, 1.6, .5, 1);
-              will-change: transform;
-              transform-origin: center;
-              display: block;
-            }
-            .bb-pressable:has(button:not(:disabled):active) {
-              transform: scale(0.95);
-              transition: transform 90ms cubic-bezier(.3, 0, .7, 1);
-            }
-            .bb-connect {
-              transition: background-color 160ms ease-out;
-            }
-            @keyframes bb-spinner-rotate {
-              to { transform: rotate(360deg); }
-            }
-          `}</style>
-        </div>
-      </div>
+          {error && (
+            <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed whitespace-pre-line">
+              {error}
+            </div>
+          )}
+
+          {/* Single primary action — auto-detects when in Electron, else
+              opens the FS picker. No per-OS instructions UI. */}
+          <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={16} borderWidth={1} className="bb-pressable">
+            <button
+              disabled={!supported || busy}
+              onClick={connect}
+              className="bb-connect relative w-full text-white font-semibold h-12 text-[14px] tracking-tight
+                         disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/[0.10]"
+              style={{
+                borderRadius: 16,
+                cursor: busy ? 'progress' : 'pointer',
+                background: 'rgba(255, 255, 255, 0.06)',
+                backdropFilter: 'blur(20px) saturate(160%)',
+                WebkitBackdropFilter: 'blur(20px) saturate(160%)',
+                // Single subtle inset top-edge highlight only. The
+                // BorderBeam parent already paints the perimeter glow,
+                // so a second inset border-line + outer halo (previous
+                // version) read as a doubled drop shadow.
+                boxShadow: '0 1px 0 rgb(255 255 255 / 0.14) inset',
+              }}
+            >
+              {phase === 'picking'
+                ? <span className="inline-flex items-center justify-center"><InlineSpinner /></span>
+                : <span>{buttonLabel}</span>}
+            </button>
+          </BorderBeam>
+        </>
+      )}
+
+      <style>{`
+        .bb-pressable {
+          transition: transform 240ms cubic-bezier(.4, 1.6, .5, 1);
+          will-change: transform;
+          transform-origin: center;
+          display: block;
+        }
+        .bb-pressable:has(button:not(:disabled):active) {
+          transform: scale(0.95);
+          transition: transform 90ms cubic-bezier(.3, 0, .7, 1);
+        }
+        .bb-connect {
+          transition: background-color 160ms ease-out;
+        }
+        @keyframes bb-spinner-rotate {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   )
 }
