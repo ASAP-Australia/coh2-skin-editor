@@ -1,0 +1,15 @@
+dist/
+dist-electron/
+node_modules/
+coverage/
+.lighthouseci/
+*.min.js
+package-lock.json
+# Local Python virtualenv (only present on the maintainer's dev machine
+# — not tracked by git, so it doesn't exist in CI checkouts).
+training/.venv/
+training/.venv/**
+# Maintainer-only scratch / TODO + research notes. Not tracked by git, so
+# prettier never sees them in CI — ignored here so local maintainer runs
+# of `prettier --check .` don't complain about freeform notes.
+.llm/

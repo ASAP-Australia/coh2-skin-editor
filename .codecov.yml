@@ -1,0 +1,36 @@
+# Codecov configuration.
+#
+# Without this file, the badge in the README shows raw coverage but
+# there's no automated gate stopping a PR from dropping coverage. With
+# it, codecov posts a status check on every PR (visible in the merge
+# queue) and a markdown comment summarising the diff coverage.
+#
+# The `patch.target: 70%` is deliberately moderate — the project has a
+# lot of UI/canvas code that's exercised by Playwright e2e rather than
+# vitest unit tests, so demanding 90% on every patch would block PRs
+# that ship perfectly tested visual changes. The `project.target: auto`
+# keeps overall coverage from regressing without pinning a literal
+# number that drifts every release.
+
+coverage:
+  status:
+    project:
+      default:
+        # Don't allow overall coverage to regress vs the base branch
+        # by more than 2 percentage points.
+        target: auto
+        threshold: 2%
+        if_ci_failed: error
+    patch:
+      default:
+        # New code introduced by a PR must be at least 70% covered.
+        target: 70%
+        if_ci_failed: error
+
+# PR comment layout. `reach` shows where coverage moved, `diff` shows
+# uncovered lines in the patch, `flags` separates unit vs e2e coverage
+# once the latter starts uploading lcov from Playwright runs.
+comment:
+  layout: 'reach, diff, flags, files'
+  behavior: default
+  require_changes: false

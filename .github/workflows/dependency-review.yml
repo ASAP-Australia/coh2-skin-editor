@@ -1,0 +1,37 @@
+name: Dependency Review
+
+# Runs on every PR that touches the lockfile. Catches new transitive deps
+# that introduce known CVEs (severity >= high) or pull in copyleft
+# licences that would contaminate the project's MIT licence. Complements
+# OSV-Scanner (which runs on the existing tree) by gating *new* deps
+# before merge.
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Fail the PR if any newly-introduced dep has a known
+          # high-or-critical advisory. Existing vulns are caught by
+          # OSV-Scanner / npm audit on a separate schedule.
+          fail-on-severity: high
+          # Block copyleft licences that are incompatible with MIT
+          # distribution. If a future dependency requires one of these,
+          # the PR author has to explicitly amend this list.
+          deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.1, LGPL-3.0
+          comment-summary-in-pr: always

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ASAP-australia/coh2-skin-editor/blob/main/SECURITY.md
+    about: Please follow our security disclosure policy instead of filing a public issue.
+  - name: Question or discussion
+    url: https://github.com/ASAP-australia/coh2-skin-editor/discussions
+    about: For general questions, ideas, and community discussion, please use GitHub Discussions.

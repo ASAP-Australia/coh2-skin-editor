@@ -1,0 +1,37 @@
+name: OpenSSF Scorecard
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly on Monday at 09:00 UTC
+    - cron: '0 9 * * 1'
+
+permissions:
+  # Needed to upload SARIF results to the security tab
+  security-events: write
+  # Needed for the OIDC token for the scorecard action
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  scorecard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@v2.4.2
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload SARIF results to GitHub
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif

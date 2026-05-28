@@ -1,0 +1,51 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        dependency-type: development
+      react:
+        patterns:
+          - 'react'
+          - 'react-*'
+          - '@types/react*'
+      three:
+        patterns:
+          - 'three'
+          - '@types/three'
+          - 'three-*'
+      eslint:
+        patterns:
+          - 'eslint'
+          - 'eslint-*'
+          - '@eslint/*'
+          - '@typescript-eslint/*'
+      vite:
+        patterns:
+          - 'vite'
+          - '@vitejs/*'
+          - 'vite-*'
+    ignore:
+      # three r-numbers can be breaking for model/shader code — hold at major
+      - dependency-name: 'three'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@types/three'
+        update-types: ['version-update:semver-major']
+      # React 19 just landed — hold major until ecosystem catches up
+      - dependency-name: 'react'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'react-dom'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@types/react'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@types/react-dom'
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

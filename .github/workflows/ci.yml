@@ -1,0 +1,96 @@
+# CoH2 Skin Editor — main CI pipeline
+#
+# Triggers on every push to main + every PR. Three jobs run in parallel:
+#   1. Lint   — `npm run lint` (ESLint)
+#   2. Types  — `npm run typecheck` (tsc --noEmit)
+#   3. Tests  — `npm run test:coverage` (vitest, 1559 tests + v8 coverage)
+#
+# The build job runs only after lint/types/tests are green — keeps the fast
+# feedback loop on the cheap jobs and avoids spending Vite cycles on a
+# branch that won't merge anyway.
+#
+# Coverage is uploaded to Codecov from the tests job when CODECOV_TOKEN is set.
+# Without the token Codecov still accepts public-repo uploads, just without
+# the per-PR commenter.
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Cancel any in-flight CI run when a new push lands on the same branch.
+# Saves runner minutes and gives the latest commit faster feedback.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (ESLint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  typecheck:
+    name: Type-check (tsc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  test:
+    name: Unit tests (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run vitest with coverage
+        run: npm run test:coverage
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  build:
+    name: Vite build (web bundle)
+    needs: [lint, typecheck, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Upload dist/ as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-bundle-${{ github.sha }}
+          path: dist/
+          retention-days: 7
