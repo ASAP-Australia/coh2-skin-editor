@@ -7,17 +7,25 @@ on:
     # Weekly on Monday at 09:00 UTC
     - cron: '0 9 * * 1'
 
-permissions:
-  # Needed to upload SARIF results to the security tab
-  security-events: write
-  # Needed for the OIDC token for the scorecard action
-  id-token: write
-  contents: read
-  actions: read
+# Top-level is read-only. The Scorecard webapp upload rejects runs where
+# any write permission is declared at the workflow level — the previous
+# revision set `security-events: write` here and the OIDC sigstore step
+# failed with HTTP 400: "global perm is set to write". Per
+# ossf/scorecard-action's workflow-restrictions doc, write perms must be
+# scoped to the job that needs them.
+permissions: read-all
 
 jobs:
   scorecard:
     runs-on: ubuntu-latest
+    permissions:
+      # Needed to upload SARIF results to the security tab.
+      security-events: write
+      # Needed for the OIDC token for the scorecard action.
+      id-token: write
+      # Needed by scorecard to read GitHub Actions workflow metadata.
+      actions: read
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4

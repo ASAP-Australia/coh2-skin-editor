@@ -116,12 +116,17 @@ async function tryBundledIconSlug(slug: string): Promise<string | null> {
     // bytes here would force a full decode just to reject.
     const ct = r.headers.get('content-type') ?? ''
     if (!ct.startsWith('image/')) return null
-    const blob = await r.blob()
-    // Belt-and-braces: also verify the blob's MIME type. Some servers send
-    // a generic `application/octet-stream` for PNGs and the Blob constructor
-    // derives the type from the response's Content-Type header — if both
-    // disagree we'd rather drop through to the procedural placeholder than
-    // ship a corrupt-looking icon.
+    // Re-wrap the body bytes in a Blob with the explicit response MIME.
+    // jsdom 22+ (and some real browsers when the response body was buffered
+    // through arrayBuffer first) returns a typeless blob from `r.blob()`,
+    // which makes FileReader emit a `data:application/octet-stream;base64,…`
+    // URL — that then fails the bundled-icon contract tests AND would render
+    // the broken-image icon on every vehicle pill in a production build that
+    // happened to lose the blob type. Constructing the blob ourselves from
+    // the response's ArrayBuffer + the validated Content-Type makes the
+    // resulting data URL deterministic regardless of the runtime.
+    const buf = await r.arrayBuffer()
+    const blob = new Blob([buf], { type: ct })
     if (blob.type && !blob.type.startsWith('image/')) return null
     return await blobToDataUrl(blob)
   } catch {
