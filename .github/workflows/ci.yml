@@ -9,6 +9,11 @@
 # feedback loop on the cheap jobs and avoids spending Vite cycles on a
 # branch that won't merge anyway.
 #
+# The e2e job runs after lint/typecheck/test are green (same gate as build).
+# It builds the app, installs Playwright's chromium-only browser bundle, and
+# runs the Playwright suite. The playwright-report/ directory is uploaded on
+# failure so engineers can download and inspect the HTML report locally.
+#
 # Coverage is uploaded to Codecov from the tests job when CODECOV_TOKEN is set.
 # Without the token Codecov still accepts public-repo uploads, just without
 # the per-PR commenter.
@@ -93,4 +98,29 @@ jobs:
         with:
           name: web-bundle-${{ github.sha }}
           path: dist/
+          retention-days: 7
+
+  e2e:
+    name: E2E tests (Playwright / chromium)
+    needs: [lint, typecheck, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers (chromium only)
+        run: npx playwright install --with-deps chromium
+      - name: Build app for e2e
+        run: npm run build
+      - name: Run Playwright e2e suite
+        run: npm run e2e
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.sha }}
+          path: playwright-report/
           retention-days: 7

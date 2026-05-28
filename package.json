@@ -22,6 +22,7 @@
     "size": "size-limit",
     "a11y": "npx tsx scripts/a11y-axe.mts",
     "a11y:pa11y": "pa11y-ci",
+    "e2e": "playwright test",
     "knip": "knip",
     "lockfile:lint": "lockfile-lint",
     "bench": "vitest bench --run"
@@ -93,6 +94,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.11.3",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.60.0",
     "@size-limit/file": "^12.1.0",
     "@tailwindcss/vite": "^4.2.4",
     "@types/node": "^24.12.2",
