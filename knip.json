@@ -20,7 +20,15 @@
     "tw-animate-css",
     "tailwindcss",
     "shadcn",
-    "@playwright/test"
+    "@playwright/test",
+    // Used in src/components/ui/** (shadcn primitives) — that dir is excluded
+    // from knip's project scan to avoid noise from generated UI components.
+    "@base-ui/react",
+    // Loaded via @import in src/index.css — knip doesn't scan CSS imports.
+    "@fontsource-variable/geist",
+    // Required by electron/steam.ts via require('steamworks.js') at runtime.
+    // Knip misses it because electron/ is not in "project" (Vite renderer only).
+    "steamworks.js"
   ],
   "ignoreBinaries": ["python3", "tsx", "cross-env"],
   "ignoreExportsUsedInFile": true,
