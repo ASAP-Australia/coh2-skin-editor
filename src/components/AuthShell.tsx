@@ -317,54 +317,6 @@ export default function AuthShell({ phase, exiting = false, children }: Props) {
 
   return (
     <>
-      {/* ── ASAP glow animation ──────────────────────────────────────────────
-          Three-layer drop-shadow that rotates which flag colour is most
-          prominent — red (#C8102E) → white (#FFF) → navy (#012169) → repeat
-          — over a 4.2 s period. 4.2 s is intentionally non-round so the
-          pulse doesn't visibly lock-step with other 4 s / 5 s animations in
-          the UI. Peak red alpha is capped at 0.40 (was 0.55) so it no longer
-          reads as a stoplight; the average across the cycle sits ~0.27.
-
-          The `asap-glow` class is applied only when !isLoading. While loading
-          the anchor carries an inline filter (all alphas → 0, all blurs → 0)
-          so the glow collapses during the FLIP morph exactly as before. When
-          isLoading flips back to false the inline filter is cleared and the
-          CSS class restores the animation; `animation-delay: 200ms` lets the
-          FLIP transition finish before the glow snaps on.
-
-          prefers-reduced-motion: the keyframe is suppressed and replaced with
-          a single-frame fallback at the 0% stop values (gentle static glow). */}
-      <style>{`
-        @keyframes asap-glow-pulse {
-          0%, 100% {
-            filter: drop-shadow(0 0 6px rgba(200,16,46,0.40))
-                    drop-shadow(0 0 12px rgba(255,255,255,0.18))
-                    drop-shadow(0 0 22px rgba(1,33,105,0.45));
-          }
-          33% {
-            filter: drop-shadow(0 0 4px rgba(200,16,46,0.25))
-                    drop-shadow(0 0 14px rgba(255,255,255,0.42))
-                    drop-shadow(0 0 18px rgba(1,33,105,0.35));
-          }
-          66% {
-            filter: drop-shadow(0 0 3px rgba(200,16,46,0.20))
-                    drop-shadow(0 0 10px rgba(255,255,255,0.20))
-                    drop-shadow(0 0 26px rgba(1,33,105,0.60));
-          }
-        }
-        .asap-glow {
-          animation: asap-glow-pulse 4.2s ease-in-out infinite;
-          animation-delay: 200ms;
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .asap-glow {
-            animation: none;
-            filter: drop-shadow(0 0 6px rgba(200,16,46,0.30))
-                    drop-shadow(0 0 12px rgba(255,255,255,0.22))
-                    drop-shadow(0 0 18px rgba(1,33,105,0.45));
-          }
-        }
-      `}</style>
       {/* `fixed inset-0` rather than `min-h-dvh relative`: during the
           'editor-loading' phase the Editor is ALSO mounted (invisibly)
           just before us in the document order. Both used to be block-level
@@ -475,22 +427,12 @@ export default function AuthShell({ phase, exiting = false, children }: Props) {
               // rather than jumping from `filter: none`. The transition
               // property below still covers `filter` so the collapse on
               // isLoading=true and the reveal on isLoading=false both ease.
-              className={`inline-block mb-1 hover:scale-[1.03] active:scale-[0.98]${isLoading ? '' : ' asap-glow'}`}
+              className="inline-block mb-1 hover:scale-[1.03] active:scale-[0.98]"
               style={{
-                // Glow: when loading, force all drop-shadow radii to 0 so the
-                // FLIP morph runs without a glow compositing layer. When not
-                // loading the inline filter is cleared and `asap-glow` (above)
-                // drives the animated keyframe instead.
-                ...(isLoading
-                  ? {
-                      filter:
-                        'drop-shadow(0 0 0 rgba(200,16,46,0)) drop-shadow(0 0 0 rgba(255,255,255,0)) drop-shadow(0 0 0 rgba(1,33,105,0))',
-                    }
-                  : {}),
                 transform: iconOffset
                   ? `translate(${iconOffset.dx}px, ${iconOffset.dy}px) scale(${ICON_MORPH_SCALE})`
                   : 'translate(0, 0) scale(1)',
-                transition: `transform ${ICON_MORPH_MS}ms ${EASE}, filter ${OUT_MS}ms ${EASE}`,
+                transition: `transform ${ICON_MORPH_MS}ms ${EASE}`,
                 // Negative margins pull the wordmark into the card's
                 // p-10 padding area, anchoring it tighter to the
                 // top-left corner ("more to the top left" per user
