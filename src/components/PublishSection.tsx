@@ -312,15 +312,28 @@ export function PublishSection({
       // 1. Make temp dir
       const tmpDir = await makeTmpPublishDir()
 
-      // 2. Write SGA bytes to temp dir
+      // 2. Write SGA bytes to temp dir.
+      // Pass the Uint8Array directly — writeFile() normalises it to an owned
+      // ArrayBuffer, which avoids the byteOffset trap: if sgaBytes is a view
+      // over a larger backing buffer (common when built with DataView/slice),
+      // `.buffer` would send the WHOLE parent buffer with garbage bytes at the
+      // start, producing a corrupt SGA that Steam rejects silently.
       const sgaPath = `${tmpDir}/${target.sgaFilename}`
-      await writeFile(sgaPath, target.sgaBytes.buffer as ArrayBuffer)
+      await writeFile(sgaPath, target.sgaBytes)
+      console.log('[workshop:publish] step=sga-written path=%s byteLength=%d', sgaPath, target.sgaBytes.byteLength)
 
-      // 3. Write preview PNG to temp dir
+      // 3. Write preview PNG to temp dir.
       const pngBytes = generatePreviewPng()
       if (!pngBytes) throw new Error('Failed to generate preview image. Make sure the editor canvas is loaded.')
+      // Steam rejects preview images > 1 MB ("a parameter is invalid").
+      // Log the size so we can diagnose if a complex canvas exceeds the limit.
+      const ONE_MB = 1_048_576
+      if (pngBytes.byteLength > ONE_MB) {
+        console.warn('[workshop:publish] preview PNG is %d bytes (> 1 MB) — Steam may reject it', pngBytes.byteLength)
+      }
       const previewPath = `${tmpDir}/preview.png`
-      await writeFile(previewPath, pngBytes.buffer as ArrayBuffer)
+      await writeFile(previewPath, pngBytes)
+      console.log('[workshop:publish] step=preview-written path=%s byteLength=%d', previewPath, pngBytes.byteLength)
 
       // 4. Build publish input — title/description come from the pack itself
       const tagsByType: Record<WorkshopProjectType, string[]> = {

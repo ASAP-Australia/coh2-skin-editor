@@ -229,30 +229,92 @@ export async function publishWorkshopItem(
 ): Promise<PublishWorkshopResult> {
   const client = requireSteamClient()
 
+  // ── Diagnostic: verify content dir and preview file before any Steam call ─
+  const fs = require('fs') as typeof import('fs')
+  let contentDirExists = false
+  let contentDirIsDir = false
+  let contentDirFiles: string[] = []
+  let previewExists = false
+  let previewSize = -1
+  try {
+    const cs = fs.statSync(input.contentPath)
+    contentDirExists = true
+    contentDirIsDir = cs.isDirectory()
+    if (contentDirIsDir) contentDirFiles = fs.readdirSync(input.contentPath)
+  } catch { /* stat failed — logged below */ }
+  try {
+    const ps = fs.statSync(input.previewPath)
+    previewExists = true
+    previewSize = ps.size
+  } catch { /* stat failed — logged below */ }
+
+  console.log(
+    '[workshop:publish] step=pre-flight appId=%d title=%j contentPath=%s contentDirExists=%s isDir=%s files=%j previewPath=%s previewExists=%s previewSize=%d tags=%j visibility=%s changeNote=%j',
+    COH2_APP_ID,
+    input.title,
+    input.contentPath,
+    contentDirExists,
+    contentDirIsDir,
+    contentDirFiles,
+    input.previewPath,
+    previewExists,
+    previewSize,
+    input.tags,
+    input.visibility ?? 0,
+    input.changeNote ?? '(default: Initial publish)',
+  )
+
+  if (!contentDirExists || !contentDirIsDir) {
+    throw new Error(
+      `[workshop:publish] content folder missing or not a directory: ${input.contentPath}`,
+    )
+  }
+  if (!previewExists) {
+    throw new Error(`[workshop:publish] preview file not found: ${input.previewPath}`)
+  }
+  const ONE_MB = 1_048_576
+  if (previewSize > ONE_MB) {
+    throw new Error(
+      `[workshop:publish] preview PNG is ${previewSize} bytes — Steam requires < 1 MB. Resize the preview image.`,
+    )
+  }
+
   // Step 1: allocate the Workshop file ID. `createItem` triggers the
   // Subscriber Agreement check — the returned `needsToAcceptAgreement`
   // flag is the signal we surface to the renderer.
+  console.log('[workshop:publish] step=createItem appId=%d', COH2_APP_ID)
   const created = await client.workshop.createItem(COH2_APP_ID)
   const itemId = created.itemId
   const needsAgreement = created.needsToAcceptAgreement
+  console.log(
+    '[workshop:publish] step=createItem-resolved publishedFileId=%s needsAgreement=%s',
+    itemId.toString(),
+    needsAgreement,
+  )
 
   // Step 2: upload content + metadata in a single call. steamworks.js's
   // updateItem bundles SetItem{Title,Description,Content,Preview,Visibility,Tags}
   // + SubmitItemUpdate behind the one promise.
-  await client.workshop.updateItem(
-    itemId,
-    {
-      title: input.title,
-      description: input.description,
-      changeNote: input.changeNote ?? 'Initial publish',
-      previewPath: input.previewPath,
-      contentPath: input.contentPath,
-      tags: input.tags,
-      // UgcItemVisibility is a const enum (0=Public, 1=FriendsOnly, 2=Private,
-      // 3=Unlisted). Pass the integer directly — the NAPI binding expects i32.
-      visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
-    },
-    COH2_APP_ID,
+  const updatePayload = {
+    title: input.title,
+    description: input.description,
+    changeNote: input.changeNote ?? 'Initial publish',
+    previewPath: input.previewPath,
+    contentPath: input.contentPath,
+    tags: input.tags,
+    // UgcItemVisibility is a const enum (0=Public, 1=FriendsOnly, 2=Private,
+    // 3=Unlisted). Pass the integer directly — the NAPI binding expects i32.
+    visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
+  }
+  console.log(
+    '[workshop:publish] step=updateItem itemId=%s payload=%o',
+    itemId.toString(),
+    updatePayload,
+  )
+  const updateResult = await client.workshop.updateItem(itemId, updatePayload, COH2_APP_ID)
+  console.log(
+    '[workshop:publish] step=updateItem-resolved needsAgreement=%s',
+    updateResult.needsToAcceptAgreement,
   )
 
   return {
@@ -281,20 +343,78 @@ export async function updateWorkshopItem(
 ): Promise<UpdateWorkshopResult> {
   const client = requireSteamClient()
   const itemId = BigInt(workshopId)
-  const result = await client.workshop.updateItem(
-    itemId,
-    {
-      title: input.title,
-      description: input.description,
-      changeNote: input.changeNote ?? 'Update',
-      previewPath: input.previewPath,
-      contentPath: input.contentPath,
-      tags: input.tags,
-      // UgcItemVisibility is a const enum (0=Public, 1=FriendsOnly, 2=Private,
-      // 3=Unlisted). Pass the integer directly — the NAPI binding expects i32.
-      visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
-    },
+
+  // ── Diagnostic: verify content dir and preview file before the API call ──
+  const fs = require('fs') as typeof import('fs')
+  let contentDirExists = false
+  let contentDirIsDir = false
+  let contentDirFiles: string[] = []
+  let previewExists = false
+  let previewSize = -1
+  try {
+    const cs = fs.statSync(input.contentPath)
+    contentDirExists = true
+    contentDirIsDir = cs.isDirectory()
+    if (contentDirIsDir) contentDirFiles = fs.readdirSync(input.contentPath)
+  } catch { /* stat failed — logged below */ }
+  try {
+    const ps = fs.statSync(input.previewPath)
+    previewExists = true
+    previewSize = ps.size
+  } catch { /* stat failed — logged below */ }
+
+  console.log(
+    '[workshop:update] step=pre-flight workshopId=%s appId=%d title=%j contentPath=%s contentDirExists=%s isDir=%s files=%j previewPath=%s previewExists=%s previewSize=%d tags=%j visibility=%s changeNote=%j',
+    workshopId,
     COH2_APP_ID,
+    input.title,
+    input.contentPath,
+    contentDirExists,
+    contentDirIsDir,
+    contentDirFiles,
+    input.previewPath,
+    previewExists,
+    previewSize,
+    input.tags,
+    input.visibility ?? 0,
+    input.changeNote ?? '(default: Update)',
+  )
+
+  if (!contentDirExists || !contentDirIsDir) {
+    throw new Error(
+      `[workshop:update] content folder missing or not a directory: ${input.contentPath}`,
+    )
+  }
+  if (!previewExists) {
+    throw new Error(`[workshop:update] preview file not found: ${input.previewPath}`)
+  }
+  const ONE_MB = 1_048_576
+  if (previewSize > ONE_MB) {
+    throw new Error(
+      `[workshop:update] preview PNG is ${previewSize} bytes — Steam requires < 1 MB. Resize the preview image.`,
+    )
+  }
+
+  const updatePayload = {
+    title: input.title,
+    description: input.description,
+    changeNote: input.changeNote ?? 'Update',
+    previewPath: input.previewPath,
+    contentPath: input.contentPath,
+    tags: input.tags,
+    // UgcItemVisibility is a const enum (0=Public, 1=FriendsOnly, 2=Private,
+    // 3=Unlisted). Pass the integer directly — the NAPI binding expects i32.
+    visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
+  }
+  console.log(
+    '[workshop:update] step=updateItem itemId=%s payload=%o',
+    itemId.toString(),
+    updatePayload,
+  )
+  const result = await client.workshop.updateItem(itemId, updatePayload, COH2_APP_ID)
+  console.log(
+    '[workshop:update] step=updateItem-resolved needsAgreement=%s',
+    result.needsToAcceptAgreement,
   )
   return { needsAgreement: result.needsToAcceptAgreement }
 }
