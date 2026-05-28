@@ -85,88 +85,80 @@ export default function ConnectScreen({ onConnected }: Props) {
     }
   }
 
-  const buttonLabel =
-    phase === 'picking'  ? <InlineSpinner /> :
-    phase === 'scanning' ? 'Scanning archives…' :
-    phase === 'success'  ? 'Connected' :
-    detectedPath         ? 'Connect (auto-detected)' :
-                           'Connect CoH2 install'
-
   return (
     <div>
       <h1 className="text-[26px] font-semibold tracking-tight text-white leading-[1.15] mb-4">
-        {phase === 'scanning' ? 'Loading vehicle models…'
-          : phase === 'success' ? 'Installation found'
-          : 'Connect your CoH2 install'}
+        Connect your CoH2 install
       </h1>
 
-      {phase === 'scanning' || phase === 'success' ? (
-        <div className="py-6 flex flex-col items-center text-center gap-3">
-          {phase === 'scanning' ? <BigSpinner /> : <SuccessTick />}
-          <div className="text-[13px] text-[var(--color-text-2)] leading-relaxed max-w-[260px]">
-            {phase === 'scanning'
-              ? 'Indexing your installation and pre-loading vehicle archives — usually a couple of seconds.'
-              : 'Found CoH2 archives. Loading the editor…'}
-          </div>
+      <ul className="mb-5 space-y-1.5 text-[13px] text-[var(--color-text-2)] leading-snug">
+        {[
+          'Reads vehicle meshes & base textures locally',
+          'Nothing uploaded — files stay on your machine',
+          detectedPath ? 'Steam install detected automatically' : 'Pick your Company of Heroes 2 folder',
+        ].map((line) => (
+          <li key={line} className="flex items-start gap-2">
+            <span aria-hidden className="mt-[6px] size-1 rounded-full shrink-0"
+              style={{ background: 'oklch(0.85 0.10 220)' }} />
+            <span>{line}</span>
+          </li>
+        ))}
+      </ul>
+
+      {!supported && (
+        <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed">
+          <b>Browser not supported.</b> This app uses the File System
+          Access API — please open it in Chrome, Edge, Brave or Opera,
+          or use the desktop app.
         </div>
-      ) : (
-        <>
-          <ul className="mb-5 space-y-1.5 text-[13px] text-[var(--color-text-2)] leading-snug">
-            {[
-              'Reads vehicle meshes & base textures locally',
-              'Nothing uploaded — files stay on your machine',
-              detectedPath ? 'Steam install detected automatically' : 'Pick your Company of Heroes 2 folder',
-            ].map((line) => (
-              <li key={line} className="flex items-start gap-2">
-                <span aria-hidden className="mt-[6px] size-1 rounded-full shrink-0"
-                  style={{ background: 'oklch(0.85 0.10 220)' }} />
-                <span>{line}</span>
-              </li>
-            ))}
-          </ul>
-
-          {!supported && (
-            <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed">
-              <b>Browser not supported.</b> This app uses the File System
-              Access API — please open it in Chrome, Edge, Brave or Opera,
-              or use the desktop app.
-            </div>
-          )}
-
-          {error && (
-            <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed whitespace-pre-line">
-              {error}
-            </div>
-          )}
-
-          {/* Single primary action — auto-detects when in Electron, else
-              opens the FS picker. No per-OS instructions UI. */}
-          <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={16} borderWidth={1} className="bb-pressable">
-            <button
-              disabled={!supported || busy}
-              onClick={connect}
-              className="bb-connect relative w-full text-white font-semibold h-12 text-[14px] tracking-tight
-                         disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/[0.10]"
-              style={{
-                borderRadius: 16,
-                cursor: busy ? 'progress' : 'pointer',
-                background: 'rgba(255, 255, 255, 0.06)',
-                backdropFilter: 'blur(20px) saturate(160%)',
-                WebkitBackdropFilter: 'blur(20px) saturate(160%)',
-                // Single subtle inset top-edge highlight only. The
-                // BorderBeam parent already paints the perimeter glow,
-                // so a second inset border-line + outer halo (previous
-                // version) read as a doubled drop shadow.
-                boxShadow: '0 1px 0 rgb(255 255 255 / 0.14) inset',
-              }}
-            >
-              {phase === 'picking'
-                ? <span className="inline-flex items-center justify-center"><InlineSpinner /></span>
-                : <span>{buttonLabel}</span>}
-            </button>
-          </BorderBeam>
-        </>
       )}
+
+      {error && (
+        <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed whitespace-pre-line">
+          {error}
+        </div>
+      )}
+
+      {/* Single primary action — auto-detects when in Electron, else
+          opens the FS picker. Button morphs its content per phase:
+          idle → label, picking → spinner, scanning → spinner + text,
+          success → inline green tick + "Connected". */}
+      <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={16} borderWidth={1} className="bb-pressable">
+        <button
+          disabled={!supported || busy}
+          onClick={connect}
+          className="bb-connect relative w-full text-white font-semibold h-12 text-[14px] tracking-tight
+                     disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/[0.10]"
+          style={{
+            borderRadius: 16,
+            cursor: busy ? 'progress' : 'pointer',
+            background: 'rgba(255, 255, 255, 0.06)',
+            backdropFilter: 'blur(20px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(20px) saturate(160%)',
+            boxShadow: '0 1px 0 rgb(255 255 255 / 0.14) inset',
+          }}
+        >
+          {phase === 'picking' ? (
+            <span className="inline-flex items-center justify-center">
+              <InlineSpinner />
+            </span>
+          ) : phase === 'scanning' ? (
+            <span className="inline-flex items-center justify-center gap-2">
+              <InlineSpinner />
+              <span>Scanning archives…</span>
+            </span>
+          ) : phase === 'success' ? (
+            <span className="inline-flex items-center justify-center gap-2">
+              <InlineSuccessTick />
+              <span>Connected</span>
+            </span>
+          ) : (
+            <span>
+              {detectedPath ? 'Connect (auto-detected)' : 'Connect CoH2 install'}
+            </span>
+          )}
+        </button>
+      </BorderBeam>
 
       <style>{`
         .bb-pressable {
@@ -238,6 +230,17 @@ function SuccessTick() {
       <circle cx="12" cy="12" r="11" fill="oklch(0.78 0.18 150)" />
       <path d="M7 12.5 L10.5 16 L17 9"
             stroke="#0b1410" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  )
+}
+
+/** Inline-sized (18 px) green tick for use inside the connect button. */
+function InlineSuccessTick() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden style={{ flex: 'none' }}>
+      <circle cx="12" cy="12" r="11" fill="oklch(0.78 0.18 150)" />
+      <path d="M7 12.5 L10.5 16 L17 9"
+            stroke="#0b1410" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   )
 }

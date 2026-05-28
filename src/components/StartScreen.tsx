@@ -26,7 +26,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, Clock, IdCard, Paintbrush, Sticker, Upload } from 'lucide-react'
+import { ArrowRight, Clock } from 'lucide-react'
+import { GiPaintBrush, GiShield, GiPaintBucket, GiOpenFolder } from 'react-icons/gi'
 import { BorderBeam } from '@/components/ui/border-beam'
 import { type Coh2SkinProject, loadActive, readProjectFile } from '@/lib/project'
 import {
@@ -238,38 +239,36 @@ export default function StartScreen({
   // through the lucide icon (Paintbrush amber / IdCard sky / Sticker emerald)
   // so the visual hierarchy is icon-led rather than background-led.
   // Load Project keeps the full-width ActionRow treatment below the grid.
-  // ── Half-width 2-column grid for the three "new project" buttons ─────
+  // ── 2×2 grid for the four project-action buttons ─────────────────────
+  // Row 1: Skin Pack + Faceplate. Row 2: Decal Pack + Load Project.
+  // All four use neutral glass backgrounds; colour is carried by the icon.
   rows.push(
     <div key="new-project-grid" className="grid grid-cols-2 gap-3 mb-3">
       <GridButton
-        icon={<Paintbrush className="size-5 text-amber-400 flex-shrink-0" aria-hidden strokeWidth={2} />}
+        icon={<GiPaintBrush className="text-amber-400 flex-shrink-0" style={{ width: 24, height: 24 }} aria-hidden />}
         title="New Skin Pack"
         sublabel="Paint a vehicle livery"
         onClick={onNewSkin}
       />
       <GridButton
-        icon={<IdCard className="size-5 text-sky-400 flex-shrink-0" aria-hidden strokeWidth={2} />}
+        icon={<GiShield className="text-sky-400 flex-shrink-0" style={{ width: 24, height: 24 }} aria-hidden />}
         title="New Faceplate"
         sublabel="Player profile banner"
         onClick={onNewFaceplate}
       />
       <GridButton
-        icon={<Sticker className="size-5 text-emerald-400 flex-shrink-0" aria-hidden strokeWidth={2} />}
+        icon={<GiPaintBucket className="text-emerald-400 flex-shrink-0" style={{ width: 24, height: 24 }} aria-hidden />}
         title="New Decal Pack"
         sublabel="A set of vehicle decals"
         onClick={onNewDecalPack}
       />
+      <GridButton
+        icon={<GiOpenFolder className="text-violet-400 flex-shrink-0" style={{ width: 24, height: 24 }} aria-hidden />}
+        title="Load Project"
+        sublabel="Browse saved projects"
+        onClick={onShowSavedProjects}
+      />
     </div>,
-  )
-  rows.push(
-    <ActionRow
-      key="load-project"
-      icon={<Upload className="size-5 text-white" aria-hidden strokeWidth={2.2} />}
-      tone="green"
-      title="Load Project"
-      sublabel="Browse saved projects"
-      onClick={onShowSavedProjects}
-    />,
   )
 
   return (
