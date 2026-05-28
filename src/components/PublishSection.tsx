@@ -78,6 +78,13 @@ const VISIBILITY_OPTIONS: { value: 0 | 1 | 2 | 3; label: string }[] = [
   { value: 3, label: 'Unlisted' },
 ]
 
+const VISIBILITY_DESCRIPTIONS: Record<0 | 1 | 2 | 3, string> = {
+  0: 'Anyone can find and subscribe via Workshop browse and search.',
+  1: 'Only your Steam friends can see and subscribe.',
+  2: 'Only you can see this item. No one else can download it.',
+  3: 'Hidden from Workshop browse and search. Anyone with the direct link can subscribe.',
+}
+
 // ---------------------------------------------------------------------------
 // Inline style helpers (shared with PublishToWorkshopDialog)
 // ---------------------------------------------------------------------------
@@ -448,39 +455,44 @@ export function PublishSection({
 
       {/* Visibility selector */}
       <FieldGroup label="Visibility">
-        <div style={{ display: 'flex', gap: 6 }}>
-          {VISIBILITY_OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              type="button"
-              disabled={busy}
-              onClick={() => setVisibility(opt.value)}
-              style={{
-                flex: 1,
-                padding: '6px 4px',
-                borderRadius: 8,
-                fontSize: 11,
-                fontWeight: 500,
-                border: '1px solid',
-                cursor: busy ? 'not-allowed' : 'pointer',
-                transition: 'all 0.12s',
-                borderColor:
-                  visibility === opt.value
-                    ? 'var(--color-accent, #d97706)'
-                    : 'rgba(255,255,255,0.12)',
-                background:
-                  visibility === opt.value
-                    ? 'rgba(217, 119, 6, 0.22)'
-                    : 'rgba(255,255,255,0.04)',
-                color:
-                  visibility === opt.value
-                    ? '#fbbf24'
-                    : 'rgba(247,247,250,0.65)',
-              }}
-            >
-              {opt.label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {VISIBILITY_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                disabled={busy}
+                onClick={() => setVisibility(opt.value)}
+                style={{
+                  flex: 1,
+                  padding: '6px 4px',
+                  borderRadius: 8,
+                  fontSize: 11,
+                  fontWeight: 500,
+                  border: '1px solid',
+                  cursor: busy ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.12s',
+                  borderColor:
+                    visibility === opt.value
+                      ? 'var(--color-accent, #d97706)'
+                      : 'rgba(255,255,255,0.12)',
+                  background:
+                    visibility === opt.value
+                      ? 'rgba(217, 119, 6, 0.22)'
+                      : 'rgba(255,255,255,0.04)',
+                  color:
+                    visibility === opt.value
+                      ? '#fbbf24'
+                      : 'rgba(247,247,250,0.65)',
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p style={{ fontSize: 12, color: 'rgba(247,247,250,0.55)', margin: 0, marginTop: 2 }}>
+            {VISIBILITY_DESCRIPTIONS[visibility]}
+          </p>
         </div>
       </FieldGroup>
 
