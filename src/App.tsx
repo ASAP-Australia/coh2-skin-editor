@@ -81,6 +81,27 @@ type Phase =
  *  centre → world opens behind it" motion rather than a hard cut. */
 const EDITOR_LOADING_MS = 1200
 
+/**
+ * Wraps a synchronous state-update callback in the View Transitions API
+ * if the browser supports it (Electron 41+) and the user hasn't requested
+ * reduced motion. Falls back to calling the callback directly so the logic
+ * is identical in all environments.
+ *
+ * Used for top-level screen swaps (e.g. editor → start, connect → start)
+ * so they receive the global slide-up-out / slide-down-in keyframes from
+ * index.css rather than being hard cuts.
+ */
+function withViewTransition(update: () => void): void {
+  if (
+    !window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
+    typeof document.startViewTransition === 'function'
+  ) {
+    document.startViewTransition(update)
+  } else {
+    update()
+  }
+}
+
 export default function App() {
   const [installRoot, setInstallRoot] = useState<FileSystemDirectoryHandle | null>(null)
   const [phase, setPhase] = useState<Phase>(() => {
@@ -381,7 +402,10 @@ export default function App() {
     return (
       <>
         <WindowControls />
-        <Editor root={installRoot} onDisconnect={() => setPhase('start')} />
+        <Editor
+          root={installRoot}
+          onDisconnect={() => withViewTransition(() => setPhase('start'))}
+        />
       </>
     )
   }
@@ -391,10 +415,12 @@ export default function App() {
         <WindowControls />
         <FaceplateEditor
           project={faceplateProject}
-          onBack={() => {
-            setFaceplateProject(null)
-            setPhase('start')
-          }}
+          onBack={() =>
+            withViewTransition(() => {
+              setFaceplateProject(null)
+              setPhase('start')
+            })
+          }
         />
       </>
     )
@@ -405,10 +431,12 @@ export default function App() {
         <WindowControls />
         <DecalPackEditor
           project={decalPackProject}
-          onBack={() => {
-            setDecalPackProject(null)
-            setPhase('start')
-          }}
+          onBack={() =>
+            withViewTransition(() => {
+              setDecalPackProject(null)
+              setPhase('start')
+            })
+          }
           installRoot={installRoot}
         />
       </>

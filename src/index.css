@@ -316,3 +316,37 @@ body {
 .custom-scrollbar::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* ── View Transitions API — downward cascade ──────────────────────────────
+ * Applied to top-level screen swaps wrapped in document.startViewTransition()
+ * (e.g. editor → start, faceplate/decal-pack → start). The "downward cascade"
+ * convention is:
+ *
+ *   Old screen: slides UPWARD off the top  (translateY 0 → -12px, opacity 1 → 0)
+ *   New screen: slides DOWNWARD into place  (translateY -12px → 0, opacity 0 → 1)
+ *
+ * Timings match the AuthShell MorphIn/MorphOut convention used throughout
+ * the app. Reduced-motion users never reach this code because
+ * withViewTransition() bails out when prefers-reduced-motion is set.
+ *
+ * The `both` fill-mode ensures the starting keyframe applies before the
+ * animation begins and the ending keyframe holds after it completes, so
+ * there's no flash at either end of the transition.
+ */
+@keyframes vt-slide-up-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-12px); }
+}
+
+@keyframes vt-slide-down-in {
+  from { opacity: 0; transform: translateY(-12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+::view-transition-old(root) {
+  animation: vt-slide-up-out 180ms ease-in both;
+}
+
+::view-transition-new(root) {
+  animation: vt-slide-down-in 240ms cubic-bezier(.32, .72, 0, 1) both;
+}

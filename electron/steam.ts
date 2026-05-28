@@ -287,7 +287,7 @@ function findSgaInDir(contentPath: string): string {
   try {
     entries = fs.readdirSync(contentPath)
   } catch (e) {
-    throw new Error(`[workshop] content directory not readable: ${contentPath} — ${e}`)
+    throw new Error(`[workshop] content directory not readable: ${contentPath} — ${e}`, { cause: e })
   }
   const sgas = entries.filter(f => f.toLowerCase().endsWith('.sga'))
   if (sgas.length === 0) {

@@ -185,13 +185,29 @@ export default function SavedProjectsList({
             data-testid="saved-projects-scroll"
             className="custom-scrollbar overflow-y-auto pr-2"
             style={{
-              // Reclaim the space the Saved-projects header + Back button
-              // used to occupy (~48 px) — bumped from 320 to 360 px on
-              // large viewports so two full sections fit before scrolling
-              // kicks in. The 50vh ceiling guarantees the bottom
-              // "Open from disk…" CTA stays on-screen even on a 720p
-              // Electron window with multiple sections expanded.
-              maxHeight: 'min(50vh, 360px)',
+              // Cap the scrollable list area so the total card height never
+              // approaches the minimum Electron window height (600 px).
+              //
+              // Budget breakdown at 600 px viewport (minHeight in main.ts):
+              //   card p-10 top+bottom  : 80 px
+              //   ASAP heading block    : ~68 px
+              //   eyebrow (mb-4)        : ~36 px
+              //   Back button + mb-3    : ~32 px
+              //   scroll area (this)    : 240 px   ← 40vh @ 600px
+              //   space-y-3 gap + footer: ~56 px
+              //   ─────────────────────────────────
+              //   total card height     : ~512 px  → 44 px clear each side
+              //
+              // Previous value was min(50vh, 360px) which at 600 px gave
+              // 300 px for the list alone and pushed the card to ~568 px,
+              // leaving only 16 px of breathing room.  The HeightTransition
+              // highWaterMark can inflate the content area further (if the
+              // user visited a taller form earlier in the session), compounding
+              // the problem and causing the card to visually overflow the window.
+              //
+              // 40vh / 280px gives comfortable scrolling on all supported
+              // viewport sizes while keeping the card safely below the fold.
+              maxHeight: 'min(40vh, 280px)',
             }}
           >
             <div className="space-y-5">

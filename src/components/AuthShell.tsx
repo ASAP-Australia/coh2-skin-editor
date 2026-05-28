@@ -325,13 +325,16 @@ export default function AuthShell({ phase, exiting = false, children }: Props) {
           shader-wave background and no card). `fixed inset-0` lifts the
           shell out of flow so it overlays the editor cleanly. */}
       <main
-        className="fixed inset-0 grid place-items-center px-6 dark text-foreground z-30"
+        className="fixed inset-0 grid place-items-center px-6 py-4 overflow-y-auto dark text-foreground z-30"
         // Don't intercept pointer events for the empty regions around
         // the card — but keep them on the card itself. Achieved by
         // setting `pointerEvents: none` on this wrapper and back to auto
         // on the LoadingBorder child below. (Important for the handoff:
         // when the shell is fading out at the same time the Editor is
         // surfacing, the user's clicks should land on the editor.)
+        // overflow-y-auto: safety net so the card can scroll into view
+        // on very small viewports (or when HeightTransition's highWaterMark
+        // ratchets the card taller than the SavedProjectsList content needs).
         style={{ pointerEvents: exiting ? 'none' : undefined }}
         // Wrapper is a <main> landmark so axe-core's `region` rule passes
         // for content inside the glass card (lists, buttons, etc.) without
@@ -589,7 +592,10 @@ function MorphIn({
     <div
       style={{
         opacity: shown ? 1 : 0,
-        transform: shown ? 'translateY(0)' : 'translateY(8px)',
+        // Enter from above: starts at -10px (above), slides DOWN into place (0).
+        // Matches the "downward cascade" convention: outgoing content slides up
+        // and out, incoming content slides down and in.
+        transform: shown ? 'translateY(0)' : 'translateY(-10px)',
         transition: hasPrev
           ? `opacity ${IN_MS}ms ${EASE} ${OVERLAP_MS}ms, transform ${IN_MS}ms ${EASE} ${OVERLAP_MS}ms`
           : `opacity ${IN_MS}ms ${EASE}, transform ${IN_MS}ms ${EASE}`,
@@ -718,7 +724,10 @@ function MorphOut({ children }: { children: ReactNode }) {
         position: 'absolute',
         inset: 0,
         opacity: shown ? 1 : 0,
-        transform: shown ? 'translateY(0)' : 'translateY(-6px)',
+        // Exit upward: slides UP and out (0 → -10px). Paired with MorphIn's
+        // "enter from above" so the eye reads a consistent downward cascade:
+        // content flows in from the top and exits through the top.
+        transform: shown ? 'translateY(0)' : 'translateY(-10px)',
         transition: `opacity ${OUT_MS}ms ${EASE}, transform ${OUT_MS}ms ${EASE}`,
         // Don't intercept clicks — the incoming UI under us should be
         // interactive immediately even before the fade-out completes.

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { isSupported, locateArchives, pickInstall } from '@/lib/coh2-fs'
 import { BorderBeam } from '@/components/ui/border-beam'
+import { AnimatedSwap } from '@/components/ui/animated-swap'
 import { isElectron, detectInstallPath, pickInstallPathNative, nativePathToHandle, initSteamNative } from '@/lib/native-fs'
 import type { SteamInitInfo } from '@/lib/native-fs'
 
@@ -34,8 +35,11 @@ export default function ConnectScreen({ onConnected }: Props) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [error, setError] = useState<string | null>(null)
   const [steamWarning, setSteamWarning] = useState<string | null>(null)
-  const [steamInfo, setSteamInfo] = useState<SteamInitInfo | null>(null)
   const [detectedPath, setDetectedPath] = useState<string | null>(null)
+  // Snapshot of detectedPath at the moment the user clicks connect — frozen so
+  // async detection can't mutate bullet #3 text mid-click. Kept in state (not
+  // a ref) so it's safe to read during render.
+  const [bulletThreeSnapshot, setBulletThreeSnapshot] = useState<string | null>(null)
   const busy = phase === 'picking' || phase === 'scanning' || phase === 'linking-steam' || phase === 'success'
 
   // In Electron: probe the OS for a default Steam path so we can show
@@ -48,6 +52,8 @@ export default function ConnectScreen({ onConnected }: Props) {
   }, [])
 
   const connect = async () => {
+    // Freeze bullet #3 text before any async work begins.
+    setBulletThreeSnapshot(detectedPath)
     setError(null); setSteamWarning(null); setPhase('picking')
     try {
       let handle: FileSystemDirectoryHandle | null | undefined
@@ -88,7 +94,6 @@ export default function ConnectScreen({ onConnected }: Props) {
           const result = await initSteamNative()
           if (result?.ok) {
             resolvedSteamInfo = result.info
-            setSteamInfo(result.info)
           } else if (result && !result.ok) {
             const msg =
               result.error.code === 'no-steam'
@@ -128,8 +133,11 @@ export default function ConnectScreen({ onConnected }: Props) {
         {[
           'Reads vehicle meshes & base textures locally',
           'Nothing uploaded — files stay on your machine',
-          detectedPath ? 'Steam install detected automatically' : 'Pick your Company of Heroes 2 folder',
-          ...(steamInfo ? [`Signed in to Steam as ${steamInfo.personaName}`] : []),
+          // Use the state snapshot once a click is in progress so async
+          // detection cannot swap this text mid-transition.
+          (phase === 'idle' ? detectedPath : bulletThreeSnapshot)
+            ? 'Steam install detected automatically'
+            : 'Pick your Company of Heroes 2 folder',
         ].map((line) => (
           <li key={line} className="flex items-start gap-2">
             <span aria-hidden className="mt-[6px] size-1 rounded-full shrink-0"
@@ -139,11 +147,16 @@ export default function ConnectScreen({ onConnected }: Props) {
         ))}
       </ul>
 
-      {steamWarning && (
-        <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-yellow-400/25 bg-yellow-500/[0.06] text-[12px] text-yellow-200/90 leading-relaxed">
-          {steamWarning}
-        </div>
-      )}
+      {/* Steam warning banner — animates in/out with the downward cascade.
+          Key cycles between 'shown' and 'hidden' so the swap fires when
+          the warning appears or clears. */}
+      <AnimatedSwap swapKey={steamWarning ? 'shown' : 'hidden'} block>
+        {steamWarning ? (
+          <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-yellow-400/25 bg-yellow-500/[0.06] text-[12px] text-yellow-200/90 leading-relaxed">
+            {steamWarning}
+          </div>
+        ) : null}
+      </AnimatedSwap>
 
       {!supported && (
         <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed">
@@ -153,11 +166,14 @@ export default function ConnectScreen({ onConnected }: Props) {
         </div>
       )}
 
-      {error && (
-        <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed whitespace-pre-line">
-          {error}
-        </div>
-      )}
+      {/* Error banner — animates in when an error appears, out when cleared. */}
+      <AnimatedSwap swapKey={error ? `err-${error}` : 'no-error'} block>
+        {error ? (
+          <div className="mb-5 px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed whitespace-pre-line">
+            {error}
+          </div>
+        ) : null}
+      </AnimatedSwap>
 
       {/* Single primary action — auto-detects when in Electron, else
           opens the FS picker. Button morphs its content per phase:
@@ -178,26 +194,38 @@ export default function ConnectScreen({ onConnected }: Props) {
             boxShadow: '0 1px 0 rgb(255 255 255 / 0.14) inset',
           }}
         >
-          {phase === 'picking' ? (
-            <span className="inline-flex items-center justify-center">
-              <InlineSpinner />
-            </span>
-          ) : phase === 'scanning' ? (
-            <span className="inline-flex items-center justify-center">
-              <InlineSpinner />
-            </span>
-          ) : phase === 'linking-steam' ? (
-            <span className="inline-flex items-center justify-center gap-2 text-[13px]">
-              <InlineSpinner />
-              <span>Connecting Steam…</span>
-            </span>
-          ) : phase === 'success' ? (
-            <span className="inline-flex items-center justify-center">
-              <InlineSuccessTick />
-            </span>
-          ) : (
-            <span>Connect CoH2 install</span>
-          )}
+          {/* AnimatedSwap drives the downward-cascade transition between
+              button states. `picking` and `scanning` share the same key so
+              they don't animate between each other (both show the plain
+              spinner and the visual difference would be imperceptible). */}
+          <AnimatedSwap
+            swapKey={
+              phase === 'picking' || phase === 'scanning'
+                ? 'spinning'
+                : phase
+            }
+          >
+            {phase === 'picking' ? (
+              <span className="inline-flex items-center justify-center" style={{ minWidth: 180 }}>
+                <InlineSpinner />
+              </span>
+            ) : phase === 'scanning' ? (
+              <span className="inline-flex items-center justify-center" style={{ minWidth: 180 }}>
+                <InlineSpinner />
+              </span>
+            ) : phase === 'linking-steam' ? (
+              <span className="inline-flex items-center justify-center gap-2 text-[13px]" style={{ minWidth: 180 }}>
+                <InlineSpinner />
+                <span>Connecting Steam…</span>
+              </span>
+            ) : phase === 'success' ? (
+              <span className="inline-flex items-center justify-center" style={{ minWidth: 180 }}>
+                <InlineSuccessTick />
+              </span>
+            ) : (
+              <span style={{ minWidth: 180, display: 'inline-flex', justifyContent: 'center' }}>Connect CoH2 install</span>
+            )}
+          </AnimatedSwap>
         </button>
       </BorderBeam>
 

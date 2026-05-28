@@ -227,16 +227,14 @@ describe('SavedProjectsList', () => {
       expect(scroller.classList.contains('overflow-y-auto')).toBe(true)
       // maxHeight is set via inline style so it survives Tailwind
       // arbitrary-value purges across builds. Tightened from
-      // 60vh/480px → 55vh/440px → 42vh/360px → 40vh/320px after a
-      // user with many projects reported the list STILL broke out of
-      // the AuthShell card and the scrollbar wasn't obviously visible
-      // because the previous `pr-3 -mr-2` wrapper pulled the rail past
-      // the card's `overflow-hidden` edge. Then bumped to 50vh/360px
-      // once the centered "Saved projects" header + Back button were
-      // removed (~48 px reclaimed) — gives the user breathing room for
-      // two visible sections before scrolling kicks in while still
-      // keeping the bottom "Open from disk…" CTA on-screen at 720p.
-      expect(scroller.style.maxHeight).toBe('min(50vh, 360px)')
+      // 60vh/480px → 55vh/440px → 42vh/360px → 40vh/320px → 50vh/360px
+      // → 40vh/280px.  Reduced again after the card height was overflowing
+      // the minimum Electron window (600 px): at min(50vh, 360px) the
+      // total card was ~568 px with only 16 px margin on a 600 px viewport;
+      // HeightTransition's highWaterMark could inflate it further.
+      // min(40vh, 280px) budgets ~512 px total card height at 600 px,
+      // leaving a comfortable 44 px each side.
+      expect(scroller.style.maxHeight).toBe('min(40vh, 280px)')
     })
 
     it('keeps the "Open from disk" button outside the scroll area', () => {
