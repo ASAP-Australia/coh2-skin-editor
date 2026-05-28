@@ -37,9 +37,20 @@ export default function FactionNav({ project, currentId, onPick }: Props) {
     <>
       {/* Vehicle pills — floating glass pill centered ABOVE the faction bar.
           Appears for the active faction. Apple Control Center / Dock styling:
-          heavy blur, subtle inner highlight, 1px hairline border. */}
+          heavy blur, subtle inner highlight, 1px hairline border.
+
+          v1.0 UX trim: dropped horizontal scrolling (overflow-x-auto +
+          its custom scrollbar utilities) and the 960 px width cap. User
+          feedback: "it should show all the vehicles on that vehicle tab
+          at once. No scrolling, no whatever." With at most 11 vehicles
+          per faction (Soviet/USF caps), text-only pills fit on a single
+          line up to ~1700 px viewport width — beyond that we let the
+          pills wrap via `flex-wrap` so every vehicle stays clickable
+          even on narrower windows. The max-w is bumped from 960 to 96vw
+          so we never re-introduce horizontal scrolling.
+       */}
       <div
-        className="absolute left-1/2 -translate-x-1/2 z-10 max-w-[min(92vw,960px)]
+        className="absolute left-1/2 -translate-x-1/2 z-10 max-w-[min(96vw,1400px)]
                    rounded-2xl shadow-[var(--shadow-glass)] px-2 py-1.5"
         style={{
           bottom: 76,
@@ -52,10 +63,8 @@ export default function FactionNav({ project, currentId, onPick }: Props) {
       >
         <div
           ref={rowRef}
-          className="flex items-center gap-1 overflow-x-auto
-                     [&::-webkit-scrollbar]:h-0
-                     [&::-webkit-scrollbar-thumb]:bg-white/15 [&::-webkit-scrollbar-thumb]:rounded-full
-                     [&::-webkit-scrollbar-track]:bg-transparent">
+          className="flex items-center justify-center gap-1 flex-wrap"
+        >
           {list.map(v => {
             const isActive = v.id === currentId
             const decalCount = project.vehicles[v.id]?.decals?.length ?? 0

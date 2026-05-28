@@ -80,8 +80,12 @@ export default function TopMenu(p: Props) {
         </div>
         <MenuBtn id="view"      label="View"      active={p.active} setActive={p.setActive} />
         <MenuBtn id="decals"    label="Decals"    active={p.active} setActive={p.setActive} />
-        <MenuBtn id="parts"     label="Parts"     active={p.active} setActive={p.setActive} />
-        <MenuBtn id="camo"      label="Camo"      active={p.active} setActive={p.setActive} />
+        {/* v1.0 UX trim: "Parts" (Explode view) and "Camo" (Generate) are
+            temporarily hidden — the underlying panels still exist (see
+            `PartsPanel` / `CamoPanel` below) so re-enabling is a one-line
+            change. User feedback: "get rid of generate for now since
+            we're not using it, and get rid of explode for now since
+            we're not using it." */}
         <MenuBtn id="scene"     label="Scene"     active={p.active} setActive={p.setActive} />
         <MenuBtn id="reference" label="Reference" active={p.active} setActive={p.setActive} />
         <MenuBtn id="export"    label="Export"    active={p.active} setActive={p.setActive} />

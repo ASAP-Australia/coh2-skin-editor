@@ -1,0 +1,751 @@
+{
+  "_note": "King Tiger (king_tiger_sdkfz_182) UV regions in 2048×2048 pixel units. Coordinates: x=left edge, y=top edge, w=width, h=height (PNG top-left origin = UV V=0). Derived from RGM vertex positions + UV coordinates from ArtHighXP1.sga.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, -X = tank LEFT side, +Z = forward, +Y = up. UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_keyFinding": "The SS Totenkopf community skin places balkenkreuz/numbers at x=400-1000, y=1400-1700. Vertex probe confirms this UV region contains ONLY X>0 (right-side) 3D vertices from GEO_chassis_shaker. Therefore x=400-1000, y=1400-1700 is the HULL RIGHT SIDE in game coordinates.",
+  "_leftSideLocation": "The hull LEFT side (X<0) UV region peaks at approximately x=384-640, y=384-640 in the texture. This is the symmetric location for the other-side decals.",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 896,
+      "y": 1152,
+      "w": 512,
+      "h": 512,
+      "note": "Hull right side skirt — peak density zone of X>0 (right-side) chassis vertices. SS Totenkopf decal zone (x=400-1000 y=1400-1700) falls in the WIDER right-side UV band. This is the core panel.",
+      "uvCore": {
+        "minU": 0.4375,
+        "maxU": 0.625,
+        "minV": 0.5625,
+        "maxV": 0.8125
+      },
+      "ssTotenkopfRefOverlap": true
+    },
+    "hullSideLeft": {
+      "x": 384,
+      "y": 384,
+      "w": 256,
+      "h": 256,
+      "note": "Hull left side skirt — peak density zone of X<0 (left-side) chassis vertices. Symmetric to right side but UV placement differs (non-mirrored unwrap).",
+      "uvCore": {
+        "minU": 0.1875,
+        "maxU": 0.3125,
+        "minV": 0.1875,
+        "maxV": 0.3125
+      },
+      "ssTotenkopfRefOverlap": false
+    },
+    "hullSideRightWide": {
+      "x": 400,
+      "y": 1152,
+      "w": 1248,
+      "h": 896,
+      "note": "Wider UV region containing all X>0 right-side hull verts (V=1152-2048 band). Includes fenders, side skirt, and some front/rear faces.",
+      "ssTotenkopfRefOverlap": true
+    },
+    "hullSideLeftWide": {
+      "x": 0,
+      "y": 256,
+      "w": 1024,
+      "h": 512,
+      "note": "Wider UV region for X<0 left-side hull verts (V=256-768 band).",
+      "ssTotenkopfRefOverlap": false
+    },
+    "turretBody": {
+      "x": 6,
+      "y": 882,
+      "w": 1378,
+      "h": 1157,
+      "note": "GEO_turret_horiz — main turret horizontal ring body.",
+      "uv": {
+        "minU": 0.0027,
+        "maxU": 0.6757,
+        "minV": 0.4308,
+        "maxV": 0.9958
+      }
+    },
+    "mainGunBarrel": {
+      "x": 593,
+      "y": 953,
+      "w": 383,
+      "h": 1084,
+      "note": "GEO_maingun_barrel — 88mm KwK barrel.",
+      "uv": {
+        "minU": 0.2895,
+        "maxU": 0.4766,
+        "minV": 0.4651,
+        "maxV": 0.9945
+      }
+    },
+    "engineDeckDoor": {
+      "x": 1055,
+      "y": 176,
+      "w": 840,
+      "h": 1636,
+      "note": "GEO_engine_door_top — engine deck and rear door area.",
+      "uv": {
+        "minU": 0.515,
+        "maxU": 0.9253,
+        "minV": 0.0861,
+        "maxV": 0.8851
+      }
+    },
+    "turretMantlet": {
+      "x": 649,
+      "y": 705,
+      "w": 465,
+      "h": 1245,
+      "note": "GEO_turret_vert — turret vertical pivot / mantlet area.",
+      "uv": {
+        "minU": 0.3171,
+        "maxU": 0.5441,
+        "minV": 0.3442,
+        "maxV": 0.952
+      }
+    },
+    "turretHatch": {
+      "x": 237,
+      "y": 728,
+      "w": 289,
+      "h": 386,
+      "note": "GEO_hatch_turret_left01 — left turret hatch.",
+      "uv": {
+        "minU": 0.1156,
+        "maxU": 0.2565,
+        "minV": 0.3553,
+        "maxV": 0.5439
+      }
+    },
+    "sprocketWheelIsland": {
+      "x": 638,
+      "y": 193,
+      "w": 738,
+      "h": 716,
+      "note": "Shared UV island for all sprockets (front/rear left/right share same UV).",
+      "uv": {
+        "minU": 0.3116,
+        "maxU": 0.6721,
+        "minV": 0.1212,
+        "maxV": 0.3802
+      }
+    }
+  },
+  "namedObjects": {
+    "GEO_sprocket_right_rear": {
+      "x": 654,
+      "y": 193,
+      "w": 543,
+      "h": 423,
+      "uv": {
+        "minU": 0.3193,
+        "maxU": 0.5842,
+        "minV": 0.0942,
+        "maxV": 0.3006
+      },
+      "centroid3d": {
+        "x": 1.658,
+        "y": 0.838,
+        "z": -3.937
+      },
+      "vertCount": 83
+    },
+    "GEO_sprocket_right_front": {
+      "x": 638,
+      "y": 248,
+      "w": 738,
+      "h": 530,
+      "uv": {
+        "minU": 0.3116,
+        "maxU": 0.6721,
+        "minV": 0.1212,
+        "maxV": 0.3802
+      },
+      "centroid3d": {
+        "x": 1.813,
+        "y": 1.014,
+        "z": 3.59
+      },
+      "vertCount": 613
+    },
+    "GEO_sprocket_left_front": {
+      "x": 638,
+      "y": 248,
+      "w": 738,
+      "h": 530,
+      "uv": {
+        "minU": 0.3116,
+        "maxU": 0.6721,
+        "minV": 0.1212,
+        "maxV": 0.3802
+      },
+      "centroid3d": {
+        "x": -1.821,
+        "y": 1.014,
+        "z": 3.59
+      },
+      "vertCount": 613
+    },
+    "GEO_sprocket_left_rear": {
+      "x": 654,
+      "y": 193,
+      "w": 543,
+      "h": 423,
+      "uv": {
+        "minU": 0.3193,
+        "maxU": 0.5842,
+        "minV": 0.0942,
+        "maxV": 0.3006
+      },
+      "centroid3d": {
+        "x": -1.658,
+        "y": 0.838,
+        "z": -3.937
+      },
+      "vertCount": 83
+    },
+    "GEO_chassis_shaker": {
+      "x": 2,
+      "y": 1,
+      "w": 2035,
+      "h": 2039,
+      "uv": {
+        "minU": 0.0009,
+        "maxU": 0.9946,
+        "minV": 0.0005,
+        "maxV": 0.996
+      },
+      "centroid3d": {
+        "x": 0.223,
+        "y": 1.797,
+        "z": -1.468
+      },
+      "vertCount": 4278
+    },
+    "GEO_engine_door_top": {
+      "x": 1055,
+      "y": 176,
+      "w": 840,
+      "h": 1636,
+      "uv": {
+        "minU": 0.515,
+        "maxU": 0.9253,
+        "minV": 0.0861,
+        "maxV": 0.8851
+      },
+      "centroid3d": {
+        "x": -0.028,
+        "y": 2.291,
+        "z": -3.054
+      },
+      "vertCount": 220
+    },
+    "GEO_maingun_barrel": {
+      "x": 593,
+      "y": 953,
+      "w": 383,
+      "h": 1084,
+      "uv": {
+        "minU": 0.2895,
+        "maxU": 0.4766,
+        "minV": 0.4651,
+        "maxV": 0.9945
+      },
+      "centroid3d": {
+        "x": -0.005,
+        "y": 2.739,
+        "z": 6.872
+      },
+      "vertCount": 441
+    },
+    "GEO_turret_vert": {
+      "x": 649,
+      "y": 705,
+      "w": 465,
+      "h": 1245,
+      "uv": {
+        "minU": 0.3171,
+        "maxU": 0.5441,
+        "minV": 0.3442,
+        "maxV": 0.952
+      },
+      "centroid3d": {
+        "x": 0.033,
+        "y": 2.775,
+        "z": 2.136
+      },
+      "vertCount": 152
+    },
+    "GEO_Turret_MG42_Arm": {
+      "x": 849,
+      "y": 1268,
+      "w": 105,
+      "h": 175,
+      "uv": {
+        "minU": 0.4146,
+        "maxU": 0.466,
+        "minV": 0.6192,
+        "maxV": 0.7046
+      },
+      "centroid3d": {
+        "x": -0.503,
+        "y": 3.704,
+        "z": 0.136
+      },
+      "vertCount": 86
+    },
+    "GEO_turret_horiz": {
+      "x": 6,
+      "y": 882,
+      "w": 1378,
+      "h": 1157,
+      "uv": {
+        "minU": 0.0027,
+        "maxU": 0.6757,
+        "minV": 0.4308,
+        "maxV": 0.9958
+      },
+      "centroid3d": {
+        "x": 0.1,
+        "y": 2.995,
+        "z": -0.505
+      },
+      "vertCount": 1157
+    },
+    "GEO_hatch_turret_left01": {
+      "x": 237,
+      "y": 728,
+      "w": 289,
+      "h": 386,
+      "uv": {
+        "minU": 0.1156,
+        "maxU": 0.2565,
+        "minV": 0.3553,
+        "maxV": 0.5439
+      },
+      "centroid3d": {
+        "x": -0.003,
+        "y": 2.782,
+        "z": -2.794
+      },
+      "vertCount": 151
+    },
+    "GEO_cupolahatch": {
+      "x": 3,
+      "y": 760,
+      "w": 2030,
+      "h": 1210,
+      "uv": {
+        "minU": 0.0013,
+        "maxU": 0.9927,
+        "minV": 0.3711,
+        "maxV": 0.962
+      },
+      "centroid3d": {
+        "x": -0.496,
+        "y": 3.55,
+        "z": -0.384
+      },
+      "vertCount": 339
+    },
+    "GEO_cupolahatch_right": {
+      "x": 6,
+      "y": 933,
+      "w": 613,
+      "h": 987,
+      "uv": {
+        "minU": 0.0027,
+        "maxU": 0.3019,
+        "minV": 0.4555,
+        "maxV": 0.9372
+      },
+      "centroid3d": {
+        "x": -0.506,
+        "y": 3.58,
+        "z": -0.586
+      },
+      "vertCount": 176
+    },
+    "GEO_hull_mg_01_barrel": {
+      "x": 1987,
+      "y": 1556,
+      "w": 37,
+      "h": 119,
+      "uv": {
+        "minU": 0.9702,
+        "maxU": 0.9884,
+        "minV": 0.7597,
+        "maxV": 0.8177
+      },
+      "centroid3d": {
+        "x": 0.749,
+        "y": 1.898,
+        "z": 3.659
+      },
+      "vertCount": 56
+    },
+    "GEO_wheel_left_front_A": {
+      "x": 754,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.368,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": -1.786,
+        "y": 0.569,
+        "z": 2.763
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_left_front_C": {
+      "x": 753,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.3678,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": -1.781,
+        "y": 0.569,
+        "z": 1.356
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_left_front_B": {
+      "x": 753,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.3678,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": -1.629,
+        "y": 0.569,
+        "z": 2.059
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_left_rear_A": {
+      "x": 754,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.368,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": -1.786,
+        "y": 0.569,
+        "z": -1.502
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_left_rear_B": {
+      "x": 754,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.368,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": -1.637,
+        "y": 0.569,
+        "z": -2.207
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_left_rear_C": {
+      "x": 753,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.3678,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": -1.786,
+        "y": 0.565,
+        "z": -2.934
+      },
+      "vertCount": 93
+    },
+    "GEO_wheel_right_front_A": {
+      "x": 754,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.368,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": 1.786,
+        "y": 0.569,
+        "z": 2.763
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_right_front_B": {
+      "x": 753,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.3678,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": 1.629,
+        "y": 0.569,
+        "z": 2.059
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_right_front_C": {
+      "x": 753,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.3678,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": 1.781,
+        "y": 0.569,
+        "z": 1.356
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_right_rear_B": {
+      "x": 754,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.368,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": 1.637,
+        "y": 0.569,
+        "z": -2.207
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_right_rear_A": {
+      "x": 754,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.368,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": 1.786,
+        "y": 0.569,
+        "z": -1.502
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_right_rear_C": {
+      "x": 753,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.3678,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": 1.786,
+        "y": 0.565,
+        "z": -2.934
+      },
+      "vertCount": 93
+    },
+    "GEO_wheel_left_mid01_A": {
+      "x": 754,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.368,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": -1.629,
+        "y": 0.569,
+        "z": 0.652
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_left_mid01_B": {
+      "x": 754,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.368,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": -1.786,
+        "y": 0.569,
+        "z": -0.067
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_left_mid01_C": {
+      "x": 753,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.3678,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": -1.637,
+        "y": 0.569,
+        "z": -0.783
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_right_mid01_A": {
+      "x": 754,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.368,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": 1.629,
+        "y": 0.565,
+        "z": 0.656
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_right_mid01_B": {
+      "x": 754,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.368,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": 1.786,
+        "y": 0.569,
+        "z": -0.067
+      },
+      "vertCount": 94
+    },
+    "GEO_wheel_right_mid01_C": {
+      "x": 753,
+      "y": 208,
+      "w": 401,
+      "h": 500,
+      "uv": {
+        "minU": 0.3678,
+        "maxU": 0.5635,
+        "minV": 0.1013,
+        "maxV": 0.3455
+      },
+      "centroid3d": {
+        "x": 1.637,
+        "y": 0.569,
+        "z": -0.783
+      },
+      "vertCount": 94
+    }
+  },
+  "ssTotenkopfRefZone": {
+    "x": 400,
+    "y": 1400,
+    "w": 600,
+    "h": 300,
+    "confirmedSide": "HULL RIGHT SIDE (X>0 in Essence engine coords)",
+    "note": "All 25 vertices found in this UV zone had X in [1.64, 1.88] — unambiguously the right hull side.",
+    "decalsInRenderScript": [
+      {
+        "type": "shield",
+        "x": 420,
+        "y": 1462,
+        "size": 70
+      },
+      {
+        "type": "cross (balkenkreuz)",
+        "x": 536,
+        "y": 1462,
+        "size": 110
+      },
+      {
+        "type": "number",
+        "x": 732,
+        "y": 1475,
+        "size": 110,
+        "text": "171"
+      },
+      {
+        "type": "name",
+        "x": 700,
+        "y": 1340,
+        "size": 56,
+        "text": "Amalia"
+      },
+      {
+        "type": "kills",
+        "x": 903,
+        "y": 1610,
+        "size": 200,
+        "count": 24
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+# RFC 9116 security disclosure metadata for the CoH2 Skin Editor.
+#
+# Update the Expires field at least once a year — RFC 9116 mandates
+# rotation, and some scanners flag stale security.txt files as expired.
+# The repository's OpenSSF Scorecard run also looks for this file.
+
+Contact: https://github.com/ASAP-australia/coh2-skin-editor/security/advisories/new
+Expires: 2027-05-20T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://asap-australia.github.io/coh2-skin-editor/.well-known/security.txt
+Policy: https://github.com/ASAP-australia/coh2-skin-editor/blob/main/SECURITY.md

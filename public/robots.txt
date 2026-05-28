@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://asap-australia.github.io/coh2-skin-editor/sitemap.xml
