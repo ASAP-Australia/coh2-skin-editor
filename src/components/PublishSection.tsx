@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { AnimatedSwap } from '@/components/ui/animated-swap'
 import { isElectron, makeTmpPublishDir, writeFile } from '@/lib/native-fs'
 import type {
   PublishWorkshopInput,
@@ -72,11 +73,14 @@ function isRealWorkshopId(id: string | undefined): id is string {
 // Visibility options
 // ---------------------------------------------------------------------------
 
+// Left-to-right order: Unlisted (default, hidden from search) → Private →
+// Friends only → Public (increasing public reach).  Unlisted sits on the far
+// left so it is both the default and visually the "least public" choice.
 const VISIBILITY_OPTIONS: { value: 0 | 1 | 2 | 3; label: string }[] = [
-  { value: 0, label: 'Public' },
-  { value: 1, label: 'Friends only' },
-  { value: 2, label: 'Private' },
   { value: 3, label: 'Unlisted' },
+  { value: 2, label: 'Private' },
+  { value: 1, label: 'Friends only' },
+  { value: 0, label: 'Public' },
 ]
 
 const VISIBILITY_DESCRIPTIONS: Record<0 | 1 | 2 | 3, string> = {
@@ -264,7 +268,9 @@ export function PublishSection({
 }: PublishSectionProps) {
   const isUpdate = isRealWorkshopId(target?.workshopId)
 
-  const [visibility, setVisibility] = useState<0 | 1 | 2 | 3>(0)
+  // selectedIndex = position in VISIBILITY_OPTIONS array (0 = Unlisted, 3 = Public)
+  const [selectedIndex, setSelectedIndex] = useState<number>(0)
+  const visibility = VISIBILITY_OPTIONS[selectedIndex]!.value
   const [changeNote, setChangeNote] = useState('')
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
 
@@ -277,8 +283,10 @@ export function PublishSection({
     if (target === null) {
       setPhase({ kind: 'idle' })
       setChangeNote('')
+      setSelectedIndex(0)
     } else {
       setPhase({ kind: 'idle' })
+      setSelectedIndex(0)
     }
   }, [target])
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -296,7 +304,7 @@ export function PublishSection({
     }
   }, [target])
 
-  const handlePublish = useCallback(async () => {
+  const handlePublish = useCallback(async (clickedVisibility: 0 | 1 | 2 | 3, clickedIndex: number) => {
     if (!target) return
 
     if (!isElectron()) {
@@ -305,6 +313,8 @@ export function PublishSection({
       return
     }
 
+    // Slide the indicator to the clicked option, then lock it there during upload
+    setSelectedIndex(clickedIndex)
     setPhase({ kind: 'uploading' })
     onUploadStart?.()
 
@@ -349,7 +359,7 @@ export function PublishSection({
         title: target.packName,
         description: target.description,
         tags: tagsByType[target.type],
-        visibility,
+        visibility: clickedVisibility,
         changeNote: changeNote.trim() || undefined,
       }
 
@@ -374,7 +384,6 @@ export function PublishSection({
     }
   }, [
     target,
-    visibility,
     changeNote,
     buildPreviewPng,
     isUpdate,
@@ -448,47 +457,88 @@ export function PublishSection({
         </div>
       )}
 
-      {/* Visibility selector */}
-      <FieldGroup label="Visibility">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {VISIBILITY_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                type="button"
-                disabled={busy}
-                onClick={() => setVisibility(opt.value)}
-                style={{
-                  flex: 1,
-                  padding: '6px 4px',
-                  borderRadius: 8,
-                  fontSize: 11,
-                  fontWeight: 500,
-                  border: '1px solid',
-                  cursor: busy ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.12s',
-                  borderColor:
-                    visibility === opt.value
-                      ? 'var(--color-accent, #d97706)'
-                      : 'rgba(255,255,255,0.12)',
-                  background:
-                    visibility === opt.value
-                      ? 'rgba(217, 119, 6, 0.22)'
-                      : 'rgba(255,255,255,0.04)',
-                  color:
-                    visibility === opt.value
-                      ? '#fbbf24'
-                      : 'rgba(247,247,250,0.65)',
-                }}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          <p style={{ fontSize: 12, color: 'rgba(247,247,250,0.55)', margin: 0, marginTop: 2 }}>
+      {/* Glass segmented visibility selector — single click = publish at that visibility */}
+      <FieldGroup label={busy ? (isUpdate ? 'Updating at visibility…' : 'Publishing at visibility…') : (isUpdate ? 'Update at visibility' : 'Publish at visibility')}>
+        {/* Outer glass track */}
+        <div
+          style={{
+            position: 'relative',
+            display: 'flex',
+            width: '100%',
+            borderRadius: 14,
+            background: 'rgba(255,255,255,0.04)',
+            padding: 4,
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255,255,255,0.09)',
+            boxSizing: 'border-box',
+            // CSS custom property drives the sliding pill position
+            ['--selected-index' as string]: String(selectedIndex),
+          }}
+        >
+          {/* Sliding highlight pill — absolutely positioned, slides via CSS left */}
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              top: 4,
+              bottom: 4,
+              // width is (trackWidth - 2*padding) / numOptions; padding=4px each side
+              width: 'calc((100% - 8px) / 4)',
+              left: 'calc(4px + ((100% - 8px) / 4) * var(--selected-index, 0))',
+              borderRadius: 10,
+              background: 'rgba(255,255,255,0.11)',
+              boxShadow: '0 1px 0 rgba(255,255,255,0.15) inset, 0 0 0 1px rgba(255,255,255,0.07)',
+              transition: 'left 300ms cubic-bezier(.32, .72, 0, 1)',
+              pointerEvents: 'none',
+            }}
+          />
+          {/* Option buttons rendered above the pill */}
+          {VISIBILITY_OPTIONS.map((opt, i) => (
+            <button
+              key={opt.value}
+              type="button"
+              disabled={busy}
+              onClick={() => handlePublish(opt.value, i)}
+              style={{
+                position: 'relative',
+                zIndex: 1,
+                flex: 1,
+                padding: '6px 2px',
+                borderRadius: 10,
+                fontSize: 11,
+                fontWeight: selectedIndex === i ? 600 : 500,
+                border: 'none',
+                background: 'transparent',
+                cursor: busy ? 'progress' : 'pointer',
+                color: selectedIndex === i
+                  ? 'rgba(247,247,250,0.95)'
+                  : 'rgba(247,247,250,0.52)',
+                transition: 'color 200ms ease',
+                letterSpacing: '-0.01em',
+                whiteSpace: 'nowrap' as const,
+                overflow: 'hidden' as const,
+                textOverflow: 'ellipsis' as const,
+              }}
+            >
+              {busy && selectedIndex === i ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <SmallSpinner />
+                  {opt.label}
+                </span>
+              ) : (
+                opt.label
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Visibility description — fades between options with AnimatedSwap */}
+        <AnimatedSwap swapKey={visibility} block>
+          <p style={{ fontSize: 12, color: 'rgba(247,247,250,0.50)', margin: 0, marginTop: 7, lineHeight: 1.45 }}>
             {VISIBILITY_DESCRIPTIONS[visibility]}
           </p>
-        </div>
+        </AnimatedSwap>
       </FieldGroup>
 
       {isUpdate && (
@@ -503,30 +553,6 @@ export function PublishSection({
           />
         </FieldGroup>
       )}
-
-      {/* Submit button */}
-      <Button
-        onClick={handlePublish}
-        disabled={busy}
-        style={{
-          background: busy ? 'rgba(217,119,6,0.4)' : 'var(--color-accent, #d97706)',
-          color: busy ? 'rgba(0,0,0,0.5)' : '#000',
-          fontWeight: 700,
-          borderRadius: 10,
-          width: '100%',
-        }}
-      >
-        {busy ? (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <SmallSpinner />
-            Uploading…
-          </span>
-        ) : isUpdate ? (
-          'Update Workshop Item'
-        ) : (
-          'Publish to Workshop'
-        )}
-      </Button>
     </div>
   )
 }
