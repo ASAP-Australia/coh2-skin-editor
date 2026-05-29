@@ -152,6 +152,15 @@ private:
         std::string safeName = sanitize_cloud_name_u(ctx_->title);
         cloud_sga_path_ = "mods/workshop/" + safeName + ".sga";
 
+        // Delete any prior Steam Cloud copy before writing so that Steam
+        // treats this as a fresh write rather than a no-op when bytes are
+        // identical. Without this, FileWrite is silently skipped and the
+        // subsequent FileShare returns EResult::FileNotFound (9).
+        bool delOk = rs_FileDelete(rs, cloud_sga_path_.c_str());
+        fprintf(stderr, "[coh2-workshop:update] FileDelete('%s'): %s\n",
+                cloud_sga_path_.c_str(), delOk ? "OK" : "not present (OK)");
+        fflush(stderr);
+
         fprintf(stderr, "[coh2-workshop:update] FileWrite('%s', %zu bytes)\n",
                 cloud_sga_path_.c_str(), sgaData.size());
         fflush(stderr);

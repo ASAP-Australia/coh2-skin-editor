@@ -12,6 +12,7 @@ typedef bool                 (*fp_IsCompleted)(ISteamUtils*, SteamAPICall_t, boo
 typedef bool                 (*fp_GetResult)(ISteamUtils*, SteamAPICall_t, void*, int, int, bool*);
 
 typedef bool            (*fp_FileWrite)(ISteamRemoteStorage*, const char*, const void*, int32_t);
+typedef bool            (*fp_FileDelete)(ISteamRemoteStorage*, const char*);
 typedef SteamAPICall_t  (*fp_FileShare)(ISteamRemoteStorage*, const char*);
 typedef SteamAPICall_t  (*fp_Publish)(ISteamRemoteStorage*, const char*, const char*,
                                        uint32_t, const char*, const char*,
@@ -34,6 +35,7 @@ static fp_RunCallbacks    g_run_cbs      = nullptr;
 static fp_IsCompleted     g_is_completed = nullptr;
 static fp_GetResult       g_get_result   = nullptr;
 static fp_FileWrite       g_file_write   = nullptr;
+static fp_FileDelete      g_file_delete  = nullptr;
 static fp_FileShare       g_file_share   = nullptr;
 static fp_Publish         g_publish      = nullptr;
 static fp_CreateUpdate    g_create_upd   = nullptr;
@@ -82,6 +84,7 @@ bool steam_bridge_init() {
     g_is_completed = (fp_IsCompleted) resolve(lib, "SteamAPI_ISteamUtils_IsAPICallCompleted", true);
     g_get_result   = (fp_GetResult)   resolve(lib, "SteamAPI_ISteamUtils_GetAPICallResult",   true);
     g_file_write   = (fp_FileWrite)   resolve(lib, "SteamAPI_ISteamRemoteStorage_FileWrite",  true);
+    g_file_delete  = (fp_FileDelete)  resolve(lib, "SteamAPI_ISteamRemoteStorage_FileDelete", false);
     g_file_share   = (fp_FileShare)   resolve(lib, "SteamAPI_ISteamRemoteStorage_FileShare",  true);
     g_publish      = (fp_Publish)     resolve(lib, "SteamAPI_ISteamRemoteStorage_PublishWorkshopFile", true);
     g_create_upd   = (fp_CreateUpdate)resolve(lib, "SteamAPI_ISteamRemoteStorage_CreatePublishedFileUpdateRequest", true);
@@ -122,6 +125,10 @@ void steam_run_callbacks() {
 
 bool rs_FileWrite(ISteamRemoteStorage* rs, const char* file, const void* data, int32_t size) {
     return g_file_write ? g_file_write(rs, file, data, size) : false;
+}
+
+bool rs_FileDelete(ISteamRemoteStorage* rs, const char* file) {
+    return g_file_delete ? g_file_delete(rs, file) : false;
 }
 
 SteamAPICall_t rs_FileShare(ISteamRemoteStorage* rs, const char* file) {

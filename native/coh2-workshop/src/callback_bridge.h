@@ -79,6 +79,8 @@ void steam_run_callbacks();
 bool           rs_FileWrite(ISteamRemoteStorage* rs, const char* pchFile,
                             const void* pvData, int32_t cubData);
 
+bool           rs_FileDelete(ISteamRemoteStorage* rs, const char* pchFile);
+
 SteamAPICall_t rs_FileShare(ISteamRemoteStorage* rs, const char* pchFile);
 
 SteamAPICall_t rs_PublishWorkshopFile(

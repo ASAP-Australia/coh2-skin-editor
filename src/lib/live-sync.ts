@@ -514,8 +514,8 @@ class LiveSyncManager {
       // valid (the in-game thumbnail is just blank).
       const iconRgba = await renderDecalIcon(decalProject, DECAL_ICON_SIZE)
 
-      // Compose the full 128×128 decal texture for the per-faction RGTs.
-      // The engine paints this onto each vehicle's badge UV island at 128×128;
+      // Compose the full 280×280 decal texture for the per-faction RGTs.
+      // The engine paints this onto each vehicle's badge UV island at 280×280;
       // passing the 64×64 icon source would produce blank vehicle markings.
       const decalRgba = await renderDecalTexture(decalProject, DECAL_TEXTURE_SIZE)
 
@@ -810,7 +810,7 @@ async function renderFaceplateAtlas(
 
 /**
  * Render the decal-pack inventory thumbnail by stacking every visible decal's
- * rasterised 128×128 canvas, downsampled into a 64×64 RGBA buffer. The
+ * rasterised 280×280 canvas, downsampled into a 64×64 RGBA buffer. The
  * downsample matches the inventory-icon DDS size baked into the GFX template
  * (`DECAL_ICON_SIZE`).
  *
@@ -881,8 +881,8 @@ async function renderDecalIcon(
 /**
  * Render the visible decal stack into a `size`×`size` RGBA buffer for baking
  * into the per-faction vehicle RGT. Unlike `renderDecalIcon`, which downscales
- * the 128×128 decal canvas to a 64×64 thumbnail, this helper renders at the
- * full DECAL_TEXTURE_SIZE (128×128) so the engine sees a full-resolution badge
+ * the 280×280 decal canvas to a 64×64 thumbnail, this helper renders at the
+ * full DECAL_TEXTURE_SIZE (280×280) so the engine sees a full-resolution badge
  * on the vehicle's UV island.
  *
  * In jsdom / no-canvas environments the rasteriser fails silently and we
@@ -910,7 +910,7 @@ async function renderDecalTexture(
     const visible = project.decals.filter(d => d.visible)
     let prevCanvas: OffscreenCanvas | HTMLCanvasElement | null = null
 
-    // Composite each decal at the full 128×128 pack size, then blit 1:1
+    // Composite each decal at the full 280×280 pack size, then blit 1:1
     // into the output canvas (no downscale — this IS the full-res texture).
     for (const decal of visible) {
       const src = project.sourceImages[decal.sourceImageId]

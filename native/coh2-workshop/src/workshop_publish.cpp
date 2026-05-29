@@ -160,6 +160,15 @@ private:
         cloud_sga_path_     = "mods/workshop/" + safeName + ".sga";
         cloud_preview_path_ = "mods/workshop/" + safeName + "_preview.png";
 
+        // Delete any prior Steam Cloud copy before writing so that Steam
+        // treats this as a fresh write rather than a no-op when bytes are
+        // identical. Without this, FileWrite is silently skipped and the
+        // subsequent FileShare returns EResult::FileNotFound (9).
+        bool delOk = rs_FileDelete(rs, cloud_sga_path_.c_str());
+        fprintf(stderr, "[coh2-workshop:publish] FileDelete('%s'): %s\n",
+                cloud_sga_path_.c_str(), delOk ? "OK" : "not present (OK)");
+        fflush(stderr);
+
         fprintf(stderr, "[coh2-workshop:publish] FileWrite('%s', %zu bytes)\n",
                 cloud_sga_path_.c_str(), sgaData.size());
         fflush(stderr);
@@ -173,10 +182,26 @@ private:
         // Write preview to Steam Cloud (PublishWorkshopFile uses a cloud path for preview)
         std::vector<char> previewData;
         if (read_file(ctx_->previewPath, previewData, readErr)) {
+            // Delete prior preview copy for the same reason as the SGA above.
+            bool prevDelOk = rs_FileDelete(rs, cloud_preview_path_.c_str());
+            fprintf(stderr, "[coh2-workshop:publish] FileDelete('%s'): %s\n",
+                    cloud_preview_path_.c_str(), prevDelOk ? "OK" : "not present (OK)");
+            fflush(stderr);
+
             bool pok = rs_FileWrite(rs, cloud_preview_path_.c_str(),
                                     previewData.data(), (int32_t)previewData.size());
-            fprintf(stderr, "[coh2-workshop:publish] Preview FileWrite: %s (%zu bytes)\n",
-                    pok ? "OK" : "FAILED", previewData.size());
+            fprintf(stderr, "[coh2-workshop:publish] Preview FileWrite('%s'): %s (%zu bytes)\n",
+                    cloud_preview_path_.c_str(), pok ? "OK" : "FAILED", previewData.size());
+            if (!pok) {
+                fprintf(stderr, "[coh2-workshop:publish] WARNING: preview FileWrite failed for '%s' — "
+                        "Workshop item will publish without a thumbnail\n",
+                        cloud_preview_path_.c_str());
+            }
+            fflush(stderr);
+        } else {
+            fprintf(stderr, "[coh2-workshop:publish] WARNING: could not read preview file '%s' — "
+                    "Workshop item will publish without a thumbnail\n",
+                    ctx_->previewPath.c_str());
             fflush(stderr);
         }
 

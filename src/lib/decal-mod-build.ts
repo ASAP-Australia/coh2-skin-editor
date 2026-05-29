@@ -59,8 +59,12 @@ export const DECAL_MAIN_SIZE = 128
  *  this resolution onto each vehicle's badge UV island — supplying a 64×64
  *  BC3 here produces effectively-blank vehicle markings even though the
  *  inventory icon looks correct. Kept local (not imported from
- *  decal-pack-project.ts) to avoid circular module dependencies. */
-export const DECAL_TEXTURE_SIZE = 128
+ *  decal-pack-project.ts) to avoid circular module dependencies.
+ *
+ *  280×280 matches the resolution used by stock CoH2 Workshop decal packs
+ *  (Welsh Dragon, Stalin, German Empire). 280 is divisible by 4 — the DXT5
+ *  block-compression requirement — so BC3 encoding works without padding. */
+export const DECAL_TEXTURE_SIZE = 280
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -98,12 +102,15 @@ export interface BuildDecalModInput {
    */
   mainRgba?: Uint8ClampedArray | Uint8Array
   /**
-   * 128×128 RGBA composite of all visible decals — used for the
+   * 280×280 RGBA composite of all visible decals — used for the
    * per-faction `default_dif.rgt` (the texture the engine actually
    * paints onto vehicles). When omitted, falls back to `iconRgba`
    * upscaled with nearest-neighbour — but every caller in production
    * should provide this to avoid baking a low-resolution source into the
    * vehicle badge UV island.
+   *
+   * 280×280 matches stock CoH2 Workshop decal packs (Welsh Dragon, Stalin,
+   * German Empire). 280 is divisible by 4, satisfying DXT5 block alignment.
    */
   decalRgba?: Uint8ClampedArray | Uint8Array
   /**
@@ -175,10 +182,10 @@ export async function buildDecalMod(input: BuildDecalModInput): Promise<BuildDec
     rgdFiles.push({ path: `attrib/vehicle_decal/${slug}_${faction}.rgd`, bytes: rgd })
 
     // RGT: generate fresh from the full-resolution decal composite. The engine
-    // paints this texture onto the vehicle's badge UV island at 128×128; using
+    // paints this texture onto the vehicle's badge UV island at 280×280; using
     // the 64×64 inventory-icon source produces effectively-blank vehicle markings
     // because the BC3 block-compression discards the upscale detail. We use
-    // `decalRgba` when provided (128×128 full-res composite from the caller) and
+    // `decalRgba` when provided (280×280 full-res composite from the caller) and
     // fall back to nearest-neighbour upscale from `iconRgba` for legacy callers.
     // The TSET internal name mirrors Relic Mod Tools' output format (engine
     // ignores it, resolves by SGA-relative path instead).
