@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { AnimatedSwap } from '@/components/ui/animated-swap'
+import { GlassSegmented } from '@/components/ui/glass-segmented'
 import { isElectron, makeTmpPublishDir, writeFile } from '@/lib/native-fs'
 import type {
   PublishWorkshopInput,
@@ -459,86 +460,20 @@ export function PublishSection({
 
       {/* Glass segmented visibility selector — single click = publish at that visibility */}
       <FieldGroup label={busy ? (isUpdate ? 'Updating at visibility…' : 'Publishing at visibility…') : (isUpdate ? 'Update at visibility' : 'Publish at visibility')}>
-        {/* Outer glass track */}
-        <div
-          style={{
-            position: 'relative',
-            display: 'flex',
-            width: '100%',
-            borderRadius: 14,
-            background: 'rgba(255,255,255,0.04)',
-            padding: 4,
-            backdropFilter: 'blur(16px)',
-            WebkitBackdropFilter: 'blur(16px)',
-            border: '1px solid rgba(255,255,255,0.09)',
-            boxSizing: 'border-box',
-            // CSS custom property drives the sliding pill position
-            ['--selected-index' as string]: String(selectedIndex),
-          }}
-        >
-          {/* Sliding highlight pill — absolutely positioned, slides via CSS left */}
-          <div
-            aria-hidden
-            style={{
-              position: 'absolute',
-              top: 4,
-              bottom: 4,
-              // width is (trackWidth - 2*padding) / numOptions; padding=4px each side
-              width: 'calc((100% - 8px) / 4)',
-              left: 'calc(4px + ((100% - 8px) / 4) * var(--selected-index, 0))',
-              borderRadius: 10,
-              background: 'rgba(255,255,255,0.11)',
-              boxShadow: '0 1px 0 rgba(255,255,255,0.15) inset, 0 0 0 1px rgba(255,255,255,0.07)',
-              transition: 'left 300ms cubic-bezier(.32, .72, 0, 1)',
-              pointerEvents: 'none',
-            }}
-          />
-          {/* Option buttons rendered above the pill */}
-          {VISIBILITY_OPTIONS.map((opt, i) => (
-            <button
-              key={opt.value}
-              type="button"
-              disabled={busy}
-              onClick={() => handlePublish(opt.value, i)}
-              style={{
-                position: 'relative',
-                zIndex: 1,
-                flex: 1,
-                padding: '6px 2px',
-                borderRadius: 10,
-                fontSize: 11,
-                fontWeight: selectedIndex === i ? 600 : 500,
-                border: 'none',
-                background: 'transparent',
-                cursor: busy ? 'progress' : 'pointer',
-                color: selectedIndex === i
-                  ? 'rgba(247,247,250,0.95)'
-                  : 'rgba(247,247,250,0.52)',
-                transition: 'color 200ms ease',
-                letterSpacing: '-0.01em',
-                whiteSpace: 'nowrap' as const,
-                overflow: 'hidden' as const,
-                textOverflow: 'ellipsis' as const,
-              }}
-            >
-              {busy && selectedIndex === i ? (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <SmallSpinner />
-                  {opt.label}
-                </span>
-              ) : (
-                opt.label
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Visibility description — fades between options with AnimatedSwap */}
-        <AnimatedSwap swapKey={visibility} block>
-          <p style={{ fontSize: 12, color: 'rgba(247,247,250,0.50)', margin: 0, marginTop: 7, lineHeight: 1.45 }}>
-            {VISIBILITY_DESCRIPTIONS[visibility]}
-          </p>
-        </AnimatedSwap>
+        <GlassSegmented
+          options={VISIBILITY_OPTIONS}
+          selectedIndex={selectedIndex}
+          disabled={busy}
+          onClick={(value, index) => handlePublish(value as 0 | 1 | 2 | 3, index)}
+          footer={
+            /* Visibility description — fades between options with AnimatedSwap */
+            <AnimatedSwap swapKey={visibility} block>
+              <p style={{ fontSize: 12, color: 'rgba(247,247,250,0.50)', margin: 0, marginTop: 7, lineHeight: 1.45 }}>
+                {VISIBILITY_DESCRIPTIONS[visibility]}
+              </p>
+            </AnimatedSwap>
+          }
+        />
       </FieldGroup>
 
       {isUpdate && (

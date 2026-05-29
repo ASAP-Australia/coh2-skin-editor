@@ -10,6 +10,8 @@ import { installSkinPack, loadSavedModsHandle, pickModsFolder } from '@/lib/coh2
 import { SgaArchive } from '@/lib/sga'
 import { parsePrompt, listPresets, type CamoPreset, generateCamo } from '@/lib/camo-generator'
 import { SKYBOX_ENVS } from '@/lib/skybox'
+import { PublishSection } from '@/components/PublishSection'
+import { makeSkinPublishTarget, type WorkshopPublishTarget } from '@/components/PublishToWorkshopDialog'
 
 type MenuId = 'view' | 'decals' | 'reference' | 'export' | 'parts' | 'camo' | 'scene'
 
@@ -624,6 +626,8 @@ function ExportSkinPackButton({ p }: { p: Props }) {
   const [progress, setProgress] = useState<ExportProgress | null>(null)
   const [built, setBuilt] = useState<{ bytes: Uint8Array; filename: string; modGuid: string; numericId: string; textureCount: number } | null>(null)
   const [keyPoolAvailable, setKeyPoolAvailable] = useState<boolean | null>(null)
+  // Workshop publish target — set after a successful build, cleared on rebuild
+  const [publishTarget, setPublishTarget] = useState<WorkshopPublishTarget | null>(null)
 
   // Check key pool availability once on mount
   useState(() => { hasKeyPool().then(setKeyPoolAvailable) })
@@ -633,13 +637,21 @@ function ExportSkinPackButton({ p }: { p: Props }) {
 
   const build = async () => {
     if (busy) return
-    setBusy(true); setProgress({ phase: 'init', message: 'Starting…' }); setBuilt(null)
+    setBusy(true); setProgress({ phase: 'init', message: 'Starting…' }); setBuilt(null); setPublishTarget(null)
     try {
       const useKeys = await hasKeyPool()
       const result = useKeys
         ? await patchExport(p.installRoot, p.project, ev => setProgress(ev))
         : await exportSkinPack(p.installRoot, p.project, ev => setProgress(ev))
       setBuilt(result)
+      // Build publish target so the Workshop section appears immediately
+      setPublishTarget(makeSkinPublishTarget(
+        p.project,
+        result.bytes,
+        result.filename,
+        p.overlayCanvas,
+        (workshopId) => p.setProject({ ...p.project, workshopId }),
+      ))
       p.toast(`Built ${result.textureCount} vehicle${result.textureCount === 1 ? '' : 's'} — install or download below`, 'success')
       setProgress(null)
     } catch (err: unknown) {
@@ -709,6 +721,35 @@ function ExportSkinPackButton({ p }: { p: Props }) {
             <span className="text-white">{built.filename}</span> ({(built.bytes.byteLength / 1024 / 1024).toFixed(1)} MB)
             {' · '}id <code className="text-[var(--color-text-2)]">{built.numericId}</code>
           </div>
+        </div>
+      )}
+
+      {/* Workshop publish — same sliding-glass UX as decal/faceplate packs */}
+      {built && !busy && (
+        <div
+          style={{
+            marginTop: 12,
+            borderTop: '1px solid rgba(255,255,255,0.07)',
+            paddingTop: 12,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 9,
+              textTransform: 'uppercase',
+              letterSpacing: '1.5px',
+              color: 'rgba(247,247,250,0.35)',
+              fontWeight: 600,
+              marginBottom: 8,
+            }}
+          >
+            Steam Workshop
+          </div>
+          <PublishSection
+            target={publishTarget}
+            isBuildingTarget={false}
+            onRequestBuild={build}
+          />
         </div>
       )}
 

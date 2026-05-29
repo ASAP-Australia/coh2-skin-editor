@@ -29,9 +29,9 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { GlassSegmented } from '@/components/ui/glass-segmented'
 import { isElectron, makeTmpPublishDir, writeFile } from '@/lib/native-fs'
 import type {
   PublishWorkshopInput,
@@ -91,11 +91,13 @@ function isRealWorkshopId(id: string | undefined): id is string {
 // Visibility options
 // ---------------------------------------------------------------------------
 
+// Left-to-right: Unlisted (default, hidden from search) → Private →
+// Friends only → Public (increasing public reach). Matches PublishSection order.
 const VISIBILITY_OPTIONS: { value: 0 | 1 | 2 | 3; label: string }[] = [
-  { value: 0, label: 'Public' },
-  { value: 1, label: 'Friends only' },
-  { value: 2, label: 'Private' },
   { value: 3, label: 'Unlisted' },
+  { value: 2, label: 'Private' },
+  { value: 1, label: 'Friends only' },
+  { value: 0, label: 'Public' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -113,7 +115,8 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
 
   const [title, setTitle] = useState(target.packName)
   const [description, setDescription] = useState(target.description)
-  const [visibility, setVisibility] = useState<0 | 1 | 2 | 3>(0)
+  // selectedIndex = position in VISIBILITY_OPTIONS (0 = Unlisted, 3 = Public)
+  const [selectedIndex, setSelectedIndex] = useState<number>(0)
   const [changeNote, setChangeNote] = useState('')
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
 
@@ -153,12 +156,14 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
     e.target.value = ''
   }
 
-  const handlePublish = useCallback(async () => {
+  const handlePublish = useCallback(async (clickedVisibility: 0 | 1 | 2 | 3, clickedIndex: number) => {
     if (!isElectron()) {
       setPhase({ kind: 'error', message: 'Publishing is only available in the desktop app.' })
       return
     }
 
+    // Slide the indicator to the clicked option, then lock it during upload
+    setSelectedIndex(clickedIndex)
     setPhase({ kind: 'uploading' })
 
     try {
@@ -198,7 +203,7 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
         title: title.trim() || target.packName,
         description: description.trim(),
         tags: tagsByType[target.type],
-        visibility,
+        visibility: clickedVisibility,
         changeNote: changeNote.trim() || undefined,
       }
 
@@ -223,7 +228,6 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
     target,
     title,
     description,
-    visibility,
     changeNote,
     customPreviewDataUrl,
     generatePreviewPng,
@@ -233,6 +237,7 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
   const handleClose = () => {
     // Reset ephemeral state on close so re-opening feels fresh
     setPhase({ kind: 'idle' })
+    setSelectedIndex(0)
     setChangeNote('')
     setCustomPreviewDataUrl(null)
     onClose()
@@ -333,41 +338,13 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
                   />
                 </FieldGroup>
 
-                <FieldGroup label="Visibility">
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {VISIBILITY_OPTIONS.map(opt => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        disabled={busy}
-                        onClick={() => setVisibility(opt.value)}
-                        style={{
-                          flex: 1,
-                          padding: '6px 4px',
-                          borderRadius: 8,
-                          fontSize: 11,
-                          fontWeight: 500,
-                          border: '1px solid',
-                          cursor: busy ? 'not-allowed' : 'pointer',
-                          transition: 'all 0.12s',
-                          borderColor:
-                            visibility === opt.value
-                              ? 'var(--color-accent, #d97706)'
-                              : 'rgba(255,255,255,0.12)',
-                          background:
-                            visibility === opt.value
-                              ? 'rgba(217, 119, 6, 0.22)'
-                              : 'rgba(255,255,255,0.04)',
-                          color:
-                            visibility === opt.value
-                              ? '#fbbf24'
-                              : 'rgba(247,247,250,0.65)',
-                        }}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
+                <FieldGroup label={busy ? (isUpdate ? 'Updating at visibility…' : 'Publishing at visibility…') : (isUpdate ? 'Update at visibility' : 'Publish at visibility')}>
+                  <GlassSegmented
+                    options={VISIBILITY_OPTIONS}
+                    selectedIndex={selectedIndex}
+                    disabled={busy}
+                    onClick={(value, index) => handlePublish(value as 0 | 1 | 2 | 3, index)}
+                  />
                 </FieldGroup>
 
                 {isUpdate && (
@@ -459,40 +436,17 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
           </div>
         )}
 
-        {/* Footer (only shown when not in success state) */}
-        {!success && (
-          <DialogFooter className="gap-2">
+        {/* Cancel link — only shown in form state (not in success) */}
+        {!success && !busy && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
             <Button
               variant="ghost"
               onClick={handleClose}
-              disabled={busy}
-              style={{ color: 'rgba(247,247,250,0.55)' }}
+              style={{ color: 'rgba(247,247,250,0.45)', fontSize: 13 }}
             >
               Cancel
             </Button>
-            <Button
-              onClick={handlePublish}
-              disabled={busy}
-              style={{
-                background: busy ? 'rgba(217,119,6,0.4)' : 'var(--color-accent, #d97706)',
-                color: busy ? 'rgba(0,0,0,0.5)' : '#000',
-                fontWeight: 700,
-                borderRadius: 10,
-                minWidth: 130,
-              }}
-            >
-              {busy ? (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <SmallSpinner />
-                  Uploading…
-                </span>
-              ) : isUpdate ? (
-                'Update Workshop Item'
-              ) : (
-                'Publish to Workshop'
-              )}
-            </Button>
-          </DialogFooter>
+          </div>
         )}
       </DialogContent>
     </Dialog>
@@ -639,29 +593,6 @@ const inputStyle: React.CSSProperties = {
   outline: 'none',
   fontFamily: 'inherit',
   boxSizing: 'border-box' as const,
-}
-
-function SmallSpinner() {
-  return (
-    <>
-      <style>{`@keyframes ptw-spin { to { transform: rotate(360deg); } }`}</style>
-      <span
-        aria-hidden
-        style={{
-          width: 14,
-          height: 14,
-          display: 'inline-block',
-          flex: 'none',
-          borderRadius: '50%',
-          background:
-            'conic-gradient(from 0deg, transparent 0%, rgba(0,0,0,0.3) 30%, rgba(0,0,0,0.85) 100%)',
-          WebkitMask: 'radial-gradient(circle, transparent 4px, #000 4.5px)',
-          mask: 'radial-gradient(circle, transparent 4px, #000 4.5px)',
-          animation: 'ptw-spin 0.8s linear infinite',
-        }}
-      />
-    </>
-  )
 }
 
 // ---------------------------------------------------------------------------
