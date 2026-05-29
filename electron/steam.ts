@@ -455,6 +455,11 @@ export async function publishWorkshopItem(
     result.agreementNeeded,
   )
 
+  // Auto-subscribe the publisher to their own item so Steam downloads it into
+  // local game data immediately. ISteamRemoteStorage::PublishWorkshopFile does
+  // not do this automatically. Failure is non-fatal and logged only.
+  await subscribeToWorkshopItem(result.publishedFileId)
+
   if (result.agreementNeeded) {
     const id = result.publishedFileId.toString()
     throw new Error(
@@ -572,6 +577,10 @@ export async function updateWorkshopItem(
     result.agreementNeeded,
   )
 
+  // Auto-subscribe (idempotent — already-subscribed users get a no-op).
+  // Ensures game data is kept up to date after each update.
+  await subscribeToWorkshopItem(result.publishedFileId)
+
   return { needsAgreement: result.agreementNeeded }
 }
 
@@ -625,6 +634,40 @@ export async function getMyWorkshopItems(): Promise<MyWorkshopItem[]> {
     page++
   }
   return out
+}
+
+/**
+ * Subscribe the current user to a Workshop item (idempotent — already-
+ * subscribed is a no-op on Steam's end).
+ *
+ * Never throws: subscribe failure is non-fatal and is only logged to
+ * workshop-error.log. The caller always receives the publish/update result
+ * regardless of subscribe outcome.
+ */
+async function subscribeToWorkshopItem(publishedFileId: bigint): Promise<void> {
+  const state = initSteam()
+  if (!state.ok) return // Steam not available — skip silently
+
+  try {
+    await state.client.workshop.subscribe(publishedFileId)
+    console.log('[workshop] auto-subscribe ok publishedFileId=%s', publishedFileId.toString())
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.warn('[workshop] auto-subscribe failed (non-fatal) publishedFileId=%s error=%s', publishedFileId.toString(), msg)
+
+    // Persist to the same error log used by the native addon loader.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require('path') as typeof import('path')
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('fs') as typeof import('fs')
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { app } = require('electron') as typeof import('electron')
+      const logPath = path.join(app.getPath('userData'), 'workshop-error.log')
+      const timestamp = new Date().toISOString()
+      fs.appendFileSync(logPath, `[${timestamp}] auto-subscribe failed for ${publishedFileId}: ${msg}\n\n`)
+    } catch { /* ignore log-write errors */ }
+  }
 }
 
 /**
