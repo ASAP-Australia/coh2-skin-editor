@@ -840,32 +840,33 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         ? texCtx.getImageData(0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE).data
         : new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
 
-      // Build a 1024×1024 preview canvas from the source image at natural
-      // resolution so the Workshop thumbnail is sharp. The 64×64 iconCanvas
-      // is kept for the pack icon and in-game DXT5 pipeline (unchanged).
-      const PREVIEW_SIZE = 1024
-      const previewCanvas = document.createElement('canvas')
-      previewCanvas.width = previewCanvas.height = PREVIEW_SIZE
-      const previewCtx = previewCanvas.getContext('2d')
-      if (visibleDecal && previewCtx) {
+      // Build a preview canvas from the source image at natural resolution so
+      // the Workshop thumbnail is sharp. Pass the raw rasteriseDecal output —
+      // generateWorkshopPreview (called by PublishSection) will bbox-crop and
+      // center-fit it, so we must NOT pre-pad here to avoid double-padding.
+      // The 64×64 iconCanvas is kept for the pack icon and in-game DXT5
+      // pipeline (unchanged).
+      let previewCanvas: HTMLCanvasElement | null = null
+      if (visibleDecal) {
         const src = project.sourceImages[visibleDecal.sourceImageId]
         if (src) {
           const img = new Image()
           img.src = src.dataUrl
           await new Promise<void>(r => { img.onload = () => r(); img.onerror = () => r() })
+          // rasteriseDecal renders the decal at natural resolution with in-game
+          // placement geometry — generateWorkshopPreview crops to the opaque
+          // bbox and then center-fits with ~10% padding.
           const rendered = rasteriseDecal(visibleDecal, img)
-          // Center-fit rendered decal with ~10% padding, no upscaling of tiny canvas
-          const PAD = PREVIEW_SIZE * 0.10
-          const maxW = PREVIEW_SIZE - PAD * 2
-          const maxH = PREVIEW_SIZE - PAD * 2
-          const scaleF = Math.min(maxW / rendered.width, maxH / rendered.height)
-          const dW = Math.round(rendered.width * scaleF)
-          const dH = Math.round(rendered.height * scaleF)
-          const dX = Math.round((PREVIEW_SIZE - dW) / 2)
-          const dY = Math.round((PREVIEW_SIZE - dH) / 2)
-          previewCtx.imageSmoothingEnabled = true
-          previewCtx.imageSmoothingQuality = 'high'
-          previewCtx.drawImage(rendered, dX, dY, dW, dH)
+          // Convert OffscreenCanvas → HTMLCanvasElement for compatibility with
+          // the WorkshopPublishTarget.previewCanvas field (HTMLCanvasElement).
+          const hostCanvas = document.createElement('canvas')
+          hostCanvas.width = rendered.width
+          hostCanvas.height = rendered.height
+          const hostCtx = hostCanvas.getContext('2d')
+          if (hostCtx) {
+            hostCtx.drawImage(rendered as CanvasImageSource, 0, 0)
+          }
+          previewCanvas = hostCanvas
         }
       }
 
