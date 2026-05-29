@@ -5,14 +5,17 @@
  * Steam renders Workshop item preview images at ~512×512 on the item page.
  * Sending a tiny source (e.g. the 64×64 decal icon) causes Steam to upscale
  * the image and the result is heavily blurred. This module renders the source
- * canvas into a 1024×1024 OffscreenCanvas with high-quality smoothing and
- * a dark gradient background so Steam's own display step is a clean 2x
- * downsample rather than a 16x upscale.
+ * canvas into a 1024×1024 OffscreenCanvas with high-quality smoothing so
+ * Steam's own display step is a clean 2x downsample rather than a 16x upscale.
  *
  * Step-down rendering: when the source dimension is very small (≤256 px),
  * we composite via an intermediate 512-step to improve smoothing quality
  * compared to a single 8–16x stretch (Chromium uses bilinear for
  * `imageSmoothingQuality = 'high'`; stepping down reduces artifacts).
+ *
+ * The output canvas has a fully transparent background — no gradient, no text.
+ * Only the decal/faceplate/skin-pack art is composited, centered with ~10 %
+ * padding.
  */
 
 const PREVIEW_SIZE = 1024
@@ -20,31 +23,19 @@ const PREVIEW_SIZE = 1024
 /**
  * Generate a 1024×1024 Workshop preview PNG from a source canvas.
  *
- * The source is center-fitted with ~10 % padding on a dark radial-gradient
- * background. Returns PNG bytes as a Uint8Array.
+ * The source is center-fitted with ~10 % padding on a transparent background.
+ * Returns PNG bytes as a Uint8Array.
  *
  * @param sourceCanvas - Any HTMLCanvasElement (any size, any aspect ratio).
- * @param packName     - Optional pack name rendered as a subtle watermark
- *                       when the source canvas is very small (≤64 px) so
- *                       the preview carries some text identity.
  */
 export async function generateWorkshopPreview(
   sourceCanvas: HTMLCanvasElement,
-  packName?: string,
 ): Promise<Uint8Array> {
   const preview = new OffscreenCanvas(PREVIEW_SIZE, PREVIEW_SIZE)
   const ctx = preview.getContext('2d')
   if (!ctx) throw new Error('Could not get 2d context for OffscreenCanvas')
 
-  // ── Background: dark radial gradient ──────────────────────────────────────
-  const grad = ctx.createRadialGradient(
-    PREVIEW_SIZE / 2, PREVIEW_SIZE / 2, 0,
-    PREVIEW_SIZE / 2, PREVIEW_SIZE / 2, PREVIEW_SIZE * 0.72,
-  )
-  grad.addColorStop(0, '#1a1c22')
-  grad.addColorStop(1, '#0a0b0e')
-  ctx.fillStyle = grad
-  ctx.fillRect(0, 0, PREVIEW_SIZE, PREVIEW_SIZE)
+  // Background is fully transparent — nothing to draw here.
 
   // ── Compute centered-fit destination rect with ~10 % padding ──────────────
   const PAD = PREVIEW_SIZE * 0.10           // 102.4 px
@@ -94,20 +85,6 @@ export async function generateWorkshopPreview(
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(drawSource, dstX, dstY, dstW, dstH)
-
-  // ── Optional: pack-name watermark for tiny-icon sources ───────────────────
-  if (packName && largerDim <= 64) {
-    const fontSize = Math.round(PREVIEW_SIZE * 0.028)   // ~29 px
-    ctx.font = `600 ${fontSize}px system-ui, -apple-system, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'bottom'
-    // Slight drop-shadow
-    ctx.shadowColor = 'rgba(0,0,0,0.8)'
-    ctx.shadowBlur = 8
-    ctx.fillStyle = 'rgba(247,247,250,0.55)'
-    ctx.fillText(packName, PREVIEW_SIZE / 2, PREVIEW_SIZE - PAD * 0.6, maxW)
-    ctx.shadowBlur = 0
-  }
 
   // ── Encode to PNG ─────────────────────────────────────────────────────────
   const blob = await preview.convertToBlob({ type: 'image/png' })

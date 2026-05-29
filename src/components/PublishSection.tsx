@@ -262,13 +262,13 @@ export function PublishSection({
   const pendingPublishRef = useRef<{ visibility: 0 | 1 | 2 | 3; index: number } | null>(null)
 
   // Generate a 1024×1024 high-quality preview PNG from the preview canvas.
-  // Uses OffscreenCanvas with step-down rendering and a dark gradient background
+  // Uses OffscreenCanvas with step-down rendering on a transparent background
   // so Steam doesn't have to upscale a tiny source (e.g. the 64×64 decal icon).
   const buildPreviewPng = useCallback(async (): Promise<Uint8Array | null> => {
     const src = target?.previewCanvas
     if (!src) return null
     try {
-      return await generateWorkshopPreview(src, target?.packName)
+      return await generateWorkshopPreview(src)
     } catch {
       return null
     }
