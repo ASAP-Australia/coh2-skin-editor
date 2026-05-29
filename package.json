@@ -1,7 +1,7 @@
 {
   "name": "coh2-skin-editor",
   "private": true,
-  "version": "1.0.13",
+  "version": "1.0.14",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {

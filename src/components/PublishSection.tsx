@@ -7,17 +7,21 @@
  * standalone PublishToWorkshopDialog (different chrome context).
  *
  * State machine:
- *   idle (no target)   → shows "Build & Publish" button calling onRequestBuild
- *   idle (has target)  → shows full form (title, desc, visibility, preview, change note)
+ *   idle (no target)   → shows glass selector disabled while building (or enabled to kick off build+publish)
+ *   idle (has target)  → shows full form (visibility, change note)
+ *   building           → SGA build in progress; selector disabled with spinner
  *   uploading          → inputs locked, spinner in submit button; calls onUploadStart
  *   success            → SuccessView; calls onUploadEnd
  *   error              → red banner above form; calls onUploadEnd
  *
  * The component owns form draft state and the phase state machine.
  * The parent owns the build step (isBuildingTarget / onRequestBuild).
+ * When target === null and the user clicks a visibility, the component calls
+ * onRequestBuild() and remembers the pending visibility. When target becomes
+ * non-null (parent completed the build), the component auto-triggers publish.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { AnimatedSwap } from '@/components/ui/animated-swap'
 import { GlassSegmented } from '@/components/ui/glass-segmented'
@@ -53,6 +57,7 @@ export interface PublishSectionProps {
 
 type Phase =
   | { kind: 'idle' }
+  | { kind: 'building'; pendingVisibility: 0 | 1 | 2 | 3; pendingIndex: number }
   | { kind: 'uploading' }
   | { kind: 'success'; workshopId: string; needsAgreement: boolean }
   | { kind: 'error'; message: string }
@@ -129,29 +134,6 @@ function FieldGroup({ label, children }: { label: string; children: React.ReactN
       </div>
       {children}
     </div>
-  )
-}
-
-function SmallSpinner() {
-  return (
-    <>
-      <style>{`@keyframes ps-spin { to { transform: rotate(360deg); } }`}</style>
-      <span
-        aria-hidden
-        style={{
-          width: 14,
-          height: 14,
-          display: 'inline-block',
-          flex: 'none',
-          borderRadius: '50%',
-          background:
-            'conic-gradient(from 0deg, transparent 0%, rgba(0,0,0,0.3) 30%, rgba(0,0,0,0.85) 100%)',
-          WebkitMask: 'radial-gradient(circle, transparent 4px, #000 4.5px)',
-          mask: 'radial-gradient(circle, transparent 4px, #000 4.5px)',
-          animation: 'ps-spin 0.8s linear infinite',
-        }}
-      />
-    </>
   )
 }
 
@@ -275,21 +257,56 @@ export function PublishSection({
   const [changeNote, setChangeNote] = useState('')
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
 
-  // Reset phase when target transitions from non-null back to null
-  // (popover was closed and re-opened → fresh start). setState in effect
-  // is intentional here: we sync form state to the incoming target value,
-  // bounded to one extra render per target change, not a loop.
+  // pendingPublishRef holds the visibility/index selected while target === null.
+  // When target transitions null→non-null (build completed), we fire the publish.
+  const pendingPublishRef = useRef<{ visibility: 0 | 1 | 2 | 3; index: number } | null>(null)
+
+  // Sync form state when target changes.
+  // • null → null: nothing new; keep any in-progress building phase.
+  // • null → non-null: build just completed — if we have a pending publish,
+  //   fire it immediately (the effect runs after render so target is stable).
+  // • non-null → null: popover closed/reopened; reset to idle.
+  // setState in effect is intentional: bounded to one extra render per target
+  // transition, not a loop.
   /* eslint-disable react-hooks/set-state-in-effect -- intentional reset-on-target-change */
   useEffect(() => {
     if (target === null) {
-      setPhase({ kind: 'idle' })
+      // If we're NOT mid-build, fully reset (popover closed without building).
+      // If we ARE mid-build (phase.kind === 'building'), preserve that phase so
+      // the selector stays disabled while isBuildingTarget is true.
+      setPhase(prev => prev.kind === 'building' ? prev : { kind: 'idle' })
       setChangeNote('')
-      setSelectedIndex(0)
+      if (!pendingPublishRef.current) setSelectedIndex(0)
     } else {
-      setPhase({ kind: 'idle' })
-      setSelectedIndex(0)
+      // target just became non-null (build completed).
+      const pending = pendingPublishRef.current
+      if (pending) {
+        // Fire the deferred publish with the pre-selected visibility.
+        pendingPublishRef.current = null
+        // handlePublish is stable across renders (useCallback with target dep).
+        // We schedule it in a microtask so React finishes committing first.
+        Promise.resolve().then(() => handlePublish(pending.visibility, pending.index))
+      } else {
+        setPhase({ kind: 'idle' })
+        setSelectedIndex(0)
+      }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- handlePublish intentionally omitted; called only on target null→non-null transition
   }, [target])
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Detect build failure: isBuildingTarget went false while target is still null.
+  // In that case the parent's handleRequestBuild caught an error and didn't set
+  // a publishTarget — reset our phase to error so the selector re-enables.
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional isBuildingTarget-change sync */
+  useEffect(() => {
+    if (!isBuildingTarget && target === null && pendingPublishRef.current) {
+      // Build finished without producing a target → treat as build error.
+      pendingPublishRef.current = null
+      setPhase({ kind: 'error', message: 'SGA build failed. Check the console for details and try again.' })
+      onUploadEnd?.()
+    }
+  }, [isBuildingTarget, target, onUploadEnd])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // Generate a 1024×1024 high-quality preview PNG from the preview canvas.
@@ -306,7 +323,16 @@ export function PublishSection({
   }, [target])
 
   const handlePublish = useCallback(async (clickedVisibility: 0 | 1 | 2 | 3, clickedIndex: number) => {
-    if (!target) return
+    // No SGA yet — kick off the build and remember which visibility to publish at.
+    // The useEffect watching `target` will auto-trigger us again once the build
+    // sets target to non-null.
+    if (!target) {
+      setSelectedIndex(clickedIndex)
+      setPhase({ kind: 'building', pendingVisibility: clickedVisibility, pendingIndex: clickedIndex })
+      pendingPublishRef.current = { visibility: clickedVisibility, index: clickedIndex }
+      onRequestBuild()
+      return
+    }
 
     if (!isElectron()) {
       setPhase({ kind: 'error', message: 'Publishing is only available in the desktop app.' })
@@ -388,42 +414,15 @@ export function PublishSection({
     changeNote,
     buildPreviewPng,
     isUpdate,
+    onRequestBuild,
     onUploadStart,
     onUploadEnd,
   ])
 
-  const busy = phase.kind === 'uploading'
+  // busy = uploading OR building (SGA build in progress before upload)
+  const building = phase.kind === 'building' || isBuildingTarget
+  const busy = phase.kind === 'uploading' || building
   const success = phase.kind === 'success'
-
-  // ── Idle: no target yet — show Build & Publish trigger ──────────────────
-  if (!target) {
-    return (
-      <div style={{ marginTop: 4 }}>
-        <Button
-          onClick={onRequestBuild}
-          disabled={isBuildingTarget}
-          style={{
-            width: '100%',
-            background: isBuildingTarget
-              ? 'rgba(217,119,6,0.4)'
-              : 'var(--color-accent, #d97706)',
-            color: isBuildingTarget ? 'rgba(0,0,0,0.5)' : '#000',
-            fontWeight: 700,
-            borderRadius: 10,
-          }}
-        >
-          {isBuildingTarget ? (
-            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <SmallSpinner />
-              Building…
-            </span>
-          ) : (
-            '↑ Build & Publish to Workshop'
-          )}
-        </Button>
-      </div>
-    )
-  }
 
   // ── Success state ────────────────────────────────────────────────────────
   if (success && phase.kind === 'success') {
@@ -458,8 +457,14 @@ export function PublishSection({
         </div>
       )}
 
-      {/* Glass segmented visibility selector — single click = publish at that visibility */}
-      <FieldGroup label={busy ? (isUpdate ? 'Updating at visibility…' : 'Publishing at visibility…') : (isUpdate ? 'Update at visibility' : 'Publish at visibility')}>
+      {/* Glass segmented visibility selector — single click = build (if needed) + publish at that visibility */}
+      <FieldGroup label={
+        building
+          ? 'Building…'
+          : phase.kind === 'uploading'
+            ? (isUpdate ? 'Updating at visibility…' : 'Publishing at visibility…')
+            : (isUpdate ? 'Update at visibility' : 'Publish at visibility')
+      }>
         <GlassSegmented
           options={VISIBILITY_OPTIONS}
           selectedIndex={selectedIndex}
