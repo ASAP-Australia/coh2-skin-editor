@@ -261,54 +261,6 @@ export function PublishSection({
   // When target transitions null→non-null (build completed), we fire the publish.
   const pendingPublishRef = useRef<{ visibility: 0 | 1 | 2 | 3; index: number } | null>(null)
 
-  // Sync form state when target changes.
-  // • null → null: nothing new; keep any in-progress building phase.
-  // • null → non-null: build just completed — if we have a pending publish,
-  //   fire it immediately (the effect runs after render so target is stable).
-  // • non-null → null: popover closed/reopened; reset to idle.
-  // setState in effect is intentional: bounded to one extra render per target
-  // transition, not a loop.
-  /* eslint-disable react-hooks/set-state-in-effect -- intentional reset-on-target-change */
-  useEffect(() => {
-    if (target === null) {
-      // If we're NOT mid-build, fully reset (popover closed without building).
-      // If we ARE mid-build (phase.kind === 'building'), preserve that phase so
-      // the selector stays disabled while isBuildingTarget is true.
-      setPhase(prev => prev.kind === 'building' ? prev : { kind: 'idle' })
-      setChangeNote('')
-      if (!pendingPublishRef.current) setSelectedIndex(0)
-    } else {
-      // target just became non-null (build completed).
-      const pending = pendingPublishRef.current
-      if (pending) {
-        // Fire the deferred publish with the pre-selected visibility.
-        pendingPublishRef.current = null
-        // handlePublish is stable across renders (useCallback with target dep).
-        // We schedule it in a microtask so React finishes committing first.
-        Promise.resolve().then(() => handlePublish(pending.visibility, pending.index))
-      } else {
-        setPhase({ kind: 'idle' })
-        setSelectedIndex(0)
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- handlePublish intentionally omitted; called only on target null→non-null transition
-  }, [target])
-  /* eslint-enable react-hooks/set-state-in-effect */
-
-  // Detect build failure: isBuildingTarget went false while target is still null.
-  // In that case the parent's handleRequestBuild caught an error and didn't set
-  // a publishTarget — reset our phase to error so the selector re-enables.
-  /* eslint-disable react-hooks/set-state-in-effect -- intentional isBuildingTarget-change sync */
-  useEffect(() => {
-    if (!isBuildingTarget && target === null && pendingPublishRef.current) {
-      // Build finished without producing a target → treat as build error.
-      pendingPublishRef.current = null
-      setPhase({ kind: 'error', message: 'SGA build failed. Check the console for details and try again.' })
-      onUploadEnd?.()
-    }
-  }, [isBuildingTarget, target, onUploadEnd])
-  /* eslint-enable react-hooks/set-state-in-effect */
-
   // Generate a 1024×1024 high-quality preview PNG from the preview canvas.
   // Uses OffscreenCanvas with step-down rendering and a dark gradient background
   // so Steam doesn't have to upscale a tiny source (e.g. the 64×64 decal icon).
@@ -322,6 +274,8 @@ export function PublishSection({
     }
   }, [target])
 
+  // handlePublish must be declared BEFORE the useEffects that reference it
+  // to satisfy React Compiler's temporal-dead-zone checks.
   const handlePublish = useCallback(async (clickedVisibility: 0 | 1 | 2 | 3, clickedIndex: number) => {
     // No SGA yet — kick off the build and remember which visibility to publish at.
     // The useEffect watching `target` will auto-trigger us again once the build
@@ -418,6 +372,52 @@ export function PublishSection({
     onUploadStart,
     onUploadEnd,
   ])
+
+  // Sync form state when target changes.
+  // • null → null: nothing new; keep any in-progress building phase.
+  // • null → non-null: build just completed — if we have a pending publish,
+  //   fire it immediately (the effect runs after render so target is stable).
+  // • non-null → null: popover closed/reopened; reset to idle.
+  // setState in effect is intentional: bounded to one extra render per target
+  // transition, not a loop.
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional reset-on-target-change */
+  useEffect(() => {
+    if (target === null) {
+      // If we're NOT mid-build, fully reset (popover closed without building).
+      // If we ARE mid-build (phase.kind === 'building'), preserve that phase so
+      // the selector stays disabled while isBuildingTarget is true.
+      setPhase(prev => prev.kind === 'building' ? prev : { kind: 'idle' })
+      setChangeNote('')
+      if (!pendingPublishRef.current) setSelectedIndex(0)
+    } else {
+      // target just became non-null (build completed).
+      const pending = pendingPublishRef.current
+      if (pending) {
+        // Fire the deferred publish with the pre-selected visibility.
+        pendingPublishRef.current = null
+        // handlePublish is stable across renders (useCallback with target dep).
+        // We schedule it in a microtask so React finishes committing first.
+        Promise.resolve().then(() => handlePublish(pending.visibility, pending.index))
+      } else {
+        setPhase({ kind: 'idle' })
+        setSelectedIndex(0)
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- handlePublish intentionally omitted; called only on target null→non-null transition
+  }, [target])
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Detect build failure: isBuildingTarget went false while target is still null.
+  // In that case the parent's handleRequestBuild caught an error and didn't set
+  // a publishTarget — reset our phase to error so the selector re-enables.
+  useEffect(() => {
+    if (!isBuildingTarget && target === null && pendingPublishRef.current) {
+      // Build finished without producing a target → treat as build error.
+      pendingPublishRef.current = null
+      setPhase({ kind: 'error', message: 'SGA build failed. Check the console for details and try again.' })
+      onUploadEnd?.()
+    }
+  }, [isBuildingTarget, target, onUploadEnd])
 
   // busy = uploading OR building (SGA build in progress before upload)
   const building = phase.kind === 'building' || isBuildingTarget
