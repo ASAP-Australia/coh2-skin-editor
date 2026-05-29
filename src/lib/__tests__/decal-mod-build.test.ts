@@ -223,16 +223,18 @@ async function extractSgaEntry(sgaBytes: Uint8Array, entryPath: string): Promise
   return entry.read()
 }
 
-describe('buildDecalMod — per-faction RGT is 128×128 (vehicle texture fix)', () => {
+describe('buildDecalMod — per-faction RGT is 1024×1024 DXT1 (vehicle texture fix)', () => {
   /**
    * Regression for the "George Droid" blank-vehicle-decal bug.
    *
    * Root cause: the RGT was built from the 64×64 `iconRgba` buffer.
-   * The engine paints `default_dif.rgt` onto the vehicle's badge UV island
-   * at 128×128; a 64×64 BC3 block-compresses into effectively-blank pixels.
+   * The engine paints `default_dif.rgt` onto the vehicle's badge UV island;
+   * a 64×64 BC3 block-compresses into effectively-blank pixels.
    *
-   * Fix: use `decalRgba` (128×128) when provided; fall back to
+   * Fix: use `decalRgba` (1024×1024) when provided; fall back to
    * nearest-neighbour upscale from `iconRgba` when omitted.
+   * RGTs are DXT1 (BC1) binary masks — the engine applies faction tint at
+   * runtime.
    */
 
   const stubProject = {
@@ -246,10 +248,10 @@ describe('buildDecalMod — per-faction RGT is 128×128 (vehicle texture fix)', 
     decals: [],
   } as unknown as Parameters<typeof buildDecalMod>[0]['project']
 
-  it('RGT width/height = 280 when decalRgba (280×280) is provided', async () => {
+  it('RGT width/height = 1024 and format = DXT1 when decalRgba (1024×1024) is provided', async () => {
     const iconRgba = new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
     const decalRgba = new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
-    // Fill with a non-zero colour so BC3 is non-trivially encoded
+    // Fill with a non-zero colour so BC1 is non-trivially encoded
     for (let i = 0; i < decalRgba.length; i += 4) {
       decalRgba[i] = 200
       decalRgba[i + 1] = 100
@@ -263,13 +265,13 @@ describe('buildDecalMod — per-faction RGT is 128×128 (vehicle texture fix)', 
     const rgtBytes = await extractSgaEntry(result.sga, `art/armies/aef/badges/${result.guid}/default_dif.rgt`)
     const decoded = decodeRgt(rgtBytes)
 
-    expect(decoded.width).toBe(280)
-    expect(decoded.height).toBe(280)
-    expect(decoded.fourCC).toBe('DXT5')
+    expect(decoded.width).toBe(1024)
+    expect(decoded.height).toBe(1024)
+    expect(decoded.fourCC).toBe('DXT1')
   })
 
-  it('RGT width/height = 280 even when decalRgba is omitted (fallback upscale path)', async () => {
-    // When no decalRgba is supplied, the builder must upscale iconRgba 64→280.
+  it('RGT width/height = 1024 even when decalRgba is omitted (fallback upscale path)', async () => {
+    // When no decalRgba is supplied, the builder must upscale iconRgba 64→1024.
     // Old behaviour was to bake 64×64 directly — that was the bug.
     const iconRgba = new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
 
@@ -278,29 +280,29 @@ describe('buildDecalMod — per-faction RGT is 128×128 (vehicle texture fix)', 
     const rgtBytes = await extractSgaEntry(result.sga, `art/armies/aef/badges/${result.guid}/default_dif.rgt`)
     const decoded = decodeRgt(rgtBytes)
 
-    expect(decoded.width).toBe(280)
-    expect(decoded.height).toBe(280)
+    expect(decoded.width).toBe(1024)
+    expect(decoded.height).toBe(1024)
   })
 
-  it('BC3 pixel byte count for a 280×280 RGT = 70×70 blocks × 16 bytes = 78400', async () => {
+  it('BC1 pixel byte count for a 1024×1024 RGT = 256×256 blocks × 8 bytes = 524288', async () => {
     const iconRgba = new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
     const decalRgba = new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
 
     const result = await buildDecalMod({ project: stubProject, iconRgba, decalRgba })
 
-    // All 5 factions must produce 280×280 RGTs
+    // All 5 factions must produce 1024×1024 DXT1 RGTs
     for (const faction of ['aef', 'british', 'german', 'soviet', 'west_german']) {
       const rgtBytes = await extractSgaEntry(
         result.sga,
         `art/armies/${faction}/badges/${result.guid}/default_dif.rgt`,
       )
       const decoded = decodeRgt(rgtBytes)
-      // 280/4 = 70 blocks per side → 70×70×16 = 78400 bytes
-      expect(decoded.pixels.length).toBe(78400)
+      // 1024/4 = 256 blocks per side → 256×256×8 = 524288 bytes (BC1 = 8 bytes/block)
+      expect(decoded.pixels.length).toBe(524288)
     }
   })
 
-  it('TFMT chunk inside the RGT records width=280 and height=280', async () => {
+  it('TFMT chunk inside the RGT records width=1024, height=1024, format=13 (DXT1)', async () => {
     const iconRgba = new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
     const decalRgba = new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
 
@@ -311,15 +313,17 @@ describe('buildDecalMod — per-faction RGT is 128×128 (vehicle texture fix)', 
       `art/armies/soviet/badges/${result.guid}/default_dif.rgt`,
     )
 
-    // Parse TFMT directly to verify the width/height fields the engine reads
+    // Parse TFMT directly to verify the width/height/format fields the engine reads
     const { root } = parseChunky(rgtBytes)
     const tfmt = findChunk(root, 'TFMT')
     expect(tfmt).not.toBeNull()
     const v = new DataView(rgtBytes.buffer, rgtBytes.byteOffset)
     const embeddedWidth = v.getUint32(tfmt!.payloadOffset, true)
     const embeddedHeight = v.getUint32(tfmt!.payloadOffset + 4, true)
-    expect(embeddedWidth).toBe(280)
-    expect(embeddedHeight).toBe(280)
+    const embeddedFormat = v.getUint32(tfmt!.payloadOffset + 16, true)
+    expect(embeddedWidth).toBe(1024)
+    expect(embeddedHeight).toBe(1024)
+    expect(embeddedFormat).toBe(13) // 13 = DXT1 (BC1)
   })
 
   it('inventory icon DDS remains 64×64 — decalRgba does not affect it', async () => {

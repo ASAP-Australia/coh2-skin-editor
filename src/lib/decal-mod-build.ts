@@ -48,23 +48,20 @@ import type { Coh2DecalPackProject } from '@/lib/decal-pack-project'
  *  so the GFX's sub-rect math binds correctly. */
 export const DECAL_ICON_SIZE = 64
 
-/** Pack texture dimensions for the main `<slug>.dds` file. The Wikinger
- *  reference ships a 128×128 main texture — same dimension as a single decal
- *  in our pipeline. We use the composed inventory icon for this slot too
- *  (the engine reads decal art from the per-faction RGTs, not from this
- *  file; this slot is the pack's project thumbnail). */
-export const DECAL_MAIN_SIZE = 128
+/** Pack texture dimensions for the main `<slug>.dds` file. Welsh Dragon ships
+ *  a 280×280 root preview DDS — we match that. The engine reads decal art from
+ *  the per-faction RGTs, not from this file; this slot is only the pack's
+ *  project thumbnail. Stays DXT5 (BC3). */
+export const DECAL_MAIN_SIZE = 280
 
-/** Canonical per-faction RGT texture size. The engine paints the badge at
- *  this resolution onto each vehicle's badge UV island — supplying a 64×64
- *  BC3 here produces effectively-blank vehicle markings even though the
- *  inventory icon looks correct. Kept local (not imported from
- *  decal-pack-project.ts) to avoid circular module dependencies.
- *
- *  280×280 matches the resolution used by stock CoH2 Workshop decal packs
- *  (Welsh Dragon, Stalin, German Empire). 280 is divisible by 4 — the DXT5
- *  block-compression requirement — so BC3 encoding works without padding. */
-export const DECAL_TEXTURE_SIZE = 280
+/** Canonical per-faction RGT texture size. Every working community decal pack
+ *  (Welsh Dragon, German Empire, Stalin, OCF Soviet) ships per-faction badge
+ *  RGTs at exactly 1024×1024. The engine paints this texture onto the vehicle's
+ *  badge UV island; smaller sizes produce effectively-blank markings. 1024 is
+ *  divisible by 4 — the DXT1 block-compression requirement. The RGTs use DXT1
+ *  (BC1) format because decal artwork is a pure white-on-black binary mask;
+ *  the renderer applies faction tint at runtime. */
+export const DECAL_TEXTURE_SIZE = 1024
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -102,15 +99,16 @@ export interface BuildDecalModInput {
    */
   mainRgba?: Uint8ClampedArray | Uint8Array
   /**
-   * 280×280 RGBA composite of all visible decals — used for the
+   * 1024×1024 RGBA composite of all visible decals — used for the
    * per-faction `default_dif.rgt` (the texture the engine actually
    * paints onto vehicles). When omitted, falls back to `iconRgba`
    * upscaled with nearest-neighbour — but every caller in production
    * should provide this to avoid baking a low-resolution source into the
    * vehicle badge UV island.
    *
-   * 280×280 matches stock CoH2 Workshop decal packs (Welsh Dragon, Stalin,
-   * German Empire). 280 is divisible by 4, satisfying DXT5 block alignment.
+   * 1024×1024 matches every working community decal pack (Welsh Dragon,
+   * German Empire, Stalin, OCF Soviet). The RGTs are encoded as DXT1 (BC1)
+   * binary masks — auto-thresholded to pure white-on-black before encoding.
    */
   decalRgba?: Uint8ClampedArray | Uint8Array
   /**
@@ -189,8 +187,15 @@ export async function buildDecalMod(input: BuildDecalModInput): Promise<BuildDec
     // fall back to nearest-neighbour upscale from `iconRgba` for legacy callers.
     // The TSET internal name mirrors Relic Mod Tools' output format (engine
     // ignores it, resolves by SGA-relative path instead).
-    const rgtSrc =
+    const rgtSrcRaw =
       input.decalRgba ?? upscaleNearest(iconRgba, DECAL_ICON_SIZE, DECAL_TEXTURE_SIZE)
+    // Auto-threshold to a binary white-on-black mask: pixels with luminance
+    // > 0.5 OR alpha > 0.5 become opaque white (255,255,255,255); all others
+    // become transparent black (0,0,0,0). Community decal packs (Welsh Dragon,
+    // German Empire, Stalin, OCF Soviet) use DXT1 binary masks — the renderer
+    // applies faction tint at runtime. Any grey or semi-transparent source art
+    // must be binarised before DXT1 encoding to avoid colour fringing.
+    const rgtSrc = binariseMask(rgtSrcRaw)
     const rgtCanvas = makeCanvasFromRgba(rgtSrc, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE)
     const rgtInternalName = `art\\armies\\${faction}\\badges\\${guid}\\default_dif`
     const rgt = canvasToRgt(rgtCanvas, rgtInternalName)
@@ -470,6 +475,29 @@ export function makeSlug(name: string): string {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 40)
+}
+
+/**
+ * Auto-threshold a raw RGBA buffer to a pure binary white-on-black mask.
+ * For each pixel: if luminance (0..1) > 0.5 OR alpha > 0.5 → (255,255,255,255),
+ * else → (0,0,0,0). Result is always a freshly-allocated Uint8ClampedArray so
+ * the original input is not mutated.
+ */
+function binariseMask(src: Uint8ClampedArray | Uint8Array): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(src.length)
+  for (let i = 0; i < src.length; i += 4) {
+    const r = src[i] / 255
+    const g = src[i + 1] / 255
+    const b = src[i + 2] / 255
+    const a = src[i + 3] / 255
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    const on = lum > 0.5 || a > 0.5
+    out[i    ] = on ? 255 : 0
+    out[i + 1] = on ? 255 : 0
+    out[i + 2] = on ? 255 : 0
+    out[i + 3] = on ? 255 : 0
+  }
+  return out
 }
 
 /** Nearest-neighbour upscale used as a fallback when the caller doesn't

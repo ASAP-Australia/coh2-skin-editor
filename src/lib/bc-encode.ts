@@ -16,6 +16,41 @@
  * interpolation, no special slots) for simplicity.
  */
 
+/**
+ * Encode a flat RGBA Uint8ClampedArray (width × height × 4) into BC1 (DXT1)
+ * bytes. BC1 is 8 bytes per 4×4 block (colour block only, no separate alpha
+ * block). When c0_565 > c1_565 the 1-bit-alpha transparent-black slot is not
+ * used — we keep c0 > c1 always so the palette has 4 opaque colours. For
+ * binary white-on-black masks (the decal RGT convention) this produces
+ * lossless results: white pixels → index 0 (c0 = white), black pixels →
+ * index 1 (c1 = black).
+ */
+export function encodeBc1(rgba: Uint8ClampedArray | Uint8Array, width: number, height: number): Uint8Array {
+  const blocksW = Math.max(1, Math.ceil(width / 4))
+  const blocksH = Math.max(1, Math.ceil(height / 4))
+  const out = new Uint8Array(blocksW * blocksH * 8)
+  const block = new Uint8Array(64)
+  let dst = 0
+  for (let by = 0; by < blocksH; by++) {
+    for (let bx = 0; bx < blocksW; bx++) {
+      for (let py = 0; py < 4; py++) {
+        const sy = Math.min(by * 4 + py, height - 1)
+        for (let px = 0; px < 4; px++) {
+          const sx = Math.min(bx * 4 + px, width - 1)
+          const si = (sy * width + sx) * 4
+          const di = (py * 4 + px) * 4
+          block[di    ] = rgba[si    ]
+          block[di + 1] = rgba[si + 1]
+          block[di + 2] = rgba[si + 2]
+          block[di + 3] = rgba[si + 3]
+        }
+      }
+      writeColourBlock(block, out, dst); dst += 8
+    }
+  }
+  return out
+}
+
 /** Encode a flat RGBA Uint8ClampedArray (width × height × 4) into BC3 bytes. */
 export function encodeBc3(rgba: Uint8ClampedArray | Uint8Array, width: number, height: number): Uint8Array {
   const blocksW = Math.max(1, Math.ceil(width / 4))

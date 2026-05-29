@@ -226,22 +226,22 @@ describe('canvasToRgt + decodeRgt roundtrip', () => {
       expect(decoded.height).toBe(4)
     })
 
-    it('decoded fourCC is DXT5 (writer always uses BC3/format code 15)', () => {
+    it('decoded fourCC is DXT1 (writer uses BC1/format code 13 for binary mask RGTs)', () => {
       const canvas = solidCanvas(4, 4, 0, 255, 0, 255)
       const rgt = canvasToRgt(canvas, 'art\\test\\entity_dif')
       const decoded = decodeRgt(rgt)
-      expect(decoded.fourCC).toBe('DXT5')
+      expect(decoded.fourCC).toBe('DXT1')
     })
 
-    it('formatCode is 15 (BC3 linear) as written by rgt-writer', () => {
+    it('formatCode is 13 (BC1 linear) as written by rgt-writer', () => {
       const canvas = solidCanvas(4, 4, 0, 0, 255, 255)
       const rgt = canvasToRgt(canvas, 'art\\test\\entity_dif')
       const decoded = decodeRgt(rgt)
-      expect(decoded.formatCode).toBe(15)
+      expect(decoded.formatCode).toBe(13)
     })
 
-    it('isSRGB is false for format code 15 (linear)', () => {
-      // classifyTextureFormat(15) = { fourCC: 'DXT5', isSRGB: false }
+    it('isSRGB is false for format code 13 (linear)', () => {
+      // classifyTextureFormat(13) = { fourCC: 'DXT1', isSRGB: false }
       // decodeRgt uses classified.isSRGB, not the ?? true fallback.
       const canvas = solidCanvas(4, 4, 100, 150, 200, 255)
       const rgt = canvasToRgt(canvas, 'art\\test\\entity_dif')
@@ -249,12 +249,12 @@ describe('canvasToRgt + decodeRgt roundtrip', () => {
       expect(decoded.isSRGB).toBe(false)
     })
 
-    it('pixel byte count matches expected BC3 blocks for 4×4', () => {
-      // 4×4 = 1×1 blocks × 16 bytes/block = 16 bytes
+    it('pixel byte count matches expected BC1 blocks for 4×4', () => {
+      // 4×4 = 1×1 blocks × 8 bytes/block = 8 bytes (BC1 is half of BC3)
       const canvas = solidCanvas(4, 4, 200, 100, 50, 200)
       const rgt = canvasToRgt(canvas, 'art\\test\\entity_dif')
       const decoded = decodeRgt(rgt)
-      const expectedBytes = 1 * 1 * 16
+      const expectedBytes = 1 * 1 * 8
       expect(decoded.pixels.length).toBe(expectedBytes)
     })
 
@@ -276,12 +276,12 @@ describe('canvasToRgt + decodeRgt roundtrip', () => {
       expect(decoded.height).toBe(8)
     })
 
-    it('pixel byte count = 4 blocks × 2 blocks × 16 bytes = 128', () => {
+    it('pixel byte count = 4 blocks × 2 blocks × 8 bytes = 64', () => {
       const canvas = solidCanvas(16, 8, 200, 100, 50, 255)
       const rgt = canvasToRgt(canvas, 'art\\test\\wide_dif')
       const decoded = decodeRgt(rgt)
-      // 16px/4 = 4 blocks wide, 8px/4 = 2 blocks tall → 4×2×16 = 128
-      expect(decoded.pixels.length).toBe(128)
+      // 16px/4 = 4 blocks wide, 8px/4 = 2 blocks tall → 4×2×8 = 64 (BC1)
+      expect(decoded.pixels.length).toBe(64)
     })
   })
 
@@ -294,11 +294,12 @@ describe('canvasToRgt + decodeRgt roundtrip', () => {
       expect(decoded.height).toBe(16)
     })
 
-    it('pixel byte count = 2 blocks wide × 4 blocks tall × 16 bytes = 128', () => {
+    it('pixel byte count = 2 blocks wide × 4 blocks tall × 8 bytes = 64', () => {
       const canvas = solidCanvas(8, 16, 60, 70, 80, 255)
       const rgt = canvasToRgt(canvas, 'art\\test\\tall_dif')
       const decoded = decodeRgt(rgt)
-      expect(decoded.pixels.length).toBe(128)
+      // BC1: 2×4 = 8 blocks × 8 bytes = 64
+      expect(decoded.pixels.length).toBe(64)
     })
   })
 
@@ -325,8 +326,8 @@ describe('canvasToRgt + decodeRgt roundtrip', () => {
     })
 
     it('compress:false TMAN mip entry has non-zero cmp_size matching raw pixel bytes', () => {
-      // In raw mode the top-mip "cmp" blob is the raw BC3 bytes, not deflated.
-      // BC3 for 8×8: 2×2 blocks × 16 bytes = 64 bytes.
+      // In raw mode the top-mip "cmp" blob is the raw BC1 bytes, not deflated.
+      // BC1 for 8×8: 2×2 blocks × 8 bytes = 32 bytes.
       const canvas = solidCanvas(8, 8, 50, 100, 150, 255)
       const rgt = canvasToRgt(canvas, 'art\\test\\entity_dif', { compress: false })
       const { root } = parseChunky(rgt)
@@ -334,11 +335,11 @@ describe('canvasToRgt + decodeRgt roundtrip', () => {
       expect(tman).not.toBeNull()
       const v = new DataView(rgt.buffer, rgt.byteOffset)
       const mipCount = v.getUint32(tman!.payloadOffset, true)
-      // The LAST entry is the top mip. Its cmp_size == raw BC3 pixel size (no zlib header).
+      // The LAST entry is the top mip. Its cmp_size == raw BC1 pixel size (no zlib header).
       const lastIdx = mipCount - 1
       const cmpSize = v.getUint32(tman!.payloadOffset + 4 + lastIdx * 8 + 4, true)
-      // 8×8 BC3: ceil(8/4)×ceil(8/4) = 2×2 = 4 blocks × 16 = 64 bytes
-      expect(cmpSize).toBe(64)
+      // 8×8 BC1: ceil(8/4)×ceil(8/4) = 2×2 = 4 blocks × 8 = 32 bytes
+      expect(cmpSize).toBe(32)
     })
   })
 
@@ -381,8 +382,8 @@ describe('canvasToRgt + decodeRgt roundtrip', () => {
       const canvas = solidCanvas(16, 16, 80, 160, 240, 255)
       const rgt = canvasToRgt(canvas, 'art\\test\\entity_dif')
       const decoded = decodeRgt(rgt)
-      // 16×16 → 4×4 blocks → 4×4×16 = 256 bytes for BC3
-      expect(decoded.pixels.length).toBe(256)
+      // 16×16 → 4×4 blocks → 4×4×8 = 128 bytes for BC1
+      expect(decoded.pixels.length).toBe(128)
     })
   })
 })

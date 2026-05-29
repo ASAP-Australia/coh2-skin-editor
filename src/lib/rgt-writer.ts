@@ -29,7 +29,7 @@
  */
 
 import { deflate } from 'pako'
-import { encodeBc3 } from './bc-encode'
+import { encodeBc1 } from './bc-encode'
 
 export interface RgtOptions {
   /** When false, store the top mip as raw BC3 bytes (no zlib). This produces a
@@ -51,8 +51,11 @@ export function canvasToRgt(
   const { width, height } = canvas
   const img = ctx.getImageData(0, 0, width, height)
 
-  // 2. Encode the top mip as BC3
-  const dxt = encodeBc3(img.data, width, height)
+  // 2. Encode the top mip as BC1 (DXT1). Community decal packs are pure
+  //    white-on-black binary masks — no colour, no alpha gradient. BC1 with
+  //    1-bit alpha is the correct format; the renderer applies faction tint at
+  //    runtime. BC3 (DXT5) was wrong for this content type.
+  const dxt = encodeBc1(img.data, width, height)
 
   // 3. Build the mip table. We emit ONE real mip (the top one) and pad
   //    the rest with empty entries pointing at zero-length zlib streams,
@@ -76,14 +79,14 @@ export function canvasToRgt(
   mips.push({ unc: dxt.length, cmp: topData })
 
   // 4. Build chunk payloads
-  // TFMT: width, height, ?, ?, format=15 (DXT5 in CoH2 codebase), ?, ?, byte
+  // TFMT: width, height, ?, ?, format=13 (DXT1/BC1 in CoH2 codebase), ?, ?, byte
   const tfmt = new Uint8Array(25)
   const tfmtView = new DataView(tfmt.buffer)
   tfmtView.setUint32( 0, width, true)
   tfmtView.setUint32( 4, height, true)
   tfmtView.setUint32( 8, 1, true)            // unknown — common value
   tfmtView.setUint32(12, 2, true)            // unknown — common value
-  tfmtView.setUint32(16, 15, true)           // 15 = DXT5
+  tfmtView.setUint32(16, 13, true)           // 13 = DXT1 (BC1)
   tfmtView.setUint32(20, 0, true)
   tfmt[24] = 1
 
