@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { Sky } from 'three/examples/jsm/objects/Sky.js'
 import { locateArchives } from '@/lib/coh2-fs'
 import { SgaArchive } from '@/lib/sga'
 import { parseRgm, type RgmModel } from '@/lib/rgm'
@@ -11,9 +12,6 @@ import {
   SCENE_PRESETS, DEFAULT_PRESET_ID, applySeasonOverrides,
   type PresetId, type ToneMappingMode,
 } from '@/lib/scene-settings'
-// Sky / PMREM env removed — they were washing the model to white. Studio
-// lighting only now (HemisphereLight + 3 directional lights) so diffuse
-// + normal maps read cleanly against a dark backdrop.
 
 interface Props {
   root: FileSystemDirectoryHandle
@@ -79,10 +77,11 @@ export default function Viewport({
   const groundMeshRef    = useRef<THREE.Mesh | null>(null)
   const groundMatRef     = useRef<THREE.MeshStandardMaterial | null>(null)
   const rendererRef      = useRef<THREE.WebGLRenderer | null>(null)
+  const skyRef           = useRef<Sky | null>(null)
+  const pmremRef         = useRef<THREE.PMREMGenerator | null>(null)
   /** All lights that belong to the active preset (built + added in the
    *  preset-change useEffect). Teardown removes these before rebuilding. */
   const presetLightsRef  = useRef<THREE.Light[]>([])
-  // (skyRef / pmremRef removed with Three.Sky)
 
   // Explode animation state
   const submeshMapsRef   = useRef<Map<string, THREE.Mesh>>(new Map())
@@ -126,10 +125,48 @@ export default function Viewport({
     controls.target.set(0, 1.2, 0)
     controlsRef.current = controls
 
-    // Ground plane — visibility / colour are controlled by the preset effect.
+    // Realistic procedural sky — Three's Sky shader (Preetham/Hosek-Wilkie
+    // atmospheric scattering). Used as the scene background for the
+    // in_game_field preset. Also baked into a PMREM env map so the model
+    // picks up sky reflections / IBL.
+    const sky = new Sky()
+    sky.scale.setScalar(450000)
+    const skySun = new THREE.Vector3()
+    const skyUniforms = sky.material.uniforms
+    // Tuned for a calmer, deeper-blue daytime sky — higher rayleigh keeps
+    // the upper hemisphere saturated blue and the horizon a soft warm haze.
+    skyUniforms.turbidity.value       = 4
+    skyUniforms.rayleigh.value        = 3
+    skyUniforms.mieCoefficient.value  = 0.005
+    skyUniforms.mieDirectionalG.value = 0.7
+    // Higher sun elevation (65°) = darker, more saturated background
+    const phi   = THREE.MathUtils.degToRad(90 - 65)  // elevation 65°
+    const theta = THREE.MathUtils.degToRad(180)       // azimuth
+    skySun.setFromSphericalCoords(1, phi, theta)
+    skyUniforms.sunPosition.value.copy(skySun)
+    sky.visible = false  // hidden by default; preset effect enables it for in_game_field
+    scene.add(sky)
+    skyRef.current = sky
+
+    // PMREM-baked environment so the model picks up sky reflections / IBL
+    const pmremGen = new THREE.PMREMGenerator(renderer)
+    pmremRef.current = pmremGen
+    const envSceneForPmrem = new THREE.Scene()
+    const envSky = new Sky()
+    envSky.scale.setScalar(450000)
+    envSky.material.uniforms.turbidity.value       = skyUniforms.turbidity.value
+    envSky.material.uniforms.rayleigh.value        = skyUniforms.rayleigh.value
+    envSky.material.uniforms.mieCoefficient.value  = skyUniforms.mieCoefficient.value
+    envSky.material.uniforms.mieDirectionalG.value = skyUniforms.mieDirectionalG.value
+    envSky.material.uniforms.sunPosition.value.copy(skySun)
+    envSceneForPmrem.add(envSky)
+    scene.environment = pmremGen.fromScene(envSceneForPmrem).texture
+
+    // Ground — large, gently coloured plane. The warm earthy tint (0x4a463c)
+    // complements the sky IBL tint on the model in in_game_field mode.
     const groundGeo = new THREE.PlaneGeometry(200, 200, 1, 1)
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x1c1e22, metalness: 0, roughness: 1.0,
+      color: 0x4a463c, metalness: 0, roughness: 1.0,
     })
     groundMatRef.current = groundMat
     const ground = new THREE.Mesh(groundGeo, groundMat)
@@ -172,6 +209,7 @@ export default function Viewport({
       cancelAnimationFrame(raf)
       controls.dispose()
       ro.disconnect()
+      pmremGen.dispose()
       renderer.dispose()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -212,12 +250,19 @@ export default function Viewport({
 
     // ── Background ────────────────────────────────────────────────────────
     if (preset.background.kind === 'color') {
+      // Hide Sky for non-atmospheric presets
+      if (skyRef.current) skyRef.current.visible = false
       scene.background = new THREE.Color(preset.background.hex)
     } else {
-      // cubemap: fall back to a dark neutral until a CoH2 cubemap loader is
-      // wired up. The original Viewport used 0x0a0b0e for the in-game preset;
-      // preserve that dark tone here so the scene isn't jarring.
-      scene.background = new THREE.Color(0x0a0b0e)
+      // in_game_field cubemap: use the Three.Sky atmospheric shader as
+      // the background. The PMREM env is baked once at init and lives in
+      // scene.environment for IBL reflections on the model.
+      if (skyRef.current) {
+        skyRef.current.visible = true
+        scene.background = null  // Sky mesh IS the background
+      } else {
+        scene.background = new THREE.Color(0x0a0b0e)
+      }
     }
 
     // ── Hemisphere light ──────────────────────────────────────────────────
@@ -282,12 +327,6 @@ export default function Viewport({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presetId, season])
-
-  // Env archive override is intentionally disabled — the Three.Sky shader
-  // and the clean PBR ground look better than the CoH2 sky/terrain RGTs
-  // pulled from ArtEnvironment.sga (which were the source of the "weird
-  // ground texture" complaint). Keeping the archive plumbing in place so
-  // the env switcher in TopMenu still wires up; just no longer applied.
 
   // =========================================================================
   // Load vehicle model
