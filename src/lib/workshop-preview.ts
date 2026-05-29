@@ -60,15 +60,17 @@ export async function generateWorkshopPreview(
   const dstX = Math.round((PREVIEW_SIZE - dstW) / 2)
   const dstY = Math.round((PREVIEW_SIZE - dstH) / 2)
 
-  // ── Step-down rendering for very small sources ────────────────────────────
-  // When the source is ≤256 px on its larger dimension, rendering directly
-  // at 1024 px can look worse than stepping through an intermediate size,
-  // because bilinear interpolation chained twice produces a smoother result
-  // than a single huge scale jump.
+  // ── Rendering strategy based on source size ──────────────────────────────
+  // • ≥1024 px: source is already full-resolution — draw directly, single pass,
+  //   no bilinear stretch (scale ≈ 1×). This is the fast path for properly
+  //   prepared preview canvases (e.g. the 1024×1024 decal preview canvas).
+  // • ≤256 px: step through an intermediate 512-px canvas to reduce bilinear
+  //   artifacts compared to a single 8–16× jump (legacy / fallback path).
+  // • Otherwise: draw directly with smoothing enabled.
   const largerDim = Math.max(srcW, srcH)
   let drawSource: HTMLCanvasElement | OffscreenCanvas = sourceCanvas
 
-  if (largerDim <= 256) {
+  if (largerDim < PREVIEW_SIZE && largerDim <= 256) {
     const midSize = Math.min(512, Math.max(largerDim * 4, 256))
     const midCanvas = new OffscreenCanvas(midSize, midSize)
     const midCtx = midCanvas.getContext('2d')
@@ -85,6 +87,8 @@ export async function generateWorkshopPreview(
       drawSource = midCanvas
     }
   }
+  // For largerDim >= PREVIEW_SIZE: drawSource stays as sourceCanvas and is
+  // composited directly — single draw, no bilinear stretch needed.
 
   // ── Draw source into preview canvas ───────────────────────────────────────
   ctx.imageSmoothingEnabled = true
