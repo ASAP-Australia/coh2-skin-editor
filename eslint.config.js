@@ -2,6 +2,7 @@ import js from '@eslint/js'
 import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
+import jsxA11y from 'eslint-plugin-jsx-a11y'
 import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
@@ -37,6 +38,13 @@ export default defineConfig([
         caughtErrorsIgnorePattern: '^_',
       }],
     },
+  },
+  // jsx-a11y accessibility rules for all React/JSX files
+  {
+    files: ['src/**/*.{tsx,jsx}'],
+    plugins: { 'jsx-a11y': jsxA11y },
+    rules: jsxA11y.configs.recommended.rules,
+    ignores: ['src/components/ui/**'],
   },
   // shadcn UI library files — cva variants are exported alongside components
   // (documented shadcn pattern), and jsx-a11y rules reference a plugin that
