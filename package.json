@@ -46,6 +46,7 @@
       "dist/**/*",
       "dist-electron/**/*",
       "node_modules/steamworks.js/**/*",
+      "native/coh2-workshop/package.json",
       "native/coh2-workshop/index.js",
       "native/coh2-workshop/index.d.ts",
       "native/coh2-workshop/bin/**/*",
