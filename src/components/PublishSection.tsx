@@ -26,6 +26,7 @@ import type {
   UpdateWorkshopResult,
 } from '@/lib/native-fs'
 import type { WorkshopPublishTarget, WorkshopProjectType } from '@/components/PublishToWorkshopDialog'
+import { generateWorkshopPreview } from '@/lib/workshop-preview'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -282,26 +283,18 @@ export function PublishSection({
   }, [target])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  // Auto-generate a 512×512 PNG from the preview canvas
-  const generatePreviewPng = useCallback((): Uint8Array | null => {
+  // Generate a 1024×1024 high-quality preview PNG from the preview canvas.
+  // Uses OffscreenCanvas with step-down rendering and a dark gradient background
+  // so Steam doesn't have to upscale a tiny source (e.g. the 64×64 decal icon).
+  const buildPreviewPng = useCallback(async (): Promise<Uint8Array | null> => {
     const src = target?.previewCanvas
     if (!src) return null
     try {
-      const c = document.createElement('canvas')
-      c.width = c.height = 512
-      const ctx = c.getContext('2d')
-      if (!ctx) return null
-      ctx.drawImage(src, 0, 0, 512, 512)
-      const dataUrl = c.toDataURL('image/png')
-      const b64 = dataUrl.replace(/^data:[^;]+;base64,/, '')
-      const binary = atob(b64)
-      const bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-      return bytes
+      return await generateWorkshopPreview(src, target?.packName)
     } catch {
       return null
     }
-  }, [target?.previewCanvas])
+  }, [target])
 
   const handlePublish = useCallback(async () => {
     if (!target) return
@@ -330,7 +323,9 @@ export function PublishSection({
       console.log('[workshop:publish] step=sga-written path=%s byteLength=%d', sgaPath, target.sgaBytes.byteLength)
 
       // 3. Write preview PNG to temp dir.
-      const pngBytes = generatePreviewPng()
+      // generateWorkshopPreview renders a 1024×1024 OffscreenCanvas so Steam
+      // doesn't have to upscale a tiny source image (e.g. the 64×64 decal icon).
+      const pngBytes = await buildPreviewPng()
       if (!pngBytes) throw new Error('Failed to generate preview image. Make sure the editor canvas is loaded.')
       // Steam rejects preview images > 1 MB ("a parameter is invalid").
       // Log the size so we can diagnose if a complex canvas exceeds the limit.
@@ -381,7 +376,7 @@ export function PublishSection({
     target,
     visibility,
     changeNote,
-    generatePreviewPng,
+    buildPreviewPng,
     isUpdate,
     onUploadStart,
     onUploadEnd,
