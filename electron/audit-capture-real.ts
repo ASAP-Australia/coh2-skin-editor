@@ -224,6 +224,19 @@ export async function runAuditCaptureReal(): Promise<void> {
       const outPath = path.join(factionDir, `${meta.vehicleId}_${meta.season}${suffix}.png`)
       fs.writeFileSync(outPath, pngBuf)
       console.log(`[audit-real] ✓ ${meta.faction}/${meta.vehicleId}/${meta.season}/${meta.mode} (${elapsed}ms) → ${outPath}`)
+      // DIAGNOSTIC: also dump the Viewport's decoded diffuse canvas (what it
+      // actually feeds the model) so we can compare it to an independent flat
+      // decode of the same RGT.
+      try {
+        const diffUrl: string = await win.webContents.executeJavaScript('window.__auditDiffuse ?? ""', true)
+        if (diffUrl.startsWith('data:image/png;base64,')) {
+          fs.writeFileSync(path.join(factionDir, `${meta.vehicleId}_${meta.season}_VPDIFFUSE.png`),
+            Buffer.from(diffUrl.slice('data:image/png;base64,'.length), 'base64'))
+          console.log(`[audit-real]   + dumped Viewport diffuse`)
+        } else {
+          console.log(`[audit-real]   (no Viewport diffuse exposed)`)
+        }
+      } catch { /* ignore */ }
     } else {
       console.warn(`[audit-real] ✗ ${meta.faction}/${meta.vehicleId}/${meta.season}/${meta.mode} — no PNG (error: ${meta.error})`)
     }

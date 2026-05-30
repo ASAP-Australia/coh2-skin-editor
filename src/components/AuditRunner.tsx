@@ -153,6 +153,8 @@ export default function AuditRunner() {
   // The Viewport canvas ref — used to grab the rendered frame
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const modelLoadedRef = useRef(false)
+  // Reusable 2048² overlay the BODY meshes bind to (baseDiffuse + optional badge)
+  const overlayBuildRef = useRef<HTMLCanvasElement | null>(null)
   const readyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const rafCancelRef = useRef<number | null>(null)
 
@@ -230,19 +232,12 @@ export default function AuditRunner() {
     }
   }, [idx, queue.length, isDone])
 
-  // ── Decal overlay: paint badge when entering decal mode ──────────────────
+  // ── Overlay is built in handleModelLoaded (it needs the decoded baseDiffuse,
+  //    which only exists after the model loads). On item change just clear it
+  //    so the previous vehicle's overlay can't leak onto the next mount. ──────
   useEffect(() => {
-    if (!item || item.mode !== 'decal') {
-      setOverlayCanvas(null)
-      return
-    }
-    const canvas = document.createElement('canvas')
-    canvas.width = 2048
-    canvas.height = 2048
-    paintBadge(canvas)
-    setOverlayCanvas(canvas)
-    setOverlayVersion(v => v + 1)
-  }, [item?.vehicle.id, item?.mode])
+    setOverlayCanvas(null)
+  }, [item?.vehicle.id, item?.mode, item?.season])
 
   // ── Signal ready after model load + animation frames ────────────────────
   // Gate on 3 requestAnimationFrame ticks so the deferred CanvasTexture
@@ -278,7 +273,7 @@ export default function AuditRunner() {
     let ticks = 0
     const tick = () => {
       ticks++
-      if (ticks < 3) {
+      if (ticks < 10) {
         rafCancelRef.current = requestAnimationFrame(tick)
       } else {
         rafCancelRef.current = null
@@ -288,9 +283,36 @@ export default function AuditRunner() {
     rafCancelRef.current = requestAnimationFrame(tick)
   }, [])
 
-  const handleModelLoaded = useCallback(() => {
+  const handleModelLoaded = useCallback((_model?: unknown, diffuseImage?: HTMLCanvasElement | null) => {
     if (!item) return
     modelLoadedRef.current = true
+    // DIAGNOSTIC: expose the exact diffuse canvas the Viewport decoded + uses,
+    // so the driver can save it and we can compare "what the Viewport feeds the
+    // model" against an independent flat decode of the same RGT.
+    try {
+      if (diffuseImage && typeof diffuseImage.toDataURL === 'function') {
+        ;(window as unknown as { __auditDiffuse?: string }).__auditDiffuse = diffuseImage.toDataURL('image/png')
+      } else {
+        ;(window as unknown as { __auditDiffuse?: string }).__auditDiffuse = ''
+      }
+    } catch { /* ignore */ }
+    // Build the overlay the BODY meshes bind to: baseDiffuse FIRST (the editor's
+    // repaint() does this — without it the body renders untextured/dark, which
+    // is what made the audit look like a flat tank), then the badge for decal mode.
+    try {
+      let canvas = overlayBuildRef.current
+      if (!canvas) {
+        canvas = document.createElement('canvas')
+        canvas.width = canvas.height = 2048
+        overlayBuildRef.current = canvas
+      }
+      const ctx = canvas.getContext('2d')!
+      ctx.clearRect(0, 0, 2048, 2048)
+      if (diffuseImage) ctx.drawImage(diffuseImage, 0, 0, 2048, 2048)
+      if (item.mode === 'decal') paintBadge(canvas)
+      setOverlayCanvas(canvas)
+      setOverlayVersion(v => v + 1)
+    } catch (e) { console.warn('[audit-runner] overlay build failed', e) }
     signalReady(item.vehicle.id, item.vehicle.faction, item.season, item.mode, null)
   }, [item, signalReady])
 

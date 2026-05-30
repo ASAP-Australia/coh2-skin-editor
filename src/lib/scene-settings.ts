@@ -70,9 +70,11 @@ export const SCENE_PRESETS: Record<PresetId, ScenePreset> = {
     // constants — see corsix's `coh2-explorer` (essence_panel.cpp) which uses
     // the official shader source to render previews. Tonemapping confirmed
     // from Barrero, "CoH2 Rendering Tech" (2013, gamedevs.org PDF), which
-    // documents a deferred HDR pipeline. ACES is too contrasty/warm for this
-    // 2013-era look; Reinhard is the closest standard Three.js operator.
-    toneMapping: 'reinhard',
+    // documents a deferred HDR pipeline. Essence's viewer path is effectively
+    // linear (tonemap off); Reinhard crushes midtones and reads the dunkelgelb
+    // base as a dark olive, so use Neutral (Khronos PBR Neutral) — preserves
+    // diffuse brightness + saturation without ACES contrast.
+    toneMapping: 'neutral',
     exposure: 1.0,
     // Hemi — provides flat neutral ambient fill while the PMREM RoomEnvironment
     // (wired in Viewport.tsx via scene.environment) handles diffuse irradiance
@@ -81,7 +83,7 @@ export const SCENE_PRESETS: Record<PresetId, ScenePreset> = {
     // the PMREM env is active. Sky/ground are kept near-neutral grey (no
     // blue-sky/brown-ground tint) because Corsix's analysis shows the real
     // ambient is flat: `ambientscale (0.7)` × a white EnvMapDiffuse cube.
-    hemi: { sky: 0xd0d0d0, ground: 0x888888, intensity: 0.5 },
+    hemi: { sky: 0xd0d0d0, ground: 0x888888, intensity: 0.9 },
     directionalLights: [
       // Key (sun): `dirlight0` in the Essence shader is WHITE (1,1,1), NOT
       // the cyan `fxlight_suncolour (0.9,1.0,1.0)` — that constant is the
