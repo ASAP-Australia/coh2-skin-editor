@@ -2981,9 +2981,16 @@ export default function Viewport({
       overlayTexRef.current!.flipY = true
       overlayTexRef.current!.colorSpace = SRGBColorSpace
       overlayTexRef.current!.wrapS = overlayTexRef.current!.wrapT = RepeatWrapping
-      // Initial bind needs an upload — flag the dirty bit so the loop's
-      // gate runs once, then it stays quiet until something paints.
-      overlayDirtyRef.current = true
+      // Force an immediate GPU re-upload so the canvas content that was
+      // painted by repaint() inside onModelLoaded is visible on the very
+      // first render with these new materials. Setting needsUpdate directly
+      // (rather than routing through overlayDirtyRef → next-rAF) eliminates
+      // a one-frame window where body materials are bound to an uninitialised
+      // or stale CanvasTexture — the cause of the black-hull symptom on
+      // vehicles like Ostwind that load their diffuse from a separate SGA
+      // (ArtGermanEF.sga) and may render one frame before the deferred
+      // overlayDirtyRef path fires.
+      overlayTexRef.current!.needsUpdate = true
       needsRenderRef.current = true
       meshGroupRef.current.traverse(o => {
         const m = o as Mesh
