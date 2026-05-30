@@ -210,7 +210,14 @@ export async function buildDecalMod(input: BuildDecalModInput): Promise<BuildDec
           partCanvas.height = def.region.h
           const pCtx = partCanvas.getContext('2d')
           if (!pCtx) continue
-          pCtx.putImageData(new ImageData(rgba, def.region.w, def.region.h), 0, 0)
+          // Cast to ArrayBuffer-backed view: the ImageData ctor rejects the
+          // generic Uint8ClampedArray<ArrayBufferLike> default (could be
+          // SharedArrayBuffer) under tsc -b. Same idiom as gfx-bitmaps.ts.
+          pCtx.putImageData(
+            new ImageData(rgba as Uint8ClampedArray<ArrayBuffer>, def.region.w, def.region.h),
+            0,
+            0
+          )
           atlasCtx.drawImage(partCanvas, def.region.x, def.region.y)
         }
       }

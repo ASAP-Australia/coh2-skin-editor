@@ -116,7 +116,11 @@ export default function AtlasPreview3D({ project, activePartIndex, installRoot }
       partCanvas.width = def.region.w
       partCanvas.height = def.region.h
       const pCtx = partCanvas.getContext('2d')!
-      pCtx.putImageData(new ImageData(partRgba, def.region.w, def.region.h), 0, 0)
+      pCtx.putImageData(
+        new ImageData(partRgba as Uint8ClampedArray<ArrayBuffer>, def.region.w, def.region.h),
+        0,
+        0
+      )
       mCtx.drawImage(partCanvas, 0, 0, BADGE_RECT.w, BADGE_RECT.h)
 
       // Apply faction tint (multiply-ish): tint opaque pixels with faction color.
