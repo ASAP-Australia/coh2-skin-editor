@@ -37,7 +37,7 @@ import { bcToCanvas } from './bc-decode'
 import { canvasToRgt } from './rgt-writer'
 import { buildSga, type SgaInputFile } from './sga-writer'
 import { paintDecals, preloadDecalImages, type RenderContext } from './decal-painter'
-import { findVehicleSpec, inferProjectFactions, type Faction } from './vehicles'
+import { findVehicleSpec, inferProjectFactions, vehicleFolder, type Faction } from './vehicles'
 import type { Coh2SkinProject } from './project'
 
 const TEMPLATE_GUID = '935a02ef44344ea29108b57b9cb7b9f5'
@@ -94,28 +94,10 @@ export function factionSgaCandidates(faction: string): string[] {
   }
 }
 
-/**
- * On-disk folder name alias for vehicles whose vehicles.ts `id` does NOT match
- * the real game folder under `art/armies/<faction>/vehicles/<folder>/`.
- *
- * Key   = vehicles.ts id  (never changes — ripples through project state / UI)
- * Value = real game folder name confirmed from official Relic SGA archives
- *
- * Confirmed against ArtBritish.sga and ArtSovietEF.sga:
- *   centaur   → centaur_aa          (ArtBritish: vehicles/centaur_aa/...)
- *   t_34_85   → t34_85              (ArtSovietEF: vehicles/t34_85/...)
- *   valentine → valentine_command   (ArtBritish: vehicles/valentine_command/...)
- */
-export const VEHICLE_FOLDER_ALIAS: Record<string, string> = {
-  centaur:   'centaur_aa',
-  t_34_85:   't34_85',
-  valentine: 'valentine_command',
-}
-
-/** Returns the real on-disk folder name for a vehicle id. */
-export function vehicleFolder(vehicleId: string): string {
-  return VEHICLE_FOLDER_ALIAS[vehicleId] ?? vehicleId
-}
+// vehicleFolder + VEHICLE_FOLDER_ALIAS moved to ./vehicles so the mesh loader
+// (vehicles.rgmPath) can use them without a circular import. Re-exported here
+// for existing callers (stock-skins, build-template, tools, tests).
+export { vehicleFolder, VEHICLE_FOLDER_ALIAS } from './vehicles'
 
 /**
  * Basename aliases — CoH2 names a handful of textures differently from the
