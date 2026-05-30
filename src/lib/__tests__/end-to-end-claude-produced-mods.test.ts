@@ -285,6 +285,10 @@ describe('claude-produced mods — end-to-end via library functions', () => {
         }
         const d = newDecal(p, id, s.name)
         p.decals.push({ ...d, visible: true })
+        // v6: also push to parts[1].shared (Main Hull Badge) so exportDecalPackZip finds them.
+        if (p.parts?.[1]) {
+          p.parts[1].shared.push({ ...d, visible: true })
+        }
       }
 
       const result = await exportDecalPackZip(p)

@@ -28,9 +28,9 @@ import {
 // ─── Factory defaults ──────────────────────────────────────────────────────
 
 describe('newDecalPackProject', () => {
-  it('creates a v4 project', () => {
+  it('creates a v6 project', () => {
     const p = newDecalPackProject()
-    expect(p.version).toBe(5)
+    expect(p.version).toBe(6)
     expect(p.magic).toBe('coh2-decalpack-project')
   })
 
@@ -69,10 +69,10 @@ describe('tryParseDecalPackFile — migration v2 → v3', () => {
     return JSON.stringify(p)
   }
 
-  it('stamps version 4 on load (v2 migrates through v3 to v4)', () => {
+  it('stamps version 6 on load (v2 migrates through v3→v4→v5→v6)', () => {
     const loaded = tryParseDecalPackFile(makeV2Json())
     expect(loaded).not.toBeNull()
-    expect(loaded!.version).toBe(5)
+    expect(loaded!.version).toBe(6)
   })
 
   it('sets brightness to 100 when absent on v2 decal', () => {
@@ -104,9 +104,9 @@ describe('tryParseDecalPackFile — migration v1 → v3', () => {
     return JSON.stringify(p)
   }
 
-  it('stamps version 4 after v1 migration (v1 migrates through v3 to v4)', () => {
+  it('stamps version 6 after v1 migration (v1 migrates through all versions to v6)', () => {
     const loaded = tryParseDecalPackFile(makeV1Json())
-    expect(loaded!.version).toBe(5)
+    expect(loaded!.version).toBe(6)
   })
 
   it('fills adjustment fields with 100 after v1 migration', () => {
@@ -220,7 +220,7 @@ describe('tryParseDecalPackFile — error handling', () => {
     const loaded = tryParseDecalPackFile(json)
     expect(loaded).not.toBeNull()
     expect(loaded!.packName).toBe('V4 Direct')
-    expect(loaded!.version).toBe(5)
+    expect(loaded!.version).toBe(6)
   })
 })
 
@@ -248,9 +248,9 @@ describe('migration applies to every decal in the array', () => {
 // ─── newDecalPackProject version stamp ────────────────────────────────────
 
 describe('newDecalPackProject version', () => {
-  it('always produces version 4', () => {
+  it('always produces version 6', () => {
     for (let i = 0; i < 10; i++) {
-      expect(newDecalPackProject().version).toBe(5)
+      expect(newDecalPackProject().version).toBe(6)
     }
   })
 })
@@ -315,10 +315,10 @@ describe('tryParseDecalPackFile — migration v3 → v4', () => {
     return JSON.stringify(p)
   }
 
-  it('stamps version 4 after v3 migration', () => {
+  it('stamps version 6 after v3 migration (v3→v4→v5→v6)', () => {
     const loaded = tryParseDecalPackFile(makeV3Json())
     expect(loaded).not.toBeNull()
-    expect(loaded!.version).toBe(5)
+    expect(loaded!.version).toBe(6)
   })
 
   it('v3→v4 migration leaves new optional fields absent on existing decals', () => {
@@ -347,7 +347,7 @@ describe('tryParseDecalPackFile — migration v3 → v4', () => {
     expect(rd.x).toBe(64)
     expect(rd.y).toBe(32)
     expect(rd.rotation).toBe(45)
-    expect(loaded.version).toBe(5)
+    expect(loaded.version).toBe(6)
   })
 })
 

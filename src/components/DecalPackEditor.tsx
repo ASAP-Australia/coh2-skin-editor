@@ -174,6 +174,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
 
   // Persist part/faction into project on change
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: atlas nav state is persisted into project for save/reload fidelity; single setState, no cascade
     setProject(prev => ({
       ...prev,
       activePartIndex,
@@ -386,7 +387,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         `Only the first ${BATCH_IMPORT_MAX} files were imported. Please import the remaining files separately.`,
       )
     }
-  }, [project, mutate])
+  }, [project, mutate, activePartIndex, activeFaction])
 
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
   const activeDecal = useMemo(
