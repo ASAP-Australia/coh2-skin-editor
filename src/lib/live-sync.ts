@@ -1251,7 +1251,7 @@ async function buildWorkshopPreviewFromProject(
       canvas.height = DECAL_PACK_SIZE
       const ctx = canvas.getContext('2d')
       if (!ctx) throw new Error('no 2d context')
-      const imgData = new ImageData(new Uint8ClampedArray(iconRgba.buffer), DECAL_PACK_SIZE, DECAL_PACK_SIZE)
+      const imgData = new ImageData(new Uint8ClampedArray(iconRgba.buffer) as Uint8ClampedArray<ArrayBuffer>, DECAL_PACK_SIZE, DECAL_PACK_SIZE)
       ctx.putImageData(imgData, 0, 0)
       return await canvasToArrayBuffer(canvas)
     }

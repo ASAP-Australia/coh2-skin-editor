@@ -76,7 +76,7 @@ import LiveSyncBadge from '@/components/LiveSyncBadge'
 import PublishToWorkshopDialog, { makeSkinPublishTarget } from '@/components/PublishToWorkshopDialog'
 import type { WorkshopPublishTarget } from '@/components/PublishToWorkshopDialog'
 import { PublishSection } from '@/components/PublishSection'
-import PackIdentityPopover from '@/components/PackIdentityPopover'
+import { PackIdentityPopover } from '@/components/PackIdentityPopover'
 import EditorTitlePill from '@/components/editor-primitives/EditorTitlePill'
 import { useLiveSync } from '@/lib/live-sync'
 
