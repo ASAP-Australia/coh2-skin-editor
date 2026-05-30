@@ -8,9 +8,21 @@ import { decodeRgt, rgtToCompressedTexture } from '@/lib/rgt'
 import { bcToCanvas } from '@/lib/bc-decode'
 import { rgmPath, type VehicleSpec } from '@/lib/vehicles'
 import type { PresetId } from '@/lib/scene-settings'
+import { proceduralGroundTexture } from '@/lib/skybox'
 // Sky / PMREM env removed — they were washing the model to white. Studio
 // lighting only now (HemisphereLight + 3 directional lights) so diffuse
 // + normal maps read cleanly against a dark backdrop.
+
+/** Build a tiled grass (summer) / snow (winter) ground texture for the
+ *  terrain square the tank sits on. Source canvas is the procedural noise +
+ *  track-streak generator in src/lib/skybox.ts. */
+function makeGroundTexture(season: 'summer' | 'winter'): THREE.CanvasTexture {
+  const tex = new THREE.CanvasTexture(proceduralGroundTexture(season))
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.repeat.set(4, 4)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
 
 interface Props {
   root: FileSystemDirectoryHandle
@@ -78,6 +90,7 @@ export default function Viewport({
   const fillRef          = useRef<THREE.DirectionalLight | null>(null)
   const groundMeshRef    = useRef<THREE.Mesh | null>(null)
   const groundMatRef     = useRef<THREE.MeshStandardMaterial | null>(null)
+  const groundTexRef     = useRef<THREE.CanvasTexture | null>(null)
   // (skyRef / pmremRef removed with Three.Sky)
 
   // Explode animation state
@@ -159,11 +172,15 @@ export default function Viewport({
     rim.position.set(-2, 2, -8)
     scene.add(rim)
 
-    // Ground — clean dark plane. Catches subtle shadows from the directional
-    // lights but doesn't compete with the model.
-    const groundGeo = new THREE.PlaneGeometry(200, 200, 1, 1)
+    // Ground — a grass (summer) / snow (winter) terrain square the tank sits
+    // on. Procedural noise + track-streak texture from src/lib/skybox.ts,
+    // tiled across a finite 64×64 square so it reads as a diorama base against
+    // the dark studio void rather than an infinite plane.
+    const groundGeo = new THREE.PlaneGeometry(64, 64, 1, 1)
+    const groundTex = makeGroundTexture(season)
+    groundTexRef.current = groundTex
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x1c1e22, metalness: 0, roughness: 1.0,
+      map: groundTex, color: 0xffffff, metalness: 0, roughness: 1.0,
     })
     groundMatRef.current = groundMat
     const ground = new THREE.Mesh(groundGeo, groundMat)
@@ -214,6 +231,7 @@ export default function Viewport({
       cancelAnimationFrame(raf)
       controls.dispose()
       ro.disconnect()
+      groundTexRef.current?.dispose()
       renderer.dispose()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -232,14 +250,26 @@ export default function Viewport({
       sunRef.current.intensity = 1.20
       fillRef.current.color.setHex(0xb0c8ff)  // blue-white bounce
       fillRef.current.intensity = 0.75
-      if (groundMatRef.current) groundMatRef.current.color.setHex(0x9aabb8) // snowy pale
+      if (groundMatRef.current) {
+        groundTexRef.current?.dispose()
+        const t = makeGroundTexture('winter')   // snow ground
+        groundMatRef.current.map = t
+        groundMatRef.current.needsUpdate = true
+        groundTexRef.current = t
+      }
       sceneRef.current.background = new THREE.Color(0x0d1016)  // slightly cooler dark
     } else {
       sunRef.current.color.setHex(0xfff1d6)   // warm summer key
       sunRef.current.intensity = 1.45
       fillRef.current.color.setHex(0x90a8c8)  // cool fill
       fillRef.current.intensity = 0.65
-      if (groundMatRef.current) groundMatRef.current.color.setHex(0x1c1e22) // dark earth
+      if (groundMatRef.current) {
+        groundTexRef.current?.dispose()
+        const t = makeGroundTexture('summer')   // grass ground
+        groundMatRef.current.map = t
+        groundMatRef.current.needsUpdate = true
+        groundTexRef.current = t
+      }
       sceneRef.current.background = new THREE.Color(0x0a0b0e)
     }
   }, [season])

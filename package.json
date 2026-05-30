@@ -1,7 +1,7 @@
 {
   "name": "coh2-skin-editor",
   "private": true,
-  "version": "1.0.22",
+  "version": "1.0.23",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -16,7 +16,7 @@
     "publish-skin": "python3 tools/publish.py",
     "test-export": "npx tsx tools/test-export.ts",
     "electron:compile": "tsc -p tsconfig.electron.json && echo '{\"type\":\"commonjs\"}' > dist-electron/package.json",
-    "electron:dev": "npm run electron:compile && concurrently \"vite\" \"wait-on http://localhost:5173 && NODE_ENV=development electron .\"",
+    "electron:dev": "npm run electron:compile && concurrently \"vite\" \"wait-on http://localhost:5173 && NODE_ENV=development electron --remote-debugging-port=9222 .\"",
     "electron:build": "tsc -b && ELECTRON_BUILD=1 vite build && npm run electron:compile && electron-builder",
     "electron:build:win": "tsc -b && cross-env ELECTRON_BUILD=1 vite build && npm run electron:compile && electron-builder --win",
     "size": "size-limit",
