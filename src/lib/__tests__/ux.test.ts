@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { defaultInstallPath, defaultModsPath, osLabel, relTime, type OS } from '../ux'
 
 // ---------------------------------------------------------------------------
@@ -130,8 +130,12 @@ describe('relTime', () => {
   })
 
   it('boundary: exactly 5 seconds ago is "just now"', () => {
-    const t = new Date(Date.now() - 4_999).toISOString()
+    vi.useFakeTimers()
+    const frozen = 1_700_000_000_000
+    vi.setSystemTime(frozen)
+    const t = new Date(frozen - 4_999).toISOString()
     expect(relTime(t)).toBe('just now')
+    vi.useRealTimers()
   })
 
   it('boundary: 60 seconds ago is "1m ago"', () => {

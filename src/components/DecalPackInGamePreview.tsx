@@ -255,8 +255,11 @@ function DecalTile({
         gap: 4,
         cursor: onSelect ? 'pointer' : undefined,
       }}
+      role={onSelect ? 'button' : undefined}
+      tabIndex={onSelect ? 0 : undefined}
       onClick={() => onSelect?.(decal.id)}
       onMouseEnter={() => onSelect?.(decal.id)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect?.(decal.id) }}
     >
       <div
         style={{
