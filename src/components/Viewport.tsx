@@ -37,6 +37,7 @@ import {
   BufferAttribute,
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { locateArchives } from '@/lib/coh2-fs'
 import { SgaArchive } from '@/lib/sga'
 import { parseRgm, type RgmModel } from '@/lib/rgm'
@@ -1837,6 +1838,40 @@ export default function Viewport({
             }
           }
           needsRenderRef.current = true
+        } else if (presetRef.current.background.kind === 'cubemap' && !cubemapRef.current) {
+          // No real CoH2 skybox was loadable (ArtEnvironment.sga absent or
+          // no valid env found). The visible background is already set to the
+          // procedural sky by proceduralSkybox(). For IBL we use Three.js'
+          // built-in RoomEnvironment — a neutral studio probe that fills the
+          // Essence EnvMapDiffuse (diffuse irradiance) + EnvMapSpecular
+          // (glossy reflection) role without requiring any external asset.
+          // The background stays as the procedural sky; only scene.environment
+          // (used for PBR material lookups) comes from the RoomEnvironment.
+          if (rendererRef.current) {
+            if (envMapRef.current) {
+              envMapRef.current.dispose()
+              envMapRef.current = null
+            }
+            const pmrem = new PMREMGenerator(rendererRef.current)
+            try {
+              pmrem.compileEquirectangularShader()
+              const env = pmrem.fromScene(new RoomEnvironment()).texture
+              envMapRef.current = env
+              scene.environment = env
+              // Same scene-level knob as the real-cubemap path. Vehicle
+              // materials further clamp via per-material envMapIntensity
+              // (0.6, set in the material-build block below).
+              ;(scene as { environmentIntensity?: number }).environmentIntensity = 0.3
+            } catch (e) {
+              console.warn('[viewport] RoomEnvironment PMREM bake failed, no IBL:', e)
+            } finally {
+              // Generator must be disposed immediately after use to free
+              // the internal compile targets; the baked texture in
+              // envMapRef.current persists until the next env swap.
+              pmrem.dispose()
+            }
+          }
+          needsRenderRef.current = true
         }
       })()
       // Immediate placeholder — grey-blue sky-ish color while the cubemap
@@ -2620,15 +2655,15 @@ export default function Viewport({
             // material model (NOT modern metalness/roughness PBR) —
             // texture burn confirms _spc map drives a Blinn-Phong-ish
             // specular response, not a Cook-Torrance energy-conserving
-            // BRDF. Spec/gloss materials get a far subtler IBL pickup
-            // than full PBR materials, so we cap vehicles at 0.15
-            // (was 0.2). Combines multiplicatively with the scene-
-            // level environmentIntensity (now 0.3), giving an effective
-            // vehicle env contribution of 0.15 × 0.3 ≈ 0.045 — enough
-            // to keep deep-shade panels legible without the cubemap's
-            // hue bleeding onto painted steel. Foliage / terrain /
-            // wreck props inherit the full 0.3 scene knob.
-            envMapIntensity: 0.15,
+            // BRDF. Set to 0.6 as a starting point; the PMREM source is
+            // now a neutral RoomEnvironment (or real cubemap when available)
+            // so the hue bleed that previously forced a very low value is
+            // reduced. Combines multiplicatively with the scene-level
+            // environmentIntensity (0.3), giving an effective vehicle env
+            // contribution of 0.6 × 0.3 = 0.18. Tune further after visual
+            // review. Foliage / terrain / wreck props inherit the full 0.3
+            // scene knob.
+            envMapIntensity: 0.6,
             // CoH2 RGM submeshes have inconsistent winding — some panels
             // (Puma turret, Panther skirts) end up with their normals
             // facing inwards, rendering as solid black. DoubleSide makes

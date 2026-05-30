@@ -856,13 +856,52 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('use-angle', 'gl')
 }
 
-app.whenReady().then(() => {
-  // Hydrate AI settings + decrypt stored keys before the renderer can
-  // call `ai:complete`. Cheap (3 file existence checks + small reads).
-  loadAiSettings()
-  for (const p of PROVIDERS) loadAiKey(p)
-  createWindow()
-})
+// ── AUDIT_REAL=1 gate ─────────────────────────────────────────────────────────
+// Real-pipeline audit: loads the actual app at ?audit=1, mounts the real
+// Viewport (MeshPhysicalMaterial + IBL + normalMap etc.), captures via
+// webContents.capturePage(). DO NOT launch CoH2; reads SGAs read-only.
+if (process.env.AUDIT_REAL === '1') {
+  import('./audit-capture-real').then(({ runAuditCaptureReal }) => {
+    runAuditCaptureReal()
+      .then(() => {
+        console.log('[audit-real] Capture complete, exiting.')
+        app.quit()
+      })
+      .catch(e => {
+        console.error('[audit-real] Capture failed:', e)
+        process.exit(1)
+      })
+  }).catch(e => {
+    console.error('[audit-real] Failed to load audit-capture-real module:', e)
+    process.exit(1)
+  })
+// ── AUDIT_CAPTURE=1 gate ──────────────────────────────────────────────────────
+// Legacy: loads audit-renderer.html (reimplemented renderer, flat diffuse only).
+// Kept for reference but superseded by AUDIT_REAL=1.
+} else if (process.env.AUDIT_CAPTURE === '1') {
+  import('./audit-capture').then(({ runAuditCapture }) => {
+    runAuditCapture()
+      .then(() => {
+        console.log('[audit] Capture complete, exiting.')
+        app.quit()
+      })
+      .catch(e => {
+        console.error('[audit] Capture failed:', e)
+        process.exit(1)
+      })
+  }).catch(e => {
+    console.error('[audit] Failed to load audit-capture module:', e)
+    process.exit(1)
+  })
+} else {
+  app.whenReady().then(() => {
+    // Hydrate AI settings + decrypt stored keys before the renderer can
+    // call `ai:complete`. Cheap (3 file existence checks + small reads).
+    loadAiSettings()
+    for (const p of PROVIDERS) loadAiKey(p)
+    createWindow()
+  })
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
