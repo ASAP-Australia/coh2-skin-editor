@@ -47,7 +47,12 @@ export interface DecalPackExportResult {
  * gate the export button on this condition).
  */
 export async function exportDecalPackZip(p: Coh2DecalPackProject): Promise<DecalPackExportResult> {
-  const visible = p.decals.filter(d => d.visible)
+  // v6: flatten all shared layers from all parts.
+  // v5 fallback: use decals[] directly (unchanged behaviour).
+  const visible: import('@/lib/decal-pack-project').Decal[] = p.parts
+    ? p.parts.flatMap(part => part.shared.filter(d => d.visible))
+    : p.decals.filter(d => d.visible)
+
   if (visible.length === 0) {
     throw new Error('No visible decals to export. Add at least one decal first.')
   }

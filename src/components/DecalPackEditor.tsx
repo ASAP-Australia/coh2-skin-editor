@@ -807,7 +807,10 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
       const iconCanvas = document.createElement('canvas')
       iconCanvas.width = iconCanvas.height = DECAL_ICON_SIZE
       const iconCtx = iconCanvas.getContext('2d')
-      const visibleDecal = project.decals.find(d => d.visible)
+      // v6: icon uses the first visible layer from any part. v5: use decals[].
+      const visibleDecal = project.parts
+        ? project.parts.flatMap(p => p.shared).find(d => d.visible)
+        : project.decals.find(d => d.visible)
       if (visibleDecal && iconCtx) {
         const src = project.sourceImages[visibleDecal.sourceImageId]
         if (src) {
@@ -822,23 +825,29 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         ? iconCtx.getImageData(0, 0, DECAL_ICON_SIZE, DECAL_ICON_SIZE).data
         : new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
 
-      // Render decal texture (128×128)
-      const texCanvas = document.createElement('canvas')
-      texCanvas.width = texCanvas.height = DECAL_TEXTURE_SIZE
-      const texCtx = texCanvas.getContext('2d')
-      if (visibleDecal && texCtx) {
-        const src = project.sourceImages[visibleDecal.sourceImageId]
-        if (src) {
-          const img = new Image()
-          img.src = src.dataUrl
-          await new Promise<void>(r => { img.onload = () => r(); img.onerror = () => r() })
-          const rendered = rasteriseDecal(visibleDecal, img)
-          texCtx.drawImage(rendered, 0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE)
+      // v6: per-part per-faction composite via partsForBake. v5: flat decalRgba.
+      const { partsForBake } = await import('@/lib/atlas-parts')
+      const partRgbas = await partsForBake(project)
+      let decalRgba: Uint8ClampedArray | undefined
+      if (!partRgbas) {
+        // v5 fallback: render flat texture.
+        const texCanvas = document.createElement('canvas')
+        texCanvas.width = texCanvas.height = DECAL_TEXTURE_SIZE
+        const texCtx = texCanvas.getContext('2d')
+        if (visibleDecal && texCtx) {
+          const src = project.sourceImages[visibleDecal.sourceImageId]
+          if (src) {
+            const img = new Image()
+            img.src = src.dataUrl
+            await new Promise<void>(r => { img.onload = () => r(); img.onerror = () => r() })
+            const rendered = rasteriseDecal(visibleDecal, img)
+            texCtx.drawImage(rendered, 0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE)
+          }
         }
+        decalRgba = texCtx
+          ? texCtx.getImageData(0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE).data
+          : new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
       }
-      const decalRgba = texCtx
-        ? texCtx.getImageData(0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE).data
-        : new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
 
       // Build a preview canvas from the source image at natural resolution so
       // the Workshop thumbnail is sharp. Pass the raw rasteriseDecal output —
@@ -870,7 +879,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         }
       }
 
-      const result = await buildDecalMod({ project, iconRgba, decalRgba, guid })
+      const result = await buildDecalMod({ project, iconRgba, decalRgba, partRgbas, guid })
       const target = makeDecalPublishTarget(
         project,
         result.sga,

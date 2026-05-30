@@ -519,7 +519,11 @@ class LiveSyncManager {
       // passing the 64×64 icon source would produce blank vehicle markings.
       const decalRgba = await renderDecalTexture(decalProject, DECAL_TEXTURE_SIZE)
 
-      const result = await buildDecalMod({ project: decalProject, iconRgba, decalRgba, guid })
+      // v6: compute per-part per-faction RGBAs for the atlas bake.
+      const { partsForBake } = await import('@/lib/atlas-parts')
+      const partRgbas = await partsForBake(decalProject)
+
+      const result = await buildDecalMod({ project: decalProject, iconRgba, decalRgba, partRgbas, guid })
       const filename = `${guid}.sga`
       return { bytes: result.sga, filename }
     } else {
@@ -841,7 +845,10 @@ async function renderDecalIcon(
     // Cache decoded source bitmaps so a project with repeated source-image
     // references doesn't decode the same PNG/JPG twice per sync.
     const bitmapCache = new Map<string, ImageBitmap | HTMLImageElement>()
-    const visible = project.decals.filter(d => d.visible)
+    // v6: collect all shared layers from all parts. v5: use decals[].
+    const visible = project.parts
+      ? project.parts.flatMap(part => part.shared.filter(d => d.visible))
+      : project.decals.filter(d => d.visible)
     let prevCanvas: OffscreenCanvas | HTMLCanvasElement | null = null
 
     // Compose each decal into the icon canvas. Each decal renders at the
@@ -906,6 +913,12 @@ async function renderDecalTexture(
     const { rasteriseDecal } = await import('@/lib/decal-pack-export')
     const { DECAL_PACK_SIZE } = await import('@/lib/decal-pack-project')
 
+    // v6 projects: atlas is composited per-faction inside buildDecalMod via partRgbas.
+    // Return a blank buffer here; the caller must pass partRgbas separately.
+    if (project.parts) {
+      return new Uint8ClampedArray(size * size * 4)
+    }
+    // v5 legacy path below:
     const bitmapCache = new Map<string, ImageBitmap | HTMLImageElement>()
     const visible = project.decals.filter(d => d.visible)
     let prevCanvas: OffscreenCanvas | HTMLCanvasElement | null = null
