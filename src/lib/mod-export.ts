@@ -36,7 +36,7 @@ import { decodeRgt } from './rgt'
 import { bcToCanvas } from './bc-decode'
 import { canvasToRgt } from './rgt-writer'
 import { buildSga, type SgaInputFile } from './sga-writer'
-import { paintDecals, type RenderContext } from './decal-painter'
+import { paintDecals, preloadDecalImages, type RenderContext } from './decal-painter'
 import { findVehicleSpec, inferProjectFactions, type Faction } from './vehicles'
 import type { Coh2SkinProject } from './project'
 
@@ -241,6 +241,10 @@ async function composeVehicleDiffuse(
     tac: veh.tac ?? vSpec.defaultTac,
     images: project.images ?? {},
   }
+  // Ensure every image decal is decoded BEFORE the single synchronous paint —
+  // otherwise an undecoded image would export as a placeholder and the texture
+  // would not pixel-match the editor preview.
+  await preloadDecalImages(veh.decals, project.images ?? {})
   paintDecals(renderCtx, veh.decals, null)
 
   // The TSET name CoH2 expects — backslash-separated, no extension.

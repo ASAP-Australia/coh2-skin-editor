@@ -23,7 +23,7 @@
  * vertical 3-icon column on the right edge (see ScenePanel).
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Eye,
   Paintbrush2,
@@ -74,6 +74,11 @@ import { VoiceInput } from '@/components/VoiceInput'
 import type { DiffusionStatus } from '@/lib/ai/types'
 import LiveSyncBadge from '@/components/LiveSyncBadge'
 import PublishToWorkshopDialog, { makeSkinPublishTarget } from '@/components/PublishToWorkshopDialog'
+import type { WorkshopPublishTarget } from '@/components/PublishToWorkshopDialog'
+import { PublishSection } from '@/components/PublishSection'
+import PackIdentityPopover from '@/components/PackIdentityPopover'
+import EditorTitlePill from '@/components/editor-primitives/EditorTitlePill'
+import { useLiveSync } from '@/lib/live-sync'
 
 type PanelId = 'view' | 'decals' | 'reference' | 'export' | 'parts' | 'camo' | 'scene' | 'brush'
 
@@ -227,6 +232,48 @@ export default function TopBar(p: Props) {
   const [factionOpen, setFactionOpen] = useState(false)
   const factionRef = useRef<HTMLDivElement>(null)
 
+  // ── Centered title pill state ─────────────────────────────────────────
+  const sync = useLiveSync()
+  const liveSyncTitle = sync.enabled
+    ? `Click to rename — Live Sync: ${sync.reason}`
+    : 'Click to rename — Live Sync is off'
+  const liveSyncAriaLabel = sync.enabled
+    ? `Pack name — click to rename. Live Sync: ${sync.reason}`
+    : 'Pack name — click to rename. Live Sync is off'
+  const [packNameEditOpen, setPackNameEditOpen] = useState(false)
+  const [pillPublishTarget, setPillPublishTarget] = useState<WorkshopPublishTarget | null>(null)
+  const [isBuildingTarget, setIsBuildingTarget] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
+
+  const handlePillRequestBuild = useCallback(async () => {
+    setIsBuildingTarget(true)
+    try {
+      const useKeys = await (await import('@/lib/mod-export')).hasKeyPool()
+      const activeSlot = p.project.exportSlots[p.project.activeSlotIdx]
+      const targetSlot = activeSlot ? activeSlot.slotIdx + 1 : 3
+      const result = useKeys
+        ? await (await import('@/lib/mod-export')).patchExport(p.installRoot, p.project, () => undefined)
+        : await (await import('@/lib/mod-export')).exportSkinPack(p.installRoot, p.project, () => undefined, targetSlot)
+      const target = makeSkinPublishTarget(
+        p.project,
+        result.bytes,
+        result.filename,
+        p.overlayCanvas,
+        workshopId => {
+          const next = { ...p.project, workshopId }
+          p.setProject(next)
+          persistActive(next)
+        },
+      )
+      setPillPublishTarget(target)
+    } catch (e) {
+      console.error('Skin publish build failed:', e)
+      p.toast(e instanceof Error ? e.message : 'Build failed', 'error')
+    } finally {
+      setIsBuildingTarget(false)
+    }
+  }, [p])
+
   /** Per-cluster memory of the last sub-tab the user opened. Lets clicking
    *  a cluster button restore the user's last context within that cluster
    *  instead of always reverting to the first child. */
@@ -294,10 +341,55 @@ export default function TopBar(p: Props) {
   }
 
   return (
-    // Reads `--app-top-inset` so the DemoBanner can push the chrome down
-    // out of its own footprint. The variable is set in App.tsx via the
-    // DemoBanner effect (52px when visible, 0 otherwise). Plain Tailwind
-    // `top-3` can't read CSS vars, so we override via inline style.
+    <>
+    {/* ── Centered glass title pill — matches decal & faceplate editors ── */}
+    <EditorTitlePill
+      packName={p.project.packName}
+      fallbackLabel="Unnamed Skin Pack"
+      syncState={sync.state}
+      liveSyncTitle={liveSyncTitle}
+      liveSyncAriaLabel={liveSyncAriaLabel}
+      titleAcknowledged={undefined}
+      onToggle={() => setPackNameEditOpen(v => !v)}
+      popoverOpen={packNameEditOpen}
+      popoverContent={
+        <PackIdentityPopover
+          open={packNameEditOpen}
+          onClose={() => {
+            setPackNameEditOpen(false)
+            setPillPublishTarget(null)
+          }}
+          name={p.project.packName ?? ''}
+          description={p.project.packDescription ?? ''}
+          author={p.project.author ?? ''}
+          onSave={({ name, description, author }) => {
+            const next = {
+              ...p.project,
+              packName: name.trim() || p.project.packName,
+              packDescription: description,
+              author: author.trim() || p.project.author,
+            }
+            p.setProject(next)
+            persistActive(next)
+          }}
+          publishSection={
+            <PublishSection
+              target={pillPublishTarget}
+              isBuildingTarget={isBuildingTarget}
+              onRequestBuild={handlePillRequestBuild}
+              onUploadStart={() => setIsUploading(true)}
+              onUploadEnd={() => setIsUploading(false)}
+            />
+          }
+          locked={isUploading || isBuildingTarget}
+        />
+      }
+    />
+    {/* Left-aligned floating chrome bar. Reads --app-top-inset so the
+        DemoBanner can push the chrome down out of its own footprint. The
+        variable is set in App.tsx via the DemoBanner effect (52px when
+        visible, 0 otherwise). Plain Tailwind top-3 can't read CSS vars,
+        so we override via inline style. */}
     <div
       className="absolute left-3 z-30 flex flex-col items-start gap-2"
       style={{ top: 'calc(0.75rem + var(--app-top-inset, 0px))' }}
@@ -572,6 +664,7 @@ export default function TopBar(p: Props) {
         </div>
       )}
     </div>
+    </>
   )
 }
 

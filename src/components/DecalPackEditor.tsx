@@ -69,7 +69,8 @@ import { scheduleLiveSync, useLiveSync } from '@/lib/live-sync'
 import { writeClipboard, readClipboard } from '@/lib/editor-clipboard'
 import { INSIGNIA_LIBRARY, type InsigniaEntry } from '@/lib/insignia-library'
 import HexColorInput from '@/components/editor-primitives/HexColorInput'
-import { StateIcon } from '@/components/LiveSyncBadge'
+import EditorTitlePill from '@/components/editor-primitives/EditorTitlePill'
+// StateIcon is now used by EditorTitlePill — no direct import needed here
 import AtlasViewPanel from '@/components/AtlasViewPanel'
 import DecalPackInGamePreview from '@/components/DecalPackInGamePreview'
 import {
@@ -79,7 +80,7 @@ import {
 } from '@/lib/atlas-view-settings'
 import ImageDropZone, { type ImageDropZoneHandle } from './editor-shared/ImageDropZone'
 import { PackIdentityPopover } from './PackIdentityPopover'
-import { BorderBeam } from '@/components/ui/border-beam'
+// BorderBeam is now used by EditorTitlePill — no direct import needed here
 import { makeDecalPublishTarget } from '@/components/PublishToWorkshopDialog'
 import { PublishSection } from '@/components/PublishSection'
 import FactionRow from '@/components/atlas/FactionRow'
@@ -1204,190 +1205,77 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
       />
 
       {/* ── Centered pack-name title pill — top-centre of viewport ──────────
-          Mirrors FaceplateEditor's centered title pattern so the user
-          always sees which pack they're editing. Click to open the identity
-          popover (name / description / author / icon). These ARE the
-          in-game text fields — name appears above the decal grid and on
-          the equip card; description is the body text on that card.
-          The Live Sync status icon is rendered inline at the end of the
-          title text — hover reveals the reason. */}
-      <div
-        style={
-          {
-            position: 'fixed',
-            top: 'calc(12px + var(--app-top-inset, 0px))',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 50,
-            WebkitAppRegion: 'no-drag',
-            display: 'flex',
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-          } as CSSProperties
+          Extracted to EditorTitlePill; mirrors FaceplateEditor and TopBar
+          (vehicle editor) patterns. Click opens PackIdentityPopover with
+          name / description / author / icon and publish controls. */}
+      <EditorTitlePill
+        packName={project.packName}
+        fallbackLabel="Unnamed Decal Pack"
+        syncState={sync.state}
+        liveSyncTitle={liveSyncTitle}
+        liveSyncAriaLabel={liveSyncAriaLabel}
+        titleAcknowledged={project.titleAcknowledged}
+        onAcknowledge={() => mutate(p => ({ ...p, titleAcknowledged: true }), { undoable: false })}
+        onToggle={() => setPackNameEditOpen(v => !v)}
+        popoverOpen={packNameEditOpen}
+        popoverContent={
+          <PackIdentityPopover
+            open={packNameEditOpen}
+            onClose={() => {
+              setPackNameEditOpen(false)
+              setPublishTarget(null)
+            }}
+            name={project.packName}
+            description={project.packDescription}
+            author={project.author}
+            onSave={({ name, description, author }) => {
+              mutate(
+                p => ({
+                  ...p,
+                  packName: name.trim() || p.packName,
+                  packDescription: description,
+                  author: author.trim() || p.author,
+                }),
+                { undoable: false },
+              )
+            }}
+            iconSlot={{
+              label: 'Pack icon',
+              currentDataUrl: project.packIcon ?? null,
+              fallbackHint: 'No icon set — engine uses first decal',
+              onChange: next => {
+                mutate(p => ({ ...p, packIcon: next ?? undefined }), { undoable: false })
+              },
+              sizePx: 64,
+            }}
+            extraSection={
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 10,
+                  color: 'rgba(255,255,255,0.38)',
+                  lineHeight: 1.45,
+                  borderTop: '0.5px solid rgba(255,255,255,0.08)',
+                  paddingTop: 8,
+                }}
+              >
+                Name and Description are the in-game fields — shown above the
+                decal grid and on the equip card in CoH2.
+              </p>
+            }
+            publishSection={
+              <PublishSection
+                target={publishTarget}
+                isBuildingTarget={isBuildingTarget}
+                onRequestBuild={handleRequestBuild}
+                onUploadStart={() => setIsUploading(true)}
+                onUploadEnd={() => setIsUploading(false)}
+              />
+            }
+            locked={isUploading || isBuildingTarget}
+          />
         }
-      >
-        {project.titleAcknowledged === false ? (
-          <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={12} borderWidth={1}>
-            <button
-              type="button"
-              title={liveSyncTitle}
-              aria-label={liveSyncAriaLabel}
-              onClick={() => {
-                if (project.titleAcknowledged === false) {
-                  mutate(p => ({ ...p, titleAcknowledged: true }), { undoable: false })
-                }
-                setPackNameEditOpen(v => !v)
-              }}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                height: 36,
-                paddingLeft: 14,
-                paddingRight: 14,
-                borderRadius: 12,
-                background: 'rgba(15, 17, 22, 0.75)',
-                backgroundImage:
-                  'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
-                backdropFilter: 'blur(40px) saturate(150%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-                border: '0.5px solid rgba(255, 255, 255, 0.08)',
-                boxShadow:
-                  'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-                color: 'rgba(247,247,250,0.88)',
-                cursor: 'pointer',
-                padding: '0 14px',
-                fontSize: 14,
-                fontWeight: 700,
-                letterSpacing: '0.01em',
-                whiteSpace: 'nowrap',
-                maxWidth: 'calc(100vw - 200px)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-              }}
-            >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {project.packName || 'Unnamed Decal Pack'}
-              </span>
-              <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
-                <StateIcon state={sync.state} />
-              </span>
-            </button>
-          </BorderBeam>
-        ) : (
-          <button
-            type="button"
-            title={liveSyncTitle}
-            aria-label={liveSyncAriaLabel}
-            onClick={() => {
-              setPackNameEditOpen(v => !v)
-            }}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              height: 36,
-              paddingLeft: 14,
-              paddingRight: 14,
-              borderRadius: 12,
-              background: 'rgba(15, 17, 22, 0.75)',
-              backgroundImage:
-                'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
-              backdropFilter: 'blur(40px) saturate(150%)',
-              WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-              border: '0.5px solid rgba(255, 255, 255, 0.08)',
-              boxShadow:
-                'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-              color: 'rgba(247,247,250,0.88)',
-              cursor: 'pointer',
-              padding: '0 14px',
-              fontSize: 14,
-              fontWeight: 700,
-              letterSpacing: '0.01em',
-              whiteSpace: 'nowrap',
-              maxWidth: 'calc(100vw - 200px)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-            }}
-          >
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {project.packName || 'Unnamed Decal Pack'}
-            </span>
-            <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
-              <StateIcon state={sync.state} />
-            </span>
-          </button>
-        )}
-
-        {/* Pack identity popover — name / description / author / icon.
-            Name and Description ARE the in-game text fields: name appears
-            above the decal grid in the customise screen and on the equip
-            card; description is the body text on that card.
-            Uses the shared PackIdentityPopover so all identity-edit surfaces
-            stay in sync. Escape / outside-click closes (autosync, no Save). */}
-        <PackIdentityPopover
-          open={packNameEditOpen}
-          onClose={() => {
-            setPackNameEditOpen(false)
-            setPublishTarget(null)
-          }}
-          name={project.packName}
-          description={project.packDescription}
-          author={project.author}
-          onSave={({ name, description, author }) => {
-            // Autosync — fired per-keystroke; do NOT close on each change.
-            // The popover closes on Escape / outside-click via onClose.
-            mutate(
-              p => ({
-                ...p,
-                packName: name.trim() || p.packName,
-                packDescription: description,
-                author: author.trim() || p.author,
-              }),
-              { undoable: false },
-            )
-          }}
-          iconSlot={{
-            label: 'Pack icon',
-            currentDataUrl: project.packIcon ?? null,
-            fallbackHint: 'No icon set — engine uses first decal',
-            onChange: next => {
-              mutate(p => ({ ...p, packIcon: next ?? undefined }), { undoable: false })
-            },
-            sizePx: 64,
-          }}
-          extraSection={
-            <p
-              style={{
-                margin: 0,
-                fontSize: 10,
-                color: 'rgba(255,255,255,0.38)',
-                lineHeight: 1.45,
-                borderTop: '0.5px solid rgba(255,255,255,0.08)',
-                paddingTop: 8,
-              }}
-            >
-              Name and Description are the in-game fields — shown above the
-              decal grid and on the equip card in CoH2.
-            </p>
-          }
-          publishSection={
-            <PublishSection
-              target={publishTarget}
-              isBuildingTarget={isBuildingTarget}
-              onRequestBuild={handleRequestBuild}
-              onUploadStart={() => setIsUploading(true)}
-              onUploadEnd={() => setIsUploading(false)}
-            />
-          }
-          locked={isUploading || isBuildingTarget}
-        />
-      </div>
+      />
 
       {/* Atlas part + faction controls — shown only for v6 projects */}
       {project.parts && (

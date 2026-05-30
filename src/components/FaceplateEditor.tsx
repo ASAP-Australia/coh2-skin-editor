@@ -63,6 +63,7 @@ import {
 import { writeClipboard, readClipboard, type ClipboardEntry } from '@/lib/editor-clipboard'
 import { INSIGNIA_LIBRARY, type InsigniaEntry } from '@/lib/insignia-library'
 import HexColorInput from '@/components/editor-primitives/HexColorInput'
+import EditorTitlePill from '@/components/editor-primitives/EditorTitlePill'
 import CurvesEditor from '@/components/editor-primitives/CurvesEditor'
 import {
   AlignCenter,
@@ -100,7 +101,7 @@ import {
   WholeWord,
 } from 'lucide-react'
 import { applySnap, type SnapTarget } from '@/lib/snap-guides'
-import { StateIcon } from '@/components/LiveSyncBadge'
+// StateIcon is now used by EditorTitlePill — no direct import needed here
 import AtlasViewPanel from '@/components/AtlasViewPanel'
 import FaceplateInGamePreview from '@/components/FaceplateInGamePreview'
 import {
@@ -111,7 +112,7 @@ import {
 import ImageDropZone from './editor-shared/ImageDropZone'
 import CanvasHandles from './editor-shared/CanvasHandles'
 import { PackIdentityPopover } from './PackIdentityPopover'
-import { BorderBeam } from '@/components/ui/border-beam'
+// BorderBeam is now used by EditorTitlePill — no direct import needed here
 import { makeFaceplatePublishTarget } from '@/components/PublishToWorkshopDialog'
 import { PublishSection } from '@/components/PublishSection'
 import {
@@ -1561,175 +1562,69 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
       />
 
       {/* ── Centered project title pill — top center of viewport ────────
-          Mirrors EditorHomeButton's glass styling. Clicking opens a small
-          rename popover so the user can rename the pack inline. Shows ONLY
-          packName (never author). The Live Sync status icon is rendered
-          inline at the end of the title text — hover reveals the reason. */}
-      <div
-        style={
-          {
-            position: 'fixed',
-            top: 'calc(12px + var(--app-top-inset, 0px))',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 50,
-            WebkitAppRegion: 'no-drag',
-            display: 'flex',
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-          } as CSSProperties
+          Extracted to EditorTitlePill; mirrors DecalPackEditor and TopBar
+          (vehicle editor). Click opens PackIdentityPopover with name /
+          description / author / icon and publish controls. */}
+      <EditorTitlePill
+        packName={project.packName ?? ''}
+        fallbackLabel="Unnamed Faceplate"
+        syncState={sync.state}
+        liveSyncTitle={liveSyncTitle}
+        liveSyncAriaLabel={liveSyncAriaLabel}
+        titleAcknowledged={project.titleAcknowledged}
+        onAcknowledge={() => mutate(p => ({ ...p, titleAcknowledged: true }), { undoable: false })}
+        onToggle={() => setPackNameEditOpen(v => !v)}
+        popoverOpen={packNameEditOpen}
+        popoverContent={
+          <PackIdentityPopover
+            open={packNameEditOpen}
+            onClose={() => {
+              setPackNameEditOpen(false)
+              setPublishTarget(null)
+            }}
+            name={project.packName ?? ''}
+            description={project.packDescription}
+            author={project.author}
+            onSave={({
+              name,
+              description,
+              author,
+            }: {
+              name: string
+              description: string
+              author: string
+            }) => {
+              mutate(
+                p => ({
+                  ...p,
+                  packName: name.trim() || p.packName,
+                  packDescription: description,
+                  author: author.trim() || p.author,
+                }),
+                { undoable: false },
+              )
+            }}
+            iconSlot={{
+              label: 'Inventory icon',
+              currentDataUrl: project.inventoryIcon ?? null,
+              fallbackHint: 'Falls back to auto-downsample of banner',
+              onChange: (next: string | null) =>
+                mutate(p => ({ ...p, inventoryIcon: next ?? undefined }), { undoable: false }),
+              sizePx: 64,
+            }}
+            publishSection={
+              <PublishSection
+                target={publishTarget}
+                isBuildingTarget={isBuildingTarget}
+                onRequestBuild={handleRequestBuild}
+                onUploadStart={() => setIsUploading(true)}
+                onUploadEnd={() => setIsUploading(false)}
+              />
+            }
+            locked={isUploading || isBuildingTarget}
+          />
         }
-      >
-        {project.titleAcknowledged === false ? (
-          <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={12} borderWidth={1}>
-            <button
-              type="button"
-              title={liveSyncTitle}
-              aria-label={liveSyncAriaLabel}
-              onClick={() => {
-                if (project.titleAcknowledged === false) {
-                  mutate(p => ({ ...p, titleAcknowledged: true }), { undoable: false })
-                }
-                setPackNameEditOpen(v => !v)
-              }}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                height: 36,
-                paddingLeft: 14,
-                paddingRight: 14,
-                borderRadius: 12,
-                background: 'rgba(15, 17, 22, 0.75)',
-                backgroundImage:
-                  'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
-                backdropFilter: 'blur(40px) saturate(150%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-                border: '0.5px solid rgba(255, 255, 255, 0.08)',
-                boxShadow:
-                  'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-                color: 'rgba(247,247,250,0.88)',
-                cursor: 'pointer',
-                padding: '0 14px',
-                fontSize: 14,
-                fontWeight: 700,
-                letterSpacing: '0.01em',
-                whiteSpace: 'nowrap',
-                maxWidth: 'calc(100vw - 200px)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-              }}
-            >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {project.packName || 'Unnamed Faceplate'}
-              </span>
-              <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
-                <StateIcon state={sync.state} />
-              </span>
-            </button>
-          </BorderBeam>
-        ) : (
-          <button
-            type="button"
-            title={liveSyncTitle}
-            aria-label={liveSyncAriaLabel}
-            onClick={() => {
-              setPackNameEditOpen(v => !v)
-            }}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              height: 36,
-              paddingLeft: 14,
-              paddingRight: 14,
-              borderRadius: 12,
-              background: 'rgba(15, 17, 22, 0.75)',
-              backgroundImage:
-                'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
-              backdropFilter: 'blur(40px) saturate(150%)',
-              WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-              border: '0.5px solid rgba(255, 255, 255, 0.08)',
-              boxShadow:
-                'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-              color: 'rgba(247,247,250,0.88)',
-              cursor: 'pointer',
-              padding: '0 14px',
-              fontSize: 14,
-              fontWeight: 700,
-              letterSpacing: '0.01em',
-              whiteSpace: 'nowrap',
-              maxWidth: 'calc(100vw - 200px)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-            }}
-          >
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {project.packName || 'Unnamed Faceplate'}
-            </span>
-            <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
-              <StateIcon state={sync.state} />
-            </span>
-          </button>
-        )}
-
-        {/* Rename popover — appears directly below the title button */}
-        <PackIdentityPopover
-          open={packNameEditOpen}
-          onClose={() => {
-            setPackNameEditOpen(false)
-            setPublishTarget(null)
-          }}
-          name={project.packName ?? ''}
-          description={project.packDescription}
-          author={project.author}
-          onSave={({
-            name,
-            description,
-            author,
-          }: {
-            name: string
-            description: string
-            author: string
-          }) => {
-            // Autosync — popover fires this on every keystroke now; do
-            // NOT close on every change. Popover handles its own close on
-            // Escape / outside-click.
-            mutate(
-              p => ({
-                ...p,
-                packName: name.trim() || p.packName,
-                packDescription: description,
-                author: author.trim() || p.author,
-              }),
-              { undoable: false },
-            )
-          }}
-          iconSlot={{
-            label: 'Inventory icon',
-            currentDataUrl: project.inventoryIcon ?? null,
-            fallbackHint: 'Falls back to auto-downsample of banner',
-            onChange: (next: string | null) =>
-              mutate(p => ({ ...p, inventoryIcon: next ?? undefined }), { undoable: false }),
-            sizePx: 64,
-          }}
-          publishSection={
-            <PublishSection
-              target={publishTarget}
-              isBuildingTarget={isBuildingTarget}
-              onRequestBuild={handleRequestBuild}
-              onUploadStart={() => setIsUploading(true)}
-              onUploadEnd={() => setIsUploading(false)}
-            />
-          }
-          locked={isUploading || isBuildingTarget}
-        />
-      </div>
+      />
 
       {/* ProjectMetaPanel + LobbyPreviewPanel intentionally removed from
           the faceplate editor in v1.0 — they blocked the canvas without
