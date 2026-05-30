@@ -323,6 +323,14 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
                     maxLength={128}
                     placeholder={target.packName}
                     className="w-full"
+                    onFocus={e => {
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.30)'
+                      e.currentTarget.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.07)'
+                    }}
+                    onBlur={e => {
+                      e.currentTarget.style.borderColor = ''
+                      e.currentTarget.style.boxShadow = ''
+                    }}
                     style={inputStyle}
                   />
                 </FieldGroup>
@@ -334,6 +342,14 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
                     disabled={busy}
                     rows={4}
                     placeholder="Describe your mod for Workshop browsers…"
+                    onFocus={e => {
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.30)'
+                      e.currentTarget.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.07)'
+                    }}
+                    onBlur={e => {
+                      e.currentTarget.style.borderColor = ''
+                      e.currentTarget.style.boxShadow = ''
+                    }}
                     style={{ ...inputStyle, resize: 'vertical' as const, minHeight: 80 }}
                   />
                 </FieldGroup>
@@ -355,6 +371,14 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
                       disabled={busy}
                       placeholder="What changed in this update?"
                       maxLength={8000}
+                      onFocus={e => {
+                        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.30)'
+                        e.currentTarget.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.07)'
+                      }}
+                      onBlur={e => {
+                        e.currentTarget.style.borderColor = ''
+                        e.currentTarget.style.boxShadow = ''
+                      }}
                       style={inputStyle}
                     />
                   </FieldGroup>
@@ -391,16 +415,23 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
                 <button
                   type="button"
                   disabled={busy}
+                  aria-label="Upload a custom preview PNG image"
                   onClick={() => fileInputRef.current?.click()}
                   style={{
                     fontSize: 10,
-                    color: 'var(--color-accent, #d97706)',
+                    color: busy ? 'rgba(247,247,250,0.3)' : 'var(--color-accent)',
                     background: 'none',
                     border: 'none',
                     cursor: busy ? 'not-allowed' : 'pointer',
-                    padding: 0,
+                    padding: '2px 0',
                     textDecoration: 'underline',
+                    textUnderlineOffset: 2,
+                    outline: 'none',
+                    borderRadius: 3,
+                    transition: 'color 0.12s',
                   }}
+                  onFocus={e => { if (!busy) e.currentTarget.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.18)' }}
+                  onBlur={e => { e.currentTarget.style.boxShadow = '' }}
                 >
                   Upload custom PNG
                 </button>
@@ -408,15 +439,21 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
                   <button
                     type="button"
                     disabled={busy}
+                    aria-label="Revert to auto-generated preview"
                     onClick={() => setCustomPreviewDataUrl(null)}
                     style={{
                       fontSize: 10,
-                      color: 'rgba(247,247,250,0.4)',
+                      color: busy ? 'rgba(247,247,250,0.2)' : 'rgba(247,247,250,0.45)',
                       background: 'none',
                       border: 'none',
                       cursor: busy ? 'not-allowed' : 'pointer',
-                      padding: 0,
+                      padding: '2px 0',
+                      outline: 'none',
+                      borderRadius: 3,
+                      transition: 'color 0.12s',
                     }}
+                    onFocus={e => { if (!busy) e.currentTarget.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.14)' }}
+                    onBlur={e => { e.currentTarget.style.boxShadow = '' }}
                   >
                     Use auto-generated
                   </button>
@@ -428,7 +465,7 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
                   className="hidden"
                   onChange={handleCustomPreview}
                 />
-                <div style={{ fontSize: 9, color: 'rgba(247,247,250,0.28)', textAlign: 'center', maxWidth: 112 }}>
+                <div style={{ fontSize: 9, color: 'rgba(247,247,250,0.28)', textAlign: 'center', maxWidth: 112, lineHeight: 1.4 }}>
                   512×512 min recommended
                 </div>
               </div>
@@ -442,7 +479,7 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
             <Button
               variant="ghost"
               onClick={handleClose}
-              style={{ color: 'rgba(247,247,250,0.45)', fontSize: 13 }}
+              style={{ color: 'rgba(247,247,250,0.55)', fontSize: 13 }}
             >
               Cancel
             </Button>
@@ -536,20 +573,22 @@ function SuccessView({
             justifyContent: 'center',
             height: 40,
             borderRadius: 10,
-            background: 'rgba(217,119,6,0.85)',
+            background: 'var(--color-accent)',
             color: '#000',
             fontWeight: 700,
             fontSize: 13,
             textDecoration: 'none',
-            transition: 'background 0.12s',
+            transition: 'opacity 0.12s',
           }}
+          onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.opacity = '0.88' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.opacity = '' }}
         >
           View on Workshop ↗
         </a>
         <Button
           variant="ghost"
           onClick={onDone}
-          style={{ height: 40, color: 'rgba(247,247,250,0.6)' }}
+          style={{ height: 40, color: 'rgba(247,247,250,0.55)', fontSize: 13 }}
         >
           Done
         </Button>
@@ -593,6 +632,7 @@ const inputStyle: React.CSSProperties = {
   outline: 'none',
   fontFamily: 'inherit',
   boxSizing: 'border-box' as const,
+  transition: 'border-color 0.12s, box-shadow 0.12s',
 }
 
 // ---------------------------------------------------------------------------

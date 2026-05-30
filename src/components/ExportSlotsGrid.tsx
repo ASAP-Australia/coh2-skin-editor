@@ -130,7 +130,7 @@ export default function ExportSlotsGrid({
 
 function RowLabel({ label }: { label: string }) {
   return (
-    <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-3)]">{label}</div>
+    <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-3)]">{label}</div>
   )
 }
 
@@ -187,7 +187,8 @@ const SlotTile = memo(function SlotTile({
       onClick={onSelect}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all
+      aria-label={`${slot.label || cap(slot.season) + ' ' + (slot.slotIdx + 1)} — ${slot.season} slot ${slot.slotIdx + 1}${active ? ' (active)' : ''}`}
+      className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-1 focus-visible:ring-offset-black/80
         ${
           active
             ? 'border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]/40'
@@ -198,7 +199,7 @@ const SlotTile = memo(function SlotTile({
       {thumbUrl ? (
         <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
       ) : (
-        <div className="w-full h-full flex items-center justify-center bg-white/5 text-[10px] text-zinc-500">
+        <div className="w-full h-full flex items-center justify-center bg-white/5 text-[10px] text-[var(--color-text-3)]">
           {isEmpty ? 'empty' : '…'}
         </div>
       )}

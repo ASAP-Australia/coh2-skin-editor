@@ -111,6 +111,7 @@ const inputStyle: React.CSSProperties = {
   outline: 'none',
   fontFamily: 'inherit',
   boxSizing: 'border-box' as const,
+  transition: 'border-color 0.12s, box-shadow 0.12s',
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +210,7 @@ function SuccessView({
           href={itemUrl}
           target="_blank"
           rel="noopener noreferrer"
+          className="bb-pressable"
           style={{
             flex: 1,
             display: 'flex',
@@ -216,20 +218,22 @@ function SuccessView({
             justifyContent: 'center',
             height: 40,
             borderRadius: 10,
-            background: 'rgba(217,119,6,0.85)',
+            background: 'var(--color-accent)',
             color: '#000',
             fontWeight: 700,
             fontSize: 13,
             textDecoration: 'none',
-            transition: 'background 0.12s',
+            transition: 'opacity 0.12s',
           }}
+          onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.opacity = '0.88' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.opacity = '' }}
         >
           View on Workshop ↗
         </a>
         <Button
           variant="ghost"
           onClick={onDone}
-          style={{ height: 40, color: 'rgba(247,247,250,0.6)' }}
+          style={{ height: 40, color: 'rgba(247,247,250,0.55)', fontSize: 13 }}
         >
           Done
         </Button>
@@ -489,6 +493,14 @@ export function PublishSection({
             disabled={busy}
             placeholder="What changed in this update?"
             maxLength={8000}
+            onFocus={e => {
+              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.30)'
+              e.currentTarget.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.07)'
+            }}
+            onBlur={e => {
+              e.currentTarget.style.borderColor = ''
+              e.currentTarget.style.boxShadow = ''
+            }}
             style={inputStyle}
           />
         </FieldGroup>
