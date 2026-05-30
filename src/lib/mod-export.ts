@@ -94,16 +94,50 @@ export function factionSgaCandidates(faction: string): string[] {
   }
 }
 
-/** Filename aliases — CoH2 names a handful of textures differently from the
- *  entity directory (e.g. elefant/elefant_hull_dif.rgt, panther_ausf_g/
- *  panther_dif.rgt). The export pipeline tries each candidate in order. */
+/**
+ * On-disk folder name alias for vehicles whose vehicles.ts `id` does NOT match
+ * the real game folder under `art/armies/<faction>/vehicles/<folder>/`.
+ *
+ * Key   = vehicles.ts id  (never changes — ripples through project state / UI)
+ * Value = real game folder name confirmed from official Relic SGA archives
+ *
+ * Confirmed against ArtBritish.sga and ArtSovietEF.sga:
+ *   centaur   → centaur_aa          (ArtBritish: vehicles/centaur_aa/...)
+ *   t_34_85   → t34_85              (ArtSovietEF: vehicles/t34_85/...)
+ *   valentine → valentine_command   (ArtBritish: vehicles/valentine_command/...)
+ */
+export const VEHICLE_FOLDER_ALIAS: Record<string, string> = {
+  centaur:   'centaur_aa',
+  t_34_85:   't34_85',
+  valentine: 'valentine_command',
+}
+
+/** Returns the real on-disk folder name for a vehicle id. */
+export function vehicleFolder(vehicleId: string): string {
+  return VEHICLE_FOLDER_ALIAS[vehicleId] ?? vehicleId
+}
+
+/**
+ * Basename aliases — CoH2 names a handful of textures differently from the
+ * vehicle id (e.g. elefant/elefant_hull_dif.rgt, panther_ausf_g/panther_dif.rgt,
+ * centaur_aa/centaur_aa_dif.rgt). The read pipeline tries each candidate in
+ * order; the write pipeline uses only the first (canonical) entry.
+ *
+ * Confirmed against official Relic SGA archives (ArtGermanEF, ArtWestGerman,
+ * ArtSovietEF, ArtAEFSkins, ArtAEF, ArtBritish).
+ */
 export function textureBaseNamesFor(vehicleId: string): string[] {
   const aliases: Record<string, string[]> = {
-    elefant:               ['elefant_hull', 'elefant'],
-    ostwind_flak_panzer:   ['ostwind', 'ostwind_flak_panzer'],
-    sdkfz_222:             ['sdkfz221', 'sdkfz_222'],
-    panther_ausf_g:        ['panther', 'panther_ausf_g'],
-    halftrack:             ['halftrack', 'halftrack_sdkfz_251'],
+    // Genuine basename-differs-from-id cases (game uses a different name):
+    elefant:             ['elefant_hull', 'elefant'],
+    ostwind_flak_panzer: ['ostwind', 'ostwind_flak_panzer'],
+    sdkfz_222:           ['sdkfz221', 'sdkfz_222'],
+    panther_ausf_g:      ['panther', 'panther_ausf_g'],
+    halftrack:           ['halftrack', 'halftrack_sdkfz_251'],
+    // Folder-alias vehicles: their basename matches the real folder name, not vSpec.id
+    centaur:             ['centaur_aa'],
+    t_34_85:             ['t_34_85'],       // basename is t_34_85, folder is t34_85
+    valentine:           ['valentine_command'],
   }
   return aliases[vehicleId] ?? [vehicleId]
 }
@@ -187,7 +221,7 @@ async function composeVehicleDiffuse(
         } catch { continue }
       }
       for (const base of baseNames) {
-        const difPath = `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/${base}_dif.rgt`
+        const difPath = `art/armies/${vSpec.faction}/vehicles/${vehicleFolder(vSpec.id)}/${base}_dif.rgt`
         const b = await a.readByPath(difPath)
         if (b) { sga = a; rgtBytes = b; break outer }
       }
@@ -209,8 +243,11 @@ async function composeVehicleDiffuse(
   }
   paintDecals(renderCtx, veh.decals, null)
 
-  // The TSET name CoH2 expects — backslash-separated, no extension
-  const difTset = `art\\armies\\${vSpec.faction}\\vehicles\\${vSpec.id}\\${vSpec.id}_dif`
+  // The TSET name CoH2 expects — backslash-separated, no extension.
+  // Use vehicleFolder + outputBasename so the path matches the real on-disk layout.
+  const folder = vehicleFolder(vSpec.id)
+  const baseName = outputBasename(vSpec.id)
+  const difTset = `art\\armies\\${vSpec.faction}\\vehicles\\${folder}\\${baseName}_dif`
   return { canvas: out, difTset }
 }
 
@@ -257,30 +294,35 @@ function rewriteInfo(buf: Uint8Array, packName: string, packDesc: string): Uint8
 }
 
 // ---------------------------------------------------------------------------
-// Output basename aliases (mirrors build-template.ts OUTPUT_BASENAME)
+// Output basename aliases — canonical write-side basenames for exported RGTs.
+// Confirmed against official Relic SGA archives (see VEHICLE_FOLDER_ALIAS above
+// for folder-alias vehicles). Any id NOT in this map uses its own id as basename.
 // ---------------------------------------------------------------------------
-const OUTPUT_BASENAME: Record<string, string> = {
-  elefant:               'elefant_hull',
-  ostwind_flak_panzer:   'ostwind',
-  sdkfz_222:             'sdkfz221',
-  panther_ausf_g:        'panther',
-  halftrack:             'halftrack',
-  sdkfz_250:             'sdkfz250',
-  king_tiger_sdkfz_182:  'kingtiger',
-  puma_sdkfz_234:        'puma',
-  jagdtiger:             'jagdtiger',
-  jagdpanzer_iv_sdkfz_162: 'jagdpanzer_iv',
-  panzer_ii_luchs_sdkfz_123: 'luchs',
-  panzer_iv_sdkfz_ausf_i: 'panzeriv',
-  m4a3e8_sherman_easy_8: 'm4a3e8_sherman',
-  m4a3_sherman_76mm:     'm4a3_sherman_76',
-  m4a1_sherman_calliope: 'm4a1_calliope',
-  m10_tank_destroyer:    'm10',
-  m36_tank_destroyer:    'm36',
-  m15a1_aa_halftrack:    'm15_aa_halftrack',
-  sherman_firefly:       'firefly',
+
+/**
+ * Maps vehicle id → canonical _dif basename as expected by the CoH2 engine.
+ * Only entries where the basename differs from the vehicle id are listed.
+ *
+ * Confirmed sources:
+ *  - "genuine" aliases (elefant_hull, sdkfz221, ostwind, panther): ArtGermanEF / ArtWestGerman
+ *  - folder-alias vehicles (centaur_aa, t_34_85, valentine_command): ArtBritish / ArtSovietEF
+ *  - formerly wrong entries corrected from ArtWestGerman / ArtAEF / ArtAEFSkins / ArtBritish
+ */
+export const OUTPUT_BASENAME: Record<string, string> = {
+  // Genuine basename-differs-from-id (real game uses different texture name):
+  elefant:                   'elefant_hull',
+  ostwind_flak_panzer:       'ostwind',
+  sdkfz_222:                 'sdkfz221',
+  panther_ausf_g:            'panther',
+  halftrack:                 'halftrack',
+  // Folder-alias vehicles: basename equals the real folder name (not vSpec.id):
+  centaur:                   'centaur_aa',
+  t_34_85:                   't_34_85',        // folder = t34_85, basename = t_34_85
+  valentine:                 'valentine_command',
 }
-function outputBasename(vehicleId: string): string {
+
+/** Returns the canonical output basename for a vehicle id (write-side, single value). */
+export function outputBasename(vehicleId: string): string {
   return OUTPUT_BASENAME[vehicleId] ?? vehicleId
 }
 
@@ -366,14 +408,15 @@ export async function patchExport(
     const vSpec = findVehicleSpec(id, factionHintsPatch)
     if (!vSpec) continue
     const baseName = outputBasename(id)
-    const difTset = `art\\armies\\${vSpec.faction}\\vehicles\\${id}\\${baseName}_dif`
+    const folder = vehicleFolder(id)
+    const difTset = `art\\armies\\${vSpec.faction}\\vehicles\\${folder}\\${baseName}_dif`
 
     // Generate fixed-size RGT (compress:false → deterministic BC3 byte length)
     const rgtBytes = canvasToRgt(composed.canvas, difTset, { compress: false })
 
     // Overwrite both summer and winter slots in the template
     for (const season of ['summer', 'winter'] as const) {
-      const sgaPath = `art/armies/${vSpec.faction}/vehicles/${id}/skins/${key.guid}_${season}/${baseName}_dif.rgt`
+      const sgaPath = `art/armies/${vSpec.faction}/vehicles/${folder}/skins/${key.guid}_${season}/${baseName}_dif.rgt`
       const entry = key.rgtFiles[sgaPath]
       if (!entry) {
         console.warn(`patchExport: no manifest entry for ${sgaPath}`)
@@ -461,8 +504,10 @@ export async function exportSkinPack(
     // Encode + wrap as RGT, and add for both summer + winter slots.
     const rgtBytes = canvasToRgt(composed.canvas, composed.difTset)
     const vSpec = findVehicleSpec(id, factionHints)!
+    const outBase = outputBasename(id)
+    const outFolder = vehicleFolder(id)
     for (const season of ['summer', 'winter'] as const) {
-      const path = `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/skins/${newGuid}_${season}/${vSpec.id}_dif.rgt`
+      const path = `art/armies/${vSpec.faction}/vehicles/${outFolder}/skins/${newGuid}_${season}/${outBase}_dif.rgt`
       sgaFiles.push({ path, bytes: rgtBytes, compress: false })
     }
   }

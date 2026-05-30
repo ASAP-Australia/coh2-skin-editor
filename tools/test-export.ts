@@ -51,6 +51,7 @@ import { paintDecals, type RenderContext } from '../src/lib/decal-painter'
 import { VEHICLES, type VehicleSpec } from '../src/lib/vehicles'
 import { buildDutchBrigadeDemo } from '../src/lib/demo-project'
 import { type Coh2SkinProject } from '../src/lib/project'
+import { OUTPUT_BASENAME, vehicleFolder, textureBaseNamesFor } from '../src/lib/mod-export'
 
 // ---------------------------------------------------------------------------
 // Args
@@ -174,38 +175,10 @@ async function compositeVehicle(
     : vSpec.faction === 'soviet' ? ['ArtSovietEF.sga']
     : vSpec.faction === 'aef' ? ['ArtAEFSkins.sga', 'ArtAEF.sga']
     : vSpec.faction === 'british' ? ['ArtBritish.sga'] : ['ArtArmies.sga']
-  // Filename aliases — a few entities use different basenames on disk
-  // sourceAliases: ordered list of basenames to try when reading from the game archive
-  const sourceAliases: Record<string, string[]> = {
-    elefant: ['elefant_hull', 'elefant'],
-    ostwind_flak_panzer: ['ostwind', 'ostwind_flak_panzer'],
-    sdkfz_222: ['sdkfz221', 'sdkfz_222'],
-    panther_ausf_g: ['panther', 'panther_ausf_g'],
-  }
-  // outputBasename: the filename the game expects inside the skin folder
-  const outputBasename: Record<string, string> = {
-    elefant: 'elefant_hull',
-    ostwind_flak_panzer: 'ostwind',
-    sdkfz_222: 'sdkfz221',
-    panther_ausf_g: 'panther',
-    halftrack: 'halftrack',
-    sdkfz_250: 'sdkfz250',
-    king_tiger_sdkfz_182: 'kingtiger',
-    puma_sdkfz_234: 'puma',
-    jagdtiger: 'jagdtiger',
-    jagdpanzer_iv_sdkfz_162: 'jagdpanzer_iv',
-    panzer_ii_luchs_sdkfz_123: 'luchs',
-    panzer_iv_sdkfz_ausf_i: 'panzeriv',
-    m4a3e8_sherman_easy_8: 'm4a3e8_sherman',
-    m4a3_sherman_76mm: 'm4a3_sherman_76',
-    m4a1_sherman_calliope: 'm4a1_calliope',
-    m10_tank_destroyer: 'm10',
-    m36_tank_destroyer: 'm36',
-    m15a1_aa_halftrack: 'm15_aa_halftrack',
-    sherman_firefly: 'firefly',
-  }
-  const baseNames = sourceAliases[vSpec.id] ?? [vSpec.id]
-  const outBase = outputBasename[vSpec.id] ?? vSpec.id
+  // Use mod-export's canonical maps (single source of truth)
+  const baseNames = textureBaseNamesFor(vSpec.id)
+  const outBase = OUTPUT_BASENAME[vSpec.id] ?? vSpec.id
+  const outFolder = vehicleFolder(vSpec.id)
   let sga: SgaArchive | null = null
   let rgtBytes: Uint8Array | null = null
   outer: for (const sgaName of sgaCandidates) {
@@ -216,7 +189,7 @@ async function compositeVehicle(
       cache.set(sgaName, a)
     }
     for (const base of baseNames) {
-      const difPath = `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/${base}_dif.rgt`
+      const difPath = `art/armies/${vSpec.faction}/vehicles/${outFolder}/${base}_dif.rgt`
       const b = await a.readByPath(difPath)
       if (b) { sga = a; rgtBytes = b; break outer }
     }
@@ -239,7 +212,7 @@ async function compositeVehicle(
     images: project.images ?? {},
   }
   paintDecals(renderCtx, veh.decals, null)
-  return { canvas: out, difTset: `art\\armies\\${vSpec.faction}\\vehicles\\${vSpec.id}\\${outBase}_dif`, outBase }
+  return { canvas: out, difTset: `art\\armies\\${vSpec.faction}\\vehicles\\${outFolder}\\${outBase}_dif`, outBase }
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +250,7 @@ const main = async () => {
     const rgtBytes = canvasToRgt(c.canvas as unknown as HTMLCanvasElement, c.difTset)
     for (const season of ['summer', 'winter'] as const) {
       sgaFiles.push({
-        path: `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/skins/${newGuid}_${season}/${c.outBase}_dif.rgt`,
+        path: `art/armies/${vSpec.faction}/vehicles/${vehicleFolder(vSpec.id)}/skins/${newGuid}_${season}/${c.outBase}_dif.rgt`,
         bytes: rgtBytes, compress: false,
       })
     }

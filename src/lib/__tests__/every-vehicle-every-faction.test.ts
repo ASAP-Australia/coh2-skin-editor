@@ -40,7 +40,7 @@ import path from 'node:path'
 
 import { newProject } from '../project'
 import type { Decal, DecalType } from '../project'
-import { exportSkinPack } from '../mod-export'
+import { exportSkinPack, vehicleFolder, OUTPUT_BASENAME } from '../mod-export'
 import { VEHICLES, type Faction } from '../vehicles'
 import { SgaArchive } from '../sga'
 
@@ -287,51 +287,16 @@ describe('every-vehicle-every-faction — exportSkinPack smoke', () => {
       expect(arch).toBeDefined()
 
       // Verify every vehicle's summer+winter RGT lands at the canonical
-      // engine-scan path. Use the EXACT path-building rule exportSkinPack
-      // uses internally (mod-export.ts:638) so a mismatch fails loudly.
-      // `outputBasename` mapping isn't exported — we mirror the rule that
-      // most vehicles use their bare id and a handful map to a shorter
-      // basename. The set of remappings is closed (see OUTPUT_BASENAME in
-      // mod-export.ts), so when the round-trip lookup with the bare id
-      // fails we retry against the known shorter basenames.
-      const OUTPUT_BASENAME_RETRIES: Record<string, string[]> = {
-        king_tiger_sdkfz_182: ['king_tiger'],
-        jagdpanzer_iv_sdkfz_162: ['jagdpanzer_iv'],
-        panzer_iv_sdkfz_ausf_i: ['panzer_iv'],
-        puma_sdkfz_234: ['puma'],
-        panzer_ii_luchs_sdkfz_123: ['panzer_ii_luchs'],
-        halftrack_sdkfz_251: ['halftrack_251'],
-        halftrack_sdkfz_251_flak: ['halftrack_251_flak'],
-        halftrack_sdkfz_251_infrared: ['halftrack_251_ir'],
-        is2m_heavy_tank: ['is2m'],
-        kv1_heavy_tank: ['kv1'],
-        kv2_heavy_tank: ['kv2'],
-        t70m_light_tank: ['t70'],
-        il2m_sturmovik_aircraft: ['il2m'],
-        m4a3e8_sherman_easy_8: ['m4a3e8'],
-        m4a3_sherman_76mm: ['m4a3_sherman_76'],
-        m4a1_sherman_calliope: ['m4a1_calliope'],
-        m10_tank_destroyer: ['m10'],
-        m36_tank_destroyer: ['m36'],
-        m15a1_aa_halftrack: ['m15_aa_halftrack'],
-        sherman_firefly: ['firefly'],
-        stuka_aircraft: ['stuka'],
-        ju_52_cargo_aircraft: ['ju_52'],
-      }
+      // engine-scan path. Use vehicleFolder + OUTPUT_BASENAME (both exported
+      // from mod-export.ts) — the EXACT same mapping exportSkinPack uses.
       const failures: string[] = []
       for (const vSpec of vehicles) {
-        const baseTries = [vSpec.id, ...(OUTPUT_BASENAME_RETRIES[vSpec.id] ?? [])]
+        const outFolder = vehicleFolder(vSpec.id)
+        const outBase = OUTPUT_BASENAME[vSpec.id] ?? vSpec.id
         for (const season of ['summer', 'winter'] as const) {
-          let found = false
-          for (const base of baseTries) {
-            const p = `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/skins/${result.modGuid}_${season}/${base}_dif.rgt`
-            const bytes = await arch.readByPath(p)
-            if (bytes && bytes.length > 0) {
-              found = true
-              break
-            }
-          }
-          if (!found) failures.push(`${vSpec.id}:${season}`)
+          const p = `art/armies/${vSpec.faction}/vehicles/${outFolder}/skins/${result.modGuid}_${season}/${outBase}_dif.rgt`
+          const bytes = await arch.readByPath(p)
+          if (!bytes || bytes.length === 0) failures.push(`${vSpec.id}:${season}`)
         }
       }
       expect(failures, `Missing RGTs for ${faction}: ${failures.join(', ')}`).toEqual([])
