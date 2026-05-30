@@ -7,10 +7,6 @@ import { parseRgm, type RgmModel } from '@/lib/rgm'
 import { decodeRgt, rgtToCompressedTexture } from '@/lib/rgt'
 import { bcToCanvas } from '@/lib/bc-decode'
 import { rgmPath, type VehicleSpec } from '@/lib/vehicles'
-import {
-  SCENE_PRESETS, DEFAULT_PRESET_ID, applySeasonOverrides,
-  type PresetId, type ToneMappingMode,
-} from '@/lib/scene-settings'
 // Sky / PMREM env removed — they were washing the model to white. Studio
 // lighting only now (HemisphereLight + 3 directional lights) so diffuse
 // + normal maps read cleanly against a dark backdrop.
@@ -40,8 +36,6 @@ interface Props {
    *  groups whose names contain "destroyed" / "wreck" — toggling this swaps
    *  which set is rendered. */
   showDestroyed?: boolean
-  /** Active scene preset. Defaults to DEFAULT_PRESET_ID ('in_game_field'). */
-  presetId?: PresetId
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +55,6 @@ export default function Viewport({
   onPartsLoaded, selectedPart, explodeAll, season,
   envArchive: _envArchive, envName: _envName,
   showDestroyed = false,
-  presetId = DEFAULT_PRESET_ID,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef    = useRef<HTMLCanvasElement>(null)
@@ -78,10 +71,6 @@ export default function Viewport({
   const fillRef          = useRef<THREE.DirectionalLight | null>(null)
   const groundMeshRef    = useRef<THREE.Mesh | null>(null)
   const groundMatRef     = useRef<THREE.MeshStandardMaterial | null>(null)
-  const rendererRef      = useRef<THREE.WebGLRenderer | null>(null)
-  /** All lights that belong to the active preset (built + added in the
-   *  preset-change useEffect). Teardown removes these before rebuilding. */
-  const presetLightsRef  = useRef<THREE.Light[]>([])
   // (skyRef / pmremRef removed with Three.Sky)
 
   // Explode animation state
@@ -108,13 +97,17 @@ export default function Viewport({
     // Output in SRGB color space — without this Three.js renders in linear
     // space and the result appears significantly darker than the source textures.
     renderer.outputColorSpace = THREE.SRGBColorSpace
-    // Tone-mapping and exposure are now applied by the preset-change useEffect
-    // below — initialise with neutral defaults that the preset effect will
-    // immediately overwrite on first render.
-    renderer.toneMapping = THREE.NeutralToneMapping
-    renderer.toneMappingExposure = 1.0
-    rendererRef.current = renderer
+    // Mild ACES filmic tone map keeps bright highlights from clipping.
+    // Bumped exposure 1.2→1.6 — Electron's Chromium renders darker than
+    // dev Chrome with the same lighting; this pushes mid-tones up so the
+    // model reads as well-lit instead of murky.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.6
     const scene = new THREE.Scene()
+    // Dark studio backdrop — near-black, slight cool tint. Replaces the
+    // Three.Sky atmospheric shader which was bleeding bright sky into the
+    // backdrop-blur chrome and washing the model to white.
+    scene.background = new THREE.Color(0x0a0b0e)
     sceneRef.current = scene
 
     const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 200)
@@ -126,7 +119,41 @@ export default function Viewport({
     controls.target.set(0, 1.2, 0)
     controlsRef.current = controls
 
-    // Ground plane — visibility / colour are controlled by the preset effect.
+    // ── Studio lighting (no IBL/env) ─────────────────────────────────────
+    // Hemisphere supplies a soft cool-from-above / warm-from-below ambient
+    // tint that fills the dark side of the model. Three directional lights
+    // form a 3-point: key (warm front-right), fill (cool front-left), rim
+    // (cool back). No env map, no PMREM — keeps materials reading their
+    // diffuse + normal maps cleanly without sky-tint washout.
+    // Lighting from SESSION_HANDOFF.md — the exact values that rendered
+    // correctly in the web app. These are a 3-point studio setup:
+    //   • Hemisphere: cool sky / dim warm-ground ambient fill
+    //   • Key:  warm DirectionalLight front-right  (main source)
+    //   • Fill: cool DirectionalLight front-left   (lifts shadows)
+    //   • Rim:  cool DirectionalLight back          (separation)
+    // No env-map / PMREM — those washed diffuse tones to white.
+    // Hemisphere intensity bumped 0.50→0.85 so shadow-side faces have lift
+    // instead of falling to near-black under ACES tone mapping.
+    const ambient = new THREE.HemisphereLight(0xa0b0c8, 0x303030, 0.85)
+    ambientRef.current = ambient as unknown as THREE.AmbientLight
+    scene.add(ambient)
+
+    const sun = new THREE.DirectionalLight(0xfff1d6, 1.45)
+    sun.position.set(5, 8, 5)
+    sunRef.current = sun
+    scene.add(sun)
+
+    const fill = new THREE.DirectionalLight(0x90a8c8, 0.65)
+    fill.position.set(-6, 4, -3)
+    fillRef.current = fill
+    scene.add(fill)
+
+    const rim = new THREE.DirectionalLight(0xb0c4d8, 0.75)
+    rim.position.set(-2, 2, -8)
+    scene.add(rim)
+
+    // Ground — clean dark plane. Catches subtle shadows from the directional
+    // lights but doesn't compete with the model.
     const groundGeo = new THREE.PlaneGeometry(200, 200, 1, 1)
     const groundMat = new THREE.MeshStandardMaterial({
       color: 0x1c1e22, metalness: 0, roughness: 1.0,
@@ -137,6 +164,14 @@ export default function Viewport({
     ground.receiveShadow = true
     groundMeshRef.current = ground
     scene.add(ground)
+
+    // Subtle contact-shadow grid only — helps spatial reading without the
+    // "techy" look of a full grid helper.
+    const grid = new THREE.GridHelper(60, 30, 0x000000, 0x000000)
+    ;(grid.material as THREE.Material).transparent = true
+    ;(grid.material as THREE.Material).opacity = 0.10
+    grid.position.y = 0.005
+    scene.add(grid)
 
     let raf = 0
     const tick = () => {
@@ -178,110 +213,29 @@ export default function Viewport({
   }, [])
 
   // =========================================================================
-  // Preset + season → lights, tone-mapping, background
-  //
-  // Runs whenever presetId or season changes. Tears down all lights added
-  // by the previous preset run, then rebuilds from SCENE_PRESETS[presetId]
-  // with season overrides applied on top (only in_game_field reacts to season
-  // — see applySeasonOverrides in scene-settings.ts).
+  // Season → lighting + ground color
   // =========================================================================
   useEffect(() => {
-    const scene = sceneRef.current
-    const renderer = rendererRef.current
-    if (!scene || !renderer) return
-
-    // ── Tear down previous preset lights ──────────────────────────────────
-    for (const light of presetLightsRef.current) {
-      scene.remove(light)
-      light.dispose?.()
-    }
-    presetLightsRef.current = []
-
-    // ── Resolve the effective preset (with season overrides) ──────────────
-    const base = SCENE_PRESETS[presetId]
-    const preset = applySeasonOverrides(base, season)
-
-    // ── Tone-mapping ──────────────────────────────────────────────────────
-    const tmMap: Record<ToneMappingMode, THREE.ToneMapping> = {
-      aces:     THREE.ACESFilmicToneMapping,
-      neutral:  THREE.NeutralToneMapping,
-      reinhard: THREE.ReinhardToneMapping,
-    }
-    renderer.toneMapping = tmMap[preset.toneMapping]
-    renderer.toneMappingExposure = preset.exposure
-
-    // ── Background ────────────────────────────────────────────────────────
-    if (preset.background.kind === 'color') {
-      scene.background = new THREE.Color(preset.background.hex)
+    // Summer: warm front-right key, neutral fills, dark earth ground.
+    // Winter: cooler blue-white sun (snow-sky bounce), brighter fill to
+    //         simulate snow-reflected light, pale grey ground.
+    if (!sunRef.current || !fillRef.current || !sceneRef.current) return
+    if (season === 'winter') {
+      sunRef.current.color.setHex(0xd8e8ff)   // cooler, snow-sky
+      sunRef.current.intensity = 1.20
+      fillRef.current.color.setHex(0xb0c8ff)  // blue-white bounce
+      fillRef.current.intensity = 0.75
+      if (groundMatRef.current) groundMatRef.current.color.setHex(0x9aabb8) // snowy pale
+      sceneRef.current.background = new THREE.Color(0x0d1016)  // slightly cooler dark
     } else {
-      // cubemap: fall back to a dark neutral until a CoH2 cubemap loader is
-      // wired up. The original Viewport used 0x0a0b0e for the in-game preset;
-      // preserve that dark tone here so the scene isn't jarring.
-      scene.background = new THREE.Color(0x0a0b0e)
+      sunRef.current.color.setHex(0xfff1d6)   // warm summer key
+      sunRef.current.intensity = 1.45
+      fillRef.current.color.setHex(0x90a8c8)  // cool fill
+      fillRef.current.intensity = 0.65
+      if (groundMatRef.current) groundMatRef.current.color.setHex(0x1c1e22) // dark earth
+      sceneRef.current.background = new THREE.Color(0x0a0b0e)
     }
-
-    // ── Hemisphere light ──────────────────────────────────────────────────
-    const hemi = new THREE.HemisphereLight(
-      preset.hemi.sky, preset.hemi.ground, preset.hemi.intensity,
-    )
-    // Keep ambientRef / sunRef / fillRef pointed at the first two directional
-    // lights so any external code that historically read them still works.
-    ambientRef.current = hemi as unknown as THREE.AmbientLight
-    scene.add(hemi)
-    presetLightsRef.current.push(hemi)
-
-    // ── Directional lights ────────────────────────────────────────────────
-    preset.directionalLights.forEach((spec, i) => {
-      const dl = new THREE.DirectionalLight(spec.color, spec.intensity)
-      dl.position.set(...spec.position)
-      scene.add(dl)
-      presetLightsRef.current.push(dl)
-      if (i === 0) sunRef.current = dl
-      if (i === 1) fillRef.current = dl
-    })
-
-    // ── Omni fill lights (studio_grid + showcase) ─────────────────────────
-    if (preset.omniLights) {
-      for (const spec of preset.omniLights) {
-        const dl = new THREE.DirectionalLight(spec.color, spec.intensity)
-        dl.position.set(...spec.position)
-        scene.add(dl)
-        presetLightsRef.current.push(dl)
-      }
-    }
-
-    // ── Ground plane visibility ───────────────────────────────────────────
-    if (groundMeshRef.current) {
-      groundMeshRef.current.visible = preset.showGround
-    }
-    // ── Grid helper ───────────────────────────────────────────────────────
-    // Remove any existing grid helpers from the scene before possibly
-    // re-adding one for studio_grid preset.
-    scene.children
-      .filter(c => c instanceof THREE.GridHelper)
-      .forEach(c => scene.remove(c))
-    if (preset.showGrid) {
-      const grid = new THREE.GridHelper(60, 30, 0x000000, 0x000000)
-      ;(grid.material as THREE.Material).transparent = true
-      ;(grid.material as THREE.Material).opacity = 0.10
-      grid.position.y = 0.005
-      scene.add(grid)
-    }
-
-    // ── Auto-rotate ───────────────────────────────────────────────────────
-    if (controlsRef.current) {
-      if (preset.autoRotate === false) {
-        controlsRef.current.autoRotate = false
-      } else if (preset.autoRotate === true) {
-        controlsRef.current.autoRotate = true
-        controlsRef.current.autoRotateSpeed = 0.6
-      } else {
-        controlsRef.current.autoRotate = true
-        controlsRef.current.autoRotateSpeed = preset.autoRotate
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presetId, season])
+  }, [season])
 
   // Env archive override is intentionally disabled — the Three.Sky shader
   // and the clean PBR ground look better than the CoH2 sky/terrain RGTs
@@ -335,7 +289,7 @@ export default function Viewport({
       targetPosRef.current = new Map()
       explodeProgressRef.current = 1
       onPartsLoaded?.([])
-      onModelLoaded?.({ meshes: [], textureSets: [], materials: new Map() } as unknown as RgmModel, null)
+      onModelLoaded?.({ meshes: [], textureSets: [], materials: new Map() } as any, null)
     }
 
     const run = async () => {
@@ -660,8 +614,8 @@ export default function Viewport({
           const cacheKey = materialName ?? '__body__'
           if (texCache.has(cacheKey)) return texCache.get(cacheKey)!
           const token = materialName ? tokenFor(materialName) : ''
-          let difPath: string | null
-          let nrmPath: string | null
+          let difPath: string | null = null
+          let nrmPath: string | null = null
           if (token) {
             difPath = findTset(p => p.includes(`_${token}_`) && /_dif$/.test(p))
             nrmPath = findTset(p => p.includes(`_${token}_`) && /_nrm$|_norm$/.test(p))
@@ -720,7 +674,7 @@ export default function Viewport({
           // Mark whether this submesh uses the BODY diffuse — only those
           // get the editable overlay rebound onto them. Tracks/wheels/wrecks
           // keep their own (non-editable) tile/wreck textures.
-          ;(mat as THREE.MeshStandardMaterial & { __usesBodyDiffuse?: boolean }).__usesBodyDiffuse = isBodyMaterial(sub.materialName)
+          ;(mat as any).__usesBodyDiffuse = isBodyMaterial(sub.materialName)
           const m = new THREE.Mesh(sub.geometry, mat)
           m.name = sub.name
           group.add(m)
@@ -783,9 +737,9 @@ export default function Viewport({
         // texture and decals wouldn't show.
         setModelTick(t => t + 1)
         setLoading(false)
-      } catch (e: unknown) {
+      } catch (e: any) {
         console.error(e)
-        if (!cancelled) { setErr((e as { message?: string })?.message ?? String(e)); setLoading(false) }
+        if (!cancelled) { setErr(e?.message ?? String(e)); setLoading(false) }
       }
     }
     run()
@@ -815,7 +769,7 @@ export default function Viewport({
           // Only rebind the editable overlay onto submeshes that use the
           // BODY diffuse. Tracks/wheels keep their own (tile) textures so
           // we don't smear the hull atlas across treads.
-          if ((mat as THREE.MeshStandardMaterial & { __usesBodyDiffuse?: boolean }).__usesBodyDiffuse) {
+          if ((mat as any).__usesBodyDiffuse) {
             mat.map = overlayTexRef.current
             mat.needsUpdate = true
           }
@@ -826,7 +780,7 @@ export default function Viewport({
         const m = o as THREE.Mesh
         if (m.isMesh) {
           const mat = m.material as THREE.MeshStandardMaterial
-          if ((mat as THREE.MeshStandardMaterial & { __usesBodyDiffuse?: boolean }).__usesBodyDiffuse) {
+          if ((mat as any).__usesBodyDiffuse) {
             mat.map = baseTextureRef.current
             mat.needsUpdate = true
           }

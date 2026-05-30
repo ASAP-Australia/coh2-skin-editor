@@ -10,6 +10,7 @@ import { installSkinPack, loadSavedModsHandle, pickModsFolder } from '@/lib/coh2
 import { SgaArchive } from '@/lib/sga'
 import { parsePrompt, listPresets, type CamoPreset, generateCamo } from '@/lib/camo-generator'
 import { SKYBOX_ENVS } from '@/lib/skybox'
+import { FACTION_ICONS, FACTION_LABELS } from '@/lib/factions'
 import { PublishSection } from '@/components/PublishSection'
 import { makeSkinPublishTarget, type WorkshopPublishTarget } from '@/components/PublishToWorkshopDialog'
 
@@ -76,6 +77,16 @@ export default function TopMenu(p: Props) {
     <div ref={wrapRef} className="top-menu-wrap absolute top-2 left-2 z-20 flex flex-col gap-2 items-start">
       {/* Brand pill + menu buttons row */}
       <div className="glass-2 rounded-2xl px-3 py-2 flex items-center gap-2 shadow-[var(--shadow-glass)]">
+        {/* Faction emblem badge (restored from the pre-knip TopBar lobby icon).
+            Heraldic emblem for the current vehicle's faction; see
+            FACTION_ICONS in src/lib/factions.tsx. */}
+        <div
+          className="shrink-0 w-7 h-7 rounded-full bg-white/5 ring-1 ring-white/10 flex items-center justify-center overflow-hidden"
+          title={FACTION_LABELS[p.vehicle.faction]}
+          aria-label={`${FACTION_LABELS[p.vehicle.faction]} faction`}
+        >
+          {FACTION_ICONS[p.vehicle.faction]}
+        </div>
         <div className="pr-2 mr-1 border-r border-white/10 leading-tight">
           <div className="text-[9px] uppercase tracking-[1.5px] text-[var(--color-accent)] font-bold">CoH2</div>
           <div className="text-[12px] text-white font-semibold">{p.vehicle.displayName}</div>
