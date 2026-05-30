@@ -7,6 +7,7 @@ import { parseRgm, type RgmModel } from '@/lib/rgm'
 import { decodeRgt, rgtToCompressedTexture } from '@/lib/rgt'
 import { bcToCanvas } from '@/lib/bc-decode'
 import { rgmPath, type VehicleSpec } from '@/lib/vehicles'
+import type { PresetId } from '@/lib/scene-settings'
 // Sky / PMREM env removed — they were washing the model to white. Studio
 // lighting only now (HemisphereLight + 3 directional lights) so diffuse
 // + normal maps read cleanly against a dark backdrop.
@@ -36,6 +37,12 @@ interface Props {
    *  groups whose names contain "destroyed" / "wreck" — toggling this swaps
    *  which set is rendered. */
   showDestroyed?: boolean
+  /** Scene preset id from the Scene panel. Accepted for API compatibility
+   *  with the current Editor shell; this studio-lit viewport (restored from
+   *  the fa942a6 known-good state) uses fixed 3-point lighting and ignores
+   *  presets. Kept optional + unused so the preset dropdown is a no-op here
+   *  rather than a type error. */
+  presetId?: PresetId
 }
 
 // ---------------------------------------------------------------------------
