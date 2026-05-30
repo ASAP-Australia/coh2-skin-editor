@@ -14,6 +14,8 @@
 [![OSV Scanner](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/osv-scanner.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/osv-scanner.yml)
 [![Dependency Review](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/dependency-review.yml)
 [![codecov](https://codecov.io/gh/ASAP-Australia/coh2-skin-editor/branch/main/graph/badge.svg)](https://codecov.io/gh/ASAP-Australia/coh2-skin-editor)
+[![knip](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/knip.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/knip.yml)
+[![lockfile-lint](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/lockfile-lint.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/lockfile-lint.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A desktop skin / decal / faceplate editor for **Company of Heroes 2** that
@@ -67,7 +69,7 @@ local mods folder under a flag the engine recognizes during development.
 ```sh
 npm install
 npm run electron:dev     # runs Vite + Electron with hot reload
-npm run test             # runs the Vitest suite (~1500 tests)
+npm run test             # runs the Vitest suite (1577 tests)
 npm run electron:build   # produces an AppImage in ./release
 ```
 
@@ -102,7 +104,7 @@ can ship a skin pack without learning the Mod Tools end-to-end.
 
 CI runs on every PR:
 
-- **CI** — `tsc`, ESLint, Vitest (~1500 unit + component tests), Playwright
+- **CI** — `tsc`, ESLint, Vitest (1577 unit + component tests), Playwright
   smoke
 - **CodeQL** — static analysis for JS/TS security issues
 - **OpenSSF Scorecard** — supply-chain & repository-hygiene scoring
