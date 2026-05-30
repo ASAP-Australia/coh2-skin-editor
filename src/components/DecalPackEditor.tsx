@@ -82,6 +82,10 @@ import { PackIdentityPopover } from './PackIdentityPopover'
 import { BorderBeam } from '@/components/ui/border-beam'
 import { makeDecalPublishTarget } from '@/components/PublishToWorkshopDialog'
 import { PublishSection } from '@/components/PublishSection'
+import FactionRow from '@/components/atlas/FactionRow'
+import PartStepper from '@/components/atlas/PartStepper'
+import FactionPartMatrix from '@/components/atlas/FactionPartMatrix'
+import type { DecalFaction } from '@/lib/decal-mod-templates'
 import {
   BlendModeSelect,
   BottomToolPill,
@@ -159,6 +163,24 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
   /** Active snap guide lines while a decal drag is in progress. */
   const [snapGuides, setSnapGuides] = useState<SnapTarget[]>([])
 
+  // ── Atlas part / faction state (v6) ───────────────────────────────────
+  const [activePartIndex, setActivePartIndex] = useState<number>(
+    initialProject.activePartIndex ?? 1
+  )
+  const [activeFaction, setActiveFaction] = useState<DecalFaction | null>(
+    initialProject.activeFaction ?? null
+  )
+  const [showPartMatrix, setShowPartMatrix] = useState(false)
+
+  // Persist part/faction into project on change
+  useEffect(() => {
+    setProject(prev => ({
+      ...prev,
+      activePartIndex,
+      activeFaction,
+    }))
+  }, [activePartIndex, activeFaction])
+
   // ── Decal strip context menu ───────────────────────────────────────────
   const [decalCtxMenu, setDecalCtxMenu] = useState<{
     id: string
@@ -229,14 +251,24 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         return
       }
       const decal = newDecal(draft, imageId, name)
-      mutate(p => ({
-        ...p,
-        sourceImages: { ...p.sourceImages, ...draft.sourceImages },
-        decals: [...p.decals, decal],
-        activeDecalId: decal.id,
-      }))
+      mutate(p => {
+        if (p.parts) {
+          // v6: append to active part's shared or faction override layers.
+          const parts = p.parts.map((part, i) => {
+            if (i !== activePartIndex) return part
+            if (activeFaction && part.overrides) {
+              const existing = part.overrides[activeFaction] ?? []
+              return { ...part, overrides: { ...part.overrides, [activeFaction]: [...existing, decal] }, activeLayerId: decal.id }
+            }
+            return { ...part, shared: [...part.shared, decal], activeLayerId: decal.id }
+          })
+          return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, parts, decals: [...p.decals, decal] }
+        }
+        // v5 fallback:
+        return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, decals: [...p.decals, decal], activeDecalId: decal.id }
+      })
     },
-    [project, mutate],
+    [project, mutate, activePartIndex, activeFaction],
   )
 
   const onAddImageFiles = useCallback(
@@ -246,17 +278,27 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         void addDecalSourceImageFromFile(draft, file)
           .then(imageId => {
             const decal = newDecal(draft, imageId, file.name)
-            mutate(p => ({
-              ...p,
-              sourceImages: { ...p.sourceImages, ...draft.sourceImages },
-              decals: [...p.decals, decal],
-              activeDecalId: decal.id,
-            }))
+            mutate(p => {
+              if (p.parts) {
+                // v6: append to active part's shared or faction override layers.
+                const parts = p.parts.map((part, i) => {
+                  if (i !== activePartIndex) return part
+                  if (activeFaction && part.overrides) {
+                    const existing = part.overrides[activeFaction] ?? []
+                    return { ...part, overrides: { ...part.overrides, [activeFaction]: [...existing, decal] }, activeLayerId: decal.id }
+                  }
+                  return { ...part, shared: [...part.shared, decal], activeLayerId: decal.id }
+                })
+                return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, parts, decals: [...p.decals, decal] }
+              }
+              // v5 fallback:
+              return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, decals: [...p.decals, decal], activeDecalId: decal.id }
+            })
           })
           .catch(e => console.warn('decal source import failed', e))
       }
     },
-    [project, mutate],
+    [project, mutate, activePartIndex, activeFaction],
   )
 
   const onAddImageToCanvas = useCallback(
@@ -322,12 +364,22 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
     if (newDecals.length === 0) return
 
     const lastDecal = newDecals[newDecals.length - 1]
-    mutate(p => ({
-      ...p,
-      sourceImages: { ...p.sourceImages, ...draft.sourceImages },
-      decals: [...p.decals, ...newDecals],
-      activeDecalId: lastDecal.id,
-    }))
+    mutate(p => {
+      if (p.parts) {
+        // v6: append to active part's shared layers.
+        const parts = p.parts.map((part, i) => {
+          if (i !== activePartIndex) return part
+          if (activeFaction && part.overrides) {
+            const existing = part.overrides[activeFaction] ?? []
+            return { ...part, overrides: { ...part.overrides, [activeFaction]: [...existing, ...newDecals] }, activeLayerId: lastDecal.id }
+          }
+          return { ...part, shared: [...part.shared, ...newDecals], activeLayerId: lastDecal.id }
+        })
+        return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, parts, decals: [...p.decals, ...newDecals] }
+      }
+      // v5 fallback:
+      return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, decals: [...p.decals, ...newDecals], activeDecalId: lastDecal.id }
+    })
 
     if (capped) {
       setBatchWarning(
@@ -1336,6 +1388,67 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         />
       </div>
 
+      {/* Atlas part + faction controls — shown only for v6 projects */}
+      {project.parts && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 56,           // below title pill (~44px) + 12px margin
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 45,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 6,
+          }}
+        >
+          <PartStepper
+            activeIndex={activePartIndex}
+            onChange={setActivePartIndex}
+          />
+          <FactionRow
+            activeFaction={activeFaction}
+            onChange={setActiveFaction}
+          />
+          <button
+            onClick={() => setShowPartMatrix(v => !v)}
+            style={{
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.5)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+            }}
+          >
+            {showPartMatrix ? 'Hide matrix' : 'Show parts \u00d7 factions'}
+          </button>
+          {showPartMatrix && (
+            <div
+              style={{
+                background: 'rgba(16,18,24,0.92)',
+                border: '1px solid rgba(255,255,255,0.10)',
+                borderRadius: 12,
+                padding: 12,
+                backdropFilter: 'blur(20px)',
+              }}
+            >
+              <FactionPartMatrix
+                project={project}
+                activePart={activePartIndex}
+                activeFaction={activeFaction}
+                onSelect={(pi, faction) => {
+                  setActivePartIndex(pi)
+                  setActiveFaction(faction)
+                  setShowPartMatrix(false)
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       {/* LobbyPreviewPanel was removed in v1.0 — the in-editor player-card
           mock didn't accurately match what the player sees in the CoH2
           customisation screen (the engine renders the decal against a
@@ -1767,12 +1880,22 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                     const draft = structuredClone(project)
                     const imageId = await addDecalSourceImageFromBlob(draft, blob, insignia.name)
                     const decal: Decal = newDecal(draft, imageId, insignia.name)
-                    mutate(p => ({
-                      ...p,
-                      sourceImages: { ...p.sourceImages, ...draft.sourceImages },
-                      decals: [...p.decals, decal],
-                      activeDecalId: decal.id,
-                    }))
+                    mutate(p => {
+                      if (p.parts) {
+                        // v6: append to active part's shared or override layers.
+                        const parts = p.parts.map((part, i) => {
+                          if (i !== activePartIndex) return part
+                          if (activeFaction && part.overrides) {
+                            const existing = part.overrides[activeFaction] ?? []
+                            return { ...part, overrides: { ...part.overrides, [activeFaction]: [...existing, decal] }, activeLayerId: decal.id }
+                          }
+                          return { ...part, shared: [...part.shared, decal], activeLayerId: decal.id }
+                        })
+                        return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, parts, decals: [...p.decals, decal] }
+                      }
+                      // v5 fallback:
+                      return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, decals: [...p.decals, decal], activeDecalId: decal.id }
+                    })
                     setInsigniaOpen(false)
                   } catch (e) {
                     console.warn('insignia import failed', e)
