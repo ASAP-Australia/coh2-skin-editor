@@ -1292,6 +1292,14 @@ export default function Editor({
             // season swap that was queued for the same vehicle.
             setVehicleLoading(false)
             setSeasonLoading(false)
+            // Seed the overlay with the freshly-decoded base diffuse. The
+            // overlay canvas is what body materials bind as their `map`; for a
+            // vanilla vehicle (no decals/camo) nothing else triggers a repaint
+            // after this async callback sets baseDiffuseRef via a ref (which
+            // does not re-render). Without this, the overlay stays the initial
+            // blank canvas and the hull renders flat gray while tracks (non-
+            // body materials, which keep their own texture) look fine.
+            repaint()
             // First-time-only handoff: tells App.tsx the loading-state
             // AuthShell can fade out and the Editor can become visible.
             // Guarded by a ref (not state) so the gating is synchronous
