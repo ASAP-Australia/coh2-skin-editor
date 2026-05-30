@@ -146,9 +146,11 @@ export default function ConnectScreen({ onConnected }: Props) {
 
   return (
     <div>
-      <h1 className="text-[26px] font-semibold tracking-tight text-white leading-[1.15] mb-4">
+      {/* h2 because AuthShell provides the sr-only h1 product heading;
+          reduced to text-[20px] font-medium per heading hierarchy audit. */}
+      <h2 className="text-[20px] font-medium tracking-tight text-white leading-[1.15] mb-4">
         Connect your CoH2 install
-      </h1>
+      </h2>
 
       <ul className="mb-5 space-y-1.5 text-[13px] text-[var(--color-text-2)] leading-snug">
         {[
@@ -205,7 +207,8 @@ export default function ConnectScreen({ onConnected }: Props) {
           disabled={!supported || busy}
           onClick={connect}
           className="bb-connect relative w-full text-white font-semibold h-12 text-[14px] tracking-tight
-                     disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/[0.10]"
+                     disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/[0.10]
+                     focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/60 focus-visible:outline-none"
           style={{
             borderRadius: 16,
             cursor: busy ? 'progress' : 'pointer',
@@ -245,22 +248,11 @@ export default function ConnectScreen({ onConnected }: Props) {
         </button>
       </BorderBeam>
 
+      {/* bb-pressable / bb-cta / @keyframes bb-spinner-rotate are defined
+          globally in index.css. bb-connect keeps its own transition here. */}
       <style>{`
-        .bb-pressable {
-          transition: transform 240ms cubic-bezier(.4, 1.6, .5, 1);
-          will-change: transform;
-          transform-origin: center;
-          display: block;
-        }
-        .bb-pressable:has(button:not(:disabled):active) {
-          transform: scale(0.95);
-          transition: transform 90ms cubic-bezier(.3, 0, .7, 1);
-        }
         .bb-connect {
           transition: background-color 160ms ease-out;
-        }
-        @keyframes bb-spinner-rotate {
-          to { transform: rotate(360deg); }
         }
       `}</style>
     </div>

@@ -350,3 +350,41 @@ body {
 ::view-transition-new(root) {
   animation: vt-slide-down-in 240ms cubic-bezier(.32, .72, 0, 1) both;
 }
+
+/* ── BorderBeam pressable + CTA utilities ─────────────────────────────────
+ * Extracted from ConnectScreen / StartScreen / NewProjectForm where they
+ * lived as identical inline <style> blocks. Centralised here so a single
+ * source-of-truth drives the spring-bounce press animation and hover
+ * background across every BorderBeam-wrapped primary CTA.
+ *
+ * bb-pressable  — wrapper that scales down on :active (spring easing in,
+ *                 smooth easing out for the release).
+ * bb-cta        — inner <button> with a subtle hover background lift.
+ *
+ * The spinner @keyframes from ConnectScreen (bb-spinner-rotate) and
+ * NewProjectForm (npf-spinner-rotate) each target their own animation-name
+ * strings baked into the component's inline styles — those component-local
+ * keyframes remain where they are. Only the shared structural rules move
+ * here. */
+@utility bb-pressable {
+  transition: transform 240ms cubic-bezier(.4, 1.6, .5, 1);
+  will-change: transform;
+  transform-origin: center;
+  display: block;
+}
+.bb-pressable:has(button:not(:disabled):active) {
+  transform: scale(0.95);
+  transition: transform 90ms cubic-bezier(.3, 0, .7, 1);
+}
+.bb-cta {
+  transition: background-color 160ms ease-out;
+}
+.bb-cta:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.10) !important;
+}
+@keyframes bb-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+@keyframes npf-spinner-rotate {
+  to { transform: rotate(360deg); }
+}

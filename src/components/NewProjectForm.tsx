@@ -296,7 +296,8 @@ export default function NewProjectForm({ exiting, faction, preloading, onSubmit,
             onClick={submit}
             className="bb-cta relative w-full text-foreground font-semibold h-12 text-[14px] tracking-tight
                        disabled:opacity-40 disabled:cursor-not-allowed
-                       flex items-center justify-center gap-2"
+                       flex items-center justify-center gap-2
+                       focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/60 focus-visible:outline-none"
             style={{
               borderRadius: 16,
               cursor: canSubmit ? 'pointer' : 'not-allowed',
@@ -324,27 +325,8 @@ export default function NewProjectForm({ exiting, faction, preloading, onSubmit,
       {/* Back navigation is provided by the faction chip at the top of the
           form ("change" affordance) — no redundant back button down here. */}
 
-      <style>{`
-        .bb-pressable {
-          transition: transform 240ms cubic-bezier(.4, 1.6, .5, 1);
-          will-change: transform;
-          transform-origin: center;
-          display: block;
-        }
-        .bb-pressable:has(button:not(:disabled):active) {
-          transform: scale(0.95);
-          transition: transform 90ms cubic-bezier(.3, 0, .7, 1);
-        }
-        .bb-cta {
-          transition: background-color 160ms ease-out;
-        }
-        .bb-cta:not(:disabled):hover {
-          background: rgba(255, 255, 255, 0.10) !important;
-        }
-        @keyframes npf-spinner-rotate {
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
+      {/* bb-pressable / bb-cta / @keyframes npf-spinner-rotate are defined
+          globally in index.css. */}
     </div>
   )
 }
