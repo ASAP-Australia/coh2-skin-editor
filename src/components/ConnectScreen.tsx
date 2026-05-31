@@ -219,14 +219,17 @@ export default function ConnectScreen({ onConnected }: Props) {
           }}
         >
           {/* AnimatedSwap drives the downward-cascade transition between
-              button states. picking/scanning/linking-steam all share the same
-              key 'spinning' so they don't animate between each other (all show
-              the plain spinner and the visual difference would be imperceptible). */}
+              button states. ALL the in-button status icons (spinner, success
+              tick, warning) share the single key 'busy' so they swap IN PLACE
+              with no vertical movement — the loading circle just gets replaced
+              by the green tick where it sits. Only the initial label↔busy
+              change (the click) animates the cascade. */}
           <AnimatedSwap
             swapKey={
-              phase === 'picking' || phase === 'scanning' || phase === 'linking-steam'
-                ? 'spinning'
-                : phase
+              phase === 'picking' || phase === 'scanning' || phase === 'linking-steam' ||
+              phase === 'success' || phase === 'warning'
+                ? 'busy'
+                : 'idle'
             }
           >
             {phase === 'picking' || phase === 'scanning' || phase === 'linking-steam' ? (
