@@ -48,6 +48,22 @@ const USE_DEV_SERVER = process.env.AUDIT_DEV === '1'
 
 const OUT_DIR = path.join(process.cwd(), 'artifacts', 'vehicle-audit-real')
 
+// Swallow EPIPE on the output streams. This audit driver forwards every
+// renderer console message to the main process via console.log (see the
+// 'console-message' handler below). When the driver is launched in the
+// background and the parent process closes its end of the stdout/stderr pipe,
+// that console.log throws an uncaught "write EPIPE", which Electron surfaces as
+// the "A JavaScript error occurred in the main process" dialog. Attaching an
+// 'error' listener converts the unhandled stream error into a handled one;
+// EPIPE is benign here (the consumer simply went away) so we ignore it.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') return
+    // Other stream errors are non-fatal for an audit driver; swallow rather
+    // than let an unhandled 'error' event crash the main process.
+  })
+}
+
 interface AuditMeta {
   vehicleId: string
   faction:   string

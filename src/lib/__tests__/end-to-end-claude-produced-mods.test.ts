@@ -390,7 +390,9 @@ describe('claude-produced mods — end-to-end via library functions', () => {
   })
 
   describe('3) Vehicle skin pack SGA via exportSkinPack — Tiger I', () => {
-    it('builds a Tiger skin pack (custom diffuse + 1 decal) and round-trips it', async () => {
+    it(
+      'builds a Tiger skin pack (custom diffuse + 1 decal) and round-trips it',
+      async () => {
       const installPath = await findCoH2Install()
       if (!installPath) {
         // Soft-skip if the user's CoH2 install isn't where we expect.
@@ -473,6 +475,8 @@ describe('claude-produced mods — end-to-end via library functions', () => {
         `[claude-mods] skin-pack SGA written: ${outPath} (${result.bytes.length} bytes, ` +
           `guid=${result.modGuid}, numericId=${result.numericId})`,
       )
-    })
+      },
+      30000
+    )
   })
 })

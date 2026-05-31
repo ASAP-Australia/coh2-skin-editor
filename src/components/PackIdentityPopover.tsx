@@ -386,6 +386,7 @@ export function PackIdentityPopover({
             accept="image/png,image/jpeg,image/webp"
             style={{ display: 'none' }}
             onChange={handleFileChange}
+            aria-label="Choose pack icon"
           />
         </div>
       )}

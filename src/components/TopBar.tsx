@@ -845,6 +845,7 @@ function ViewPanel(p: Props) {
             accept=".coh2skin,.json"
             onChange={onLoadProject}
             className="hidden"
+            aria-label="Load project file"
           />
         </div>
       </Section>
@@ -1927,6 +1928,7 @@ function CamoPanel(p: Props) {
           type="file"
           accept="image/*"
           className="hidden"
+          aria-label="Upload camo image"
           onChange={e => {
             const file = e.target.files?.[0]
             if (file) applyBlobAsCamo(file)

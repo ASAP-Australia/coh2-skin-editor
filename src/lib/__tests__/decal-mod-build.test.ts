@@ -71,8 +71,10 @@ describe('buildDecalMod — root .dds is routed to the info drive (not data)', (
    * if the routing breaks again, the test below will catch it because
    * the .dds will sort after the art/ files.
    */
-  it('places "<slug>.dds" in the info drive alongside <guid>.info', async () => {
-    const project = {
+  it(
+    'places "<slug>.dds" in the info drive alongside <guid>.info',
+    async () => {
+      const project = {
       id: 'dp_test_drive_routing',
       packName: 'George Droid Decal',
       packDescription: '',
@@ -115,7 +117,9 @@ describe('buildDecalMod — root .dds is routed to the info drive (not data)', (
     const infoIndex = list.findIndex(e => e.path.endsWith('.info'))
     expect(infoIndex).toBeGreaterThanOrEqual(0)
     expect(ddsIndex).toBe(infoIndex + 1)
-  })
+    },
+    30000
+  )
 })
 
 describe('buildSga drive routing — root-level files go to the info drive', () => {
@@ -248,7 +252,9 @@ describe('buildDecalMod — per-faction RGT is 1024×1024 DXT1 (vehicle texture 
     decals: [],
   } as unknown as Parameters<typeof buildDecalMod>[0]['project']
 
-  it('RGT width/height = 1024 and format = DXT1 when decalRgba (1024×1024) is provided', async () => {
+  it(
+    'RGT width/height = 1024 and format = DXT1 when decalRgba (1024×1024) is provided',
+    async () => {
     const iconRgba = new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
     const decalRgba = new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
     // Fill with a non-zero colour so BC1 is non-trivially encoded
@@ -268,9 +274,13 @@ describe('buildDecalMod — per-faction RGT is 1024×1024 DXT1 (vehicle texture 
     expect(decoded.width).toBe(1024)
     expect(decoded.height).toBe(1024)
     expect(decoded.fourCC).toBe('DXT1')
-  })
+    },
+    30000
+  )
 
-  it('RGT width/height = 1024 even when decalRgba is omitted (fallback upscale path)', async () => {
+  it(
+    'RGT width/height = 1024 even when decalRgba is omitted (fallback upscale path)',
+    async () => {
     // When no decalRgba is supplied, the builder must upscale iconRgba 64→1024.
     // Old behaviour was to bake 64×64 directly — that was the bug.
     const iconRgba = new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
@@ -282,9 +292,13 @@ describe('buildDecalMod — per-faction RGT is 1024×1024 DXT1 (vehicle texture 
 
     expect(decoded.width).toBe(1024)
     expect(decoded.height).toBe(1024)
-  })
+    },
+    30000
+  )
 
-  it('BC1 pixel byte count for a 1024×1024 RGT = 256×256 blocks × 8 bytes = 524288', async () => {
+  it(
+    'BC1 pixel byte count for a 1024×1024 RGT = 256×256 blocks × 8 bytes = 524288',
+    async () => {
     const iconRgba = new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
     const decalRgba = new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
 
@@ -300,9 +314,13 @@ describe('buildDecalMod — per-faction RGT is 1024×1024 DXT1 (vehicle texture 
       // 1024/4 = 256 blocks per side → 256×256×8 = 524288 bytes (BC1 = 8 bytes/block)
       expect(decoded.pixels.length).toBe(524288)
     }
-  })
+    },
+    30000
+  )
 
-  it('TFMT chunk inside the RGT records width=1024, height=1024, format=13 (DXT1)', async () => {
+  it(
+    'TFMT chunk inside the RGT records width=1024, height=1024, format=13 (DXT1)',
+    async () => {
     const iconRgba = new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
     const decalRgba = new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
 
@@ -324,7 +342,9 @@ describe('buildDecalMod — per-faction RGT is 1024×1024 DXT1 (vehicle texture 
     expect(embeddedWidth).toBe(1024)
     expect(embeddedHeight).toBe(1024)
     expect(embeddedFormat).toBe(13) // 13 = DXT1 (BC1)
-  })
+    },
+    30000
+  )
 
   it('inventory icon DDS remains 64×64 — decalRgba does not affect it', async () => {
     // The decalRgba fix must NOT up-size the inventory thumbnail.

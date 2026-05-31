@@ -414,12 +414,25 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
           // top-down canvas. The decal painter (Editor.tsx) and raycast
           // UV picking both assume this convention.
           if (elt.format === 3) {
+            // R32G32_FLOAT — UVs already in 0..1 float (tracks use this).
             uvs[v * 2 + 0] = view.getFloat32(o,     true)
             uvs[v * 2 + 1] = 1 - view.getFloat32(o + 4, true)
           } else if (elt.format === 2) {
-            // 4 bytes — R16G16_FLOAT (half-floats)
-            uvs[v * 2 + 0] = halfToFloat(view.getUint16(o,     true))
-            uvs[v * 2 + 1] = 1 - halfToFloat(view.getUint16(o + 2, true))
+            // 4 bytes, two uint16 — but U and V are quantized DIFFERENTLY.
+            // Verified against king_tiger_sdkfz_182 (10138-vert body submesh,
+            // both TEXCOORD0 and TEXCOORD1), via tools/diag-kt-uv*.mts:
+            //   • U: full-range UNORM16 → U/65535 spans a correct 0..0.99.
+            //     U's high 3 bits vary across all 8 buckets, so it genuinely
+            //     uses the whole 16-bit range.
+            //   • V: a 3.13 fixed-point value whose top 3 bits are a CONSTANT
+            //     tag (0b111 for 100% of vertices, every channel, every body
+            //     submesh). The real V coordinate lives in the low 13 bits and
+            //     scales by 2^13 = 8192. Decoding V as plain /65535 crushed it
+            //     into 0.875..1.0 (1/8 of the range) → the vertical stretching.
+            //     (rawV & 0x1fff) / 8192 recovers a clean 0..1 V.
+            // The track submeshes use format 3 (float) and are unaffected.
+            uvs[v * 2 + 0] =     view.getUint16(o, true) / 65535
+            uvs[v * 2 + 1] = 1 - (view.getUint16(o + 2, true) & 0x1fff) / 8192
           }
           break
       }
@@ -462,18 +475,4 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
   geo.computeBoundingBox()
   geo.computeBoundingSphere()
   return geo
-}
-
-/** IEEE 754 half-precision (binary16) → 32-bit float. Fast, zero-allocs. */
-function halfToFloat(h: number): number {
-  const s = (h >> 15) & 0x1
-  const e = (h >> 10) & 0x1f
-  const f = h & 0x3ff
-  if (e === 0) {
-    if (f === 0) return s ? -0 : 0
-    return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024)
-  } else if (e === 31) {
-    return f === 0 ? (s ? -Infinity : Infinity) : NaN
-  }
-  return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024)
 }

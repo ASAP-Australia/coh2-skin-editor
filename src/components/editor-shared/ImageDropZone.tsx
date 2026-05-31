@@ -115,6 +115,7 @@ const ImageDropZone = forwardRef<ImageDropZoneHandle, ImageDropZoneProps>(functi
         multiple
         onChange={handleFileChange}
         style={{ display: 'none' }}
+        aria-label="Add images"
       />
     </div>
   )

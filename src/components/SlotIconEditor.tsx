@@ -312,6 +312,7 @@ export function SlotIconEditor({ slot, onSave, onBack }: Props) {
           accept="image/png,image/jpeg,image/webp"
           style={{ display: 'none' }}
           onChange={handleFileChange}
+          aria-label="Choose slot icon"
         />
 
         {/* Hint under the drop zone */}

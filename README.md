@@ -1,5 +1,15 @@
 # CoH2 Skin Editor (community)
 
+![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6?logo=typescript&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
+![tests](https://img.shields.io/badge/tests-1590%20passing-brightgreen)
+![typecheck](https://img.shields.io/badge/typecheck-0%20errors-brightgreen)
+![bundle](https://img.shields.io/badge/bundle-130%20kB-brightgreen)
+![branch coverage](https://img.shields.io/badge/branch%20coverage-79%25-yellow)
+![license](https://img.shields.io/badge/license-MIT-blue)
+
 <!-- Badges. Order: build → quality → security → supply-chain → meta. Each
      badge points at a workflow committed to .github/workflows/. Drafts for
      lighthouse / mutation exist locally but are out of scope for v1.0. -->

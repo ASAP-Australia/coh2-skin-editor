@@ -296,6 +296,7 @@ export default function StartScreen({
         accept=".coh2skin,.coh2faceplate,.coh2decalpack,.json"
         onChange={onFile}
         className="hidden"
+        aria-label="Open project file"
       />
 
       {/* bb-pressable / bb-cta are defined globally in index.css. */}

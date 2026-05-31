@@ -464,6 +464,7 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
                   accept="image/png,image/jpeg,image/webp"
                   className="hidden"
                   onChange={handleCustomPreview}
+                  aria-label="Choose workshop preview image"
                 />
                 <div style={{ fontSize: 9, color: 'rgba(247,247,250,0.28)', textAlign: 'center', maxWidth: 112, lineHeight: 1.4 }}>
                   512×512 min recommended

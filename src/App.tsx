@@ -409,6 +409,7 @@ export default function App() {
           accept=".coh2skin,.coh2faceplate,.coh2decalpack,.json"
           onChange={onDiskFile}
           className="hidden"
+          aria-label="Open project file from disk"
         />
       </>
     )

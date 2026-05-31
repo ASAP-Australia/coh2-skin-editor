@@ -207,7 +207,6 @@ export async function runAuditCapture(): Promise<void> {
         ...new Set(factionResults.map(r => r.vehicleId)),
       ]
       const THUMB = 256
-      const COLS = 4 // summer, winter for each of 2 vehicles side-by-side
       const COLS_PER_VEHICLE = 2 // summer + winter
       const VEHICLES_PER_ROW = 2
       const ROWS = Math.ceil(vehicleIds.length / VEHICLES_PER_ROW)
