@@ -45,6 +45,9 @@ import { detectCoh2Path } from './detect-coh2'
 const AUDIT_WIDTH  = Number(process.env.AUDIT_WIDTH  ?? '800')
 const AUDIT_HEIGHT = Number(process.env.AUDIT_HEIGHT ?? '600')
 const USE_DEV_SERVER = process.env.AUDIT_DEV === '1'
+// Optional: override the body diffuse with this PNG (e.g. a real skin's body
+// atlas) so the audit renders a skin instead of the stock vanilla texture.
+const SKIN_PNG = process.env.AUDIT_SKIN_PNG
 
 const OUT_DIR = path.join(process.cwd(), 'artifacts', 'vehicle-audit-real')
 
@@ -146,6 +149,7 @@ export async function runAuditCaptureReal(): Promise<void> {
       // Preload is required so the AuditRunner can use electronAPI (detectInstallPath etc.)
       preload: path.join(__dirname, 'preload.js'),
       offscreen: false, // offscreen:true breaks canvas.toDataURL in Electron v28+
+      backgroundThrottling: false, // prevent rAF/timer throttling in hidden window
     },
   })
 
@@ -168,6 +172,20 @@ export async function runAuditCaptureReal(): Promise<void> {
 
   console.log('[audit-real] Loading:', auditUrl)
   await win.loadURL(auditUrl)
+
+  // Skin override: inject the PNG as a data URL the renderer's AuditRunner will
+  // paint onto the body overlay instead of the decoded vanilla diffuse. Set
+  // BEFORE the model loads (archive warm gives us tens of seconds of headroom).
+  if (SKIN_PNG) {
+    try {
+      const b64 = fs.readFileSync(SKIN_PNG).toString('base64')
+      await win.webContents.executeJavaScript(
+        `window.__auditSkinUrl = "data:image/png;base64,${b64}"; true`, true)
+      console.log('[audit-real] skin override injected from', SKIN_PNG, `(${b64.length} b64 chars)`)
+    } catch (e) {
+      console.warn('[audit-real] failed to inject skin override:', e)
+    }
+  }
 
   // Wait for AuditRunner to boot, warm the archive cache, and enqueue vehicles (up to 300 s)
   // The archive warm step can take 60-120 s on cold SGA reads before the queue appears.
@@ -193,8 +211,9 @@ export async function runAuditCaptureReal(): Promise<void> {
   for (let i = 0; i < total; i++) {
     const t0 = Date.now()
 
-    // Wait for the current frame to be ready (up to 120 s per vehicle — cold SGA reads are slow)
-    const ready = await pollUntil(win.webContents, 'window.__auditReady === true', 120_000, 500)
+    // Wait for the current frame to be ready (up to 360 s per vehicle — cold SGA reads are slow;
+    // the renderer signals timeout after 300 s so the driver poll must exceed that)
+    const ready = await pollUntil(win.webContents, 'window.__auditReady === true', 360_000, 500)
 
     if (!ready) {
       const meta: AuditMeta = await win.webContents
@@ -251,6 +270,21 @@ export async function runAuditCaptureReal(): Promise<void> {
           console.log(`[audit-real]   + dumped Viewport diffuse`)
         } else {
           console.log(`[audit-real]   (no Viewport diffuse exposed)`)
+        }
+      } catch { /* ignore */ }
+      // DIAGNOSTIC: dump the ACTUAL overlay canvas contents (what body
+      // materials sample via overlayTexRef) as _VPBODY.png. This lets us
+      // compare body-path sampling against the decoded diffuse (_VPDIFFUSE)
+      // and the rendered frame — if the overlay is blank/dark here, that is
+      // the root cause of the dark hull with bright tracks.
+      try {
+        const overlayUrl: string = await win.webContents.executeJavaScript('window.__auditOverlay ?? ""', true)
+        if (overlayUrl.startsWith('data:image/png;base64,')) {
+          fs.writeFileSync(path.join(factionDir, `${meta.vehicleId}_${meta.season}_VPBODY.png`),
+            Buffer.from(overlayUrl.slice('data:image/png;base64,'.length), 'base64'))
+          console.log(`[audit-real]   + dumped overlay canvas (body diffuse path)`)
+        } else {
+          console.log(`[audit-real]   (no overlay canvas exposed)`)
         }
       } catch { /* ignore */ }
     } else {

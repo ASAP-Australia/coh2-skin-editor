@@ -235,8 +235,12 @@ export default function AuditRunner() {
   // ── Overlay is built in handleModelLoaded (it needs the decoded baseDiffuse,
   //    which only exists after the model loads). On item change just clear it
   //    so the previous vehicle's overlay can't leak onto the next mount. ──────
+  // The cleanup function runs when dependencies change (before the next effect),
+  // which avoids calling setState synchronously in the effect body.
   useEffect(() => {
-    setOverlayCanvas(null)
+    return () => {
+      setOverlayCanvas(null)
+    }
   }, [item?.vehicle.id, item?.mode, item?.season])
 
   // ── Signal ready after model load + animation frames ────────────────────

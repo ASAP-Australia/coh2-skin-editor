@@ -416,11 +416,23 @@ function createWindow() {
   // camera, capture multiple frames) without ever showing a window on the
   // user's display.
   const headless = !!process.env.HEADLESS_SCREENSHOT || !!process.env.HEADLESS_HIDE_ONLY
+  // App icon for the taskbar/dock. Set explicitly on the BrowserWindow so the
+  // ASAP logo shows even on an UNPACKAGED dev run (`npx electron .`). The
+  // electron-builder `icon` field in package.json only applies to packaged
+  // builds — without this line a dev/audit-launched window falls back to the
+  // generic Electron atom in the taskbar. In dev the asset lives in public/;
+  // in a built run Vite has copied it into dist/. Mirror the same NODE_ENV
+  // branch the renderer loader uses further below.
+  const appIconPath =
+    process.env.NODE_ENV === 'development'
+      ? path.join(__dirname, '..', 'public', 'asap-logo.png')
+      : path.join(__dirname, '..', 'dist', 'asap-logo.png')
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 960,
     minHeight: 600,
+    icon: appIconPath,
     // Centre the window on the primary display when it first appears.
     // Without this, Electron uses the OS window manager's default placement
     // (top-left on most Linux compositors, cascading on Windows), which on

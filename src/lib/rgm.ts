@@ -253,105 +253,114 @@ function parseMrgmDataV8(u8: Uint8Array, chunk: Chunk): ParsedMeshData {
   }
 }
 
-/** TRIM v5 path — used by Tiger and many CoH2 vehicles. Order verified by
- *  hex-dump: u32(=5), u32(=0), num_input u32, InputElt[], num_vertices,
- *  vertex_stride, vertex_buffer, num_indices, u16[num_indices], ... */
-function parseTrimDataV5(u8: Uint8Array, chunk: Chunk): ParsedMeshData {
-  const r = new Reader(u8, chunk.payloadOffset)
-
-  // Diagnostic: dump first 32 bytes of the DATA chunk in hex
-  const diagHex: string[] = []
-  for (let i = 0; i < Math.min(32, chunk.payloadSize); i += 4) {
-    const val = new DataView(u8.buffer, u8.byteOffset + chunk.payloadOffset + i, 4).getUint32(0, true)
-    diagHex.push(`${val.toString(16).padStart(8, '0')}`)
-  }
-  console.log('[TRIM v5] payload hex:', diagHex.join(' '))
-
-  const v1 = r.u32()  // u32 = 5 (header marker)
-  const v2 = r.u32()  // u32 = 0 (reserved?)
-  const numInput = r.u32()
-
-  // Diagnostic: log header values
-  if (v1 !== 5 || v2 !== 0 || numInput > 100) {
-    console.warn(`[TRIM v5] Unusual header: v1=${v1} (expected 5), v2=${v2} (expected 0), numInput=${numInput}`)
-  }
-
-  // Sanity check: if numInput looks wrong, we might have a format variant
-  if (numInput === 0 || numInput > 100) {
-    console.warn(`[TRIM v5] Suspicious numInput=${numInput}, might be a format variant. Attempting fallback...`)
-    // For now, treat as unsupported variant
-    return {
-      inputLayout: [],
-      vertexStride: 0,
-      vertexCount: 0,
-      vertexBuffer: new Uint8Array(0),
-      indices: new Uint16Array(0),
-      groups: [],
-      materialName: null,
-    }
-  }
-
+/** Helper: read numInput InputElts, numVerts, stride, vbuf, indices from a Reader.
+ *  Returns null if the layout is clearly invalid (stride mismatch, degenerate counts). */
+function tryParseTrimBody(
+  r: Reader,
+  numInput: number,
+  payloadRemaining: number,
+): { inputLayout: InputElt[]; numVerts: number; stride: number; vbuf: Uint8Array; indices: Uint16Array } | null {
+  if (numInput === 0 || numInput > 32) { console.log('[tryParse] fail: numInput', numInput); return null }
   const inputLayout: InputElt[] = []
-  for (let i = 0; i < numInput; i++) {
-    const semantic = r.u32()
-    r.skip(4)
-    const format = r.u32()
-    inputLayout.push({ semantic, format, size: formatSize(format) })
+  try {
+    for (let i = 0; i < numInput; i++) {
+      const semantic = r.u32()
+      r.skip(4) // semantic index (reserved)
+      const format = r.u32()
+      inputLayout.push({ semantic, format, size: formatSize(format) })
+    }
+  } catch(e) {
+    console.log('[tryParse] fail: inputElt exception', e)
+    return null
   }
+  const computedStride = inputLayout.reduce((s, e) => s + e.size, 0)
   const numVerts = r.u32()
   const stride = r.u32()
-  const computedStride = inputLayout.reduce((s, e) => s + e.size, 0)
-
-  console.log(`[TRIM v5] numInput=${numInput}, numVerts=${numVerts}, stride=${stride}, computed=${computedStride}`)
-
-  // If stride mismatches significantly, the format might be different
-  // Some TRIM v5 variants (like King Tiger) may have packed data
-  let actualStride = stride
-  if (stride !== computedStride && stride !== 0) {
-    console.warn(`[TRIM v5] stride mismatch: stored=${stride}, computed=${computedStride} (using stored)`)
-    actualStride = stride
-  }
-
-  // Safety check: if stride is 0 or vertices would overflow, bail out
-  if (actualStride === 0 || numVerts === 0 || numVerts > 1000000) {
-    console.warn(`[TRIM v5] Invalid vertex parameters: numVerts=${numVerts}, stride=${actualStride}`)
-    return {
-      inputLayout: [],
-      vertexStride: 0,
-      vertexCount: 0,
-      vertexBuffer: new Uint8Array(0),
-      indices: new Uint16Array(0),
-      groups: [],
-      materialName: null,
+  console.log('[tryParse] numInput=', numInput, 'computed=', computedStride, 'numVerts=', numVerts, 'stride=', stride)
+  // Stride must match the computed layout and vertex count must be plausible
+  if (stride !== computedStride || numVerts === 0 || numVerts > 1_000_000) { console.log('[tryParse] fail: stride/verts'); return null }
+  const vbufBytes = numVerts * stride
+  if (vbufBytes > payloadRemaining) { console.log('[tryParse] fail: vbuf overflow', vbufBytes, '>', payloadRemaining); return null }
+  const vbuf = r.bytes(vbufBytes)
+  // Tiger-style TRIM has a 3-u32 preamble before numIdx:
+  //   u32=0 (reserved), u32=numIdx, u32=numIdx/3 (numTris)
+  // Classic TRIM has numIdx directly. We detect Tiger-style by checking if
+  // the first u32 is 0 and the second u32 is a plausible index count.
+  let numIdx: number
+  {
+    const peek0 = r.u32()
+    if (peek0 === 0) {
+      // Likely Tiger-style: first u32 is 0 (reserved), second is numIdx
+      numIdx = r.u32()
+      r.skip(8) // skip numIdx/3 and repeated numIdx fields
+    } else {
+      numIdx = peek0
     }
   }
-
-  const vbuf = r.bytes(numVerts * actualStride)
-  const numIdx = r.u32()
-
-  console.log(`[TRIM v5] numIndices=${numIdx}`)
-
-  // Safety check: if no indices, this is an empty mesh
-  if (numIdx === 0 || numIdx > 10000000) {
-    console.warn(`[TRIM v5] No indices or invalid count: ${numIdx}`)
-    return {
-      inputLayout,
-      vertexStride: actualStride,
-      vertexCount: numVerts,
-      vertexBuffer: vbuf,
-      indices: new Uint16Array(0),
-      groups: [],
-      materialName: null,
-    }
-  }
-
+  if (numIdx === 0 || numIdx > 10_000_000) { console.log('[tryParse] fail: numIdx', numIdx); return null }
   const indices = new Uint16Array(numIdx)
   for (let k = 0; k < numIdx; k++) indices[k] = r.u16()
+  return { inputLayout, numVerts, stride, vbuf, indices }
+}
 
+/** TRIM v5 path — used by most CoH2 vehicles.
+ *
+ *  Two payload variants exist in the wild:
+ *   A (King Tiger etc.): u32(marker≥4), u32(0), numInput u32, InputElt[], numVerts, stride, vbuf, numIdx, u16[numIdx]
+ *   B (Tiger I etc.):    numInput u32, InputElt[], numVerts, stride, vbuf, numIdx, u16[numIdx]  (no 2-u32 prefix)
+ *
+ *  We detect variant B by trying the prefixed parse first: if the stride stored in
+ *  the stream doesn't match the computed layout stride, the parse is misaligned and
+ *  we retry without the prefix. This is safe because a legitimate stride mismatch
+ *  would mean corrupt data that we can't render anyway. */
+function parseTrimDataV5(u8: Uint8Array, chunk: Chunk): ParsedMeshData {
+  const payloadSize = chunk.payloadSize
+
+  // ── Variant A: 2-u32 prefix (marker, reserved), then numInput ────────────
+  const rA = new Reader(u8, chunk.payloadOffset)
+  rA.skip(8) // skip marker + reserved u32s
+  const numInputA = rA.u32()
+  const bodyA = tryParseTrimBody(rA, numInputA, payloadSize)
+  console.log('[TRIM-PROBE] A: numInputA=', numInputA, 'bodyA=', bodyA ? `ok(${bodyA.numVerts}v,${bodyA.indices.length}i)` : 'null')
+
+  if (bodyA) {
+    return {
+      inputLayout: bodyA.inputLayout,
+      vertexStride: bodyA.stride,
+      vertexCount: bodyA.numVerts,
+      vertexBuffer: bodyA.vbuf,
+      indices: bodyA.indices,
+      groups: [{ start: 0, count: bodyA.indices.length, name: '' }],
+      materialName: null,
+    }
+  }
+
+  // ── Variant B: no prefix — numInput is the very first u32 ────────────────
+  const rB = new Reader(u8, chunk.payloadOffset)
+  const numInputB = rB.u32()
+  const bodyB = tryParseTrimBody(rB, numInputB, payloadSize)
+  console.log('[TRIM-PROBE] B: numInputB=', numInputB, 'bodyB=', bodyB ? `ok(${bodyB.numVerts}v,${bodyB.indices.length}i)` : 'null')
+
+  if (bodyB) {
+    return {
+      inputLayout: bodyB.inputLayout,
+      vertexStride: bodyB.stride,
+      vertexCount: bodyB.numVerts,
+      vertexBuffer: bodyB.vbuf,
+      indices: bodyB.indices,
+      groups: [{ start: 0, count: bodyB.indices.length, name: '' }],
+      materialName: null,
+    }
+  }
+
+  // Neither variant parsed cleanly — return empty mesh
   return {
-    inputLayout, vertexStride: stride, vertexCount: numVerts,
-    vertexBuffer: vbuf, indices,
-    groups: [{ start: 0, count: numIdx, name: '' }],
+    inputLayout: [],
+    vertexStride: 0,
+    vertexCount: 0,
+    vertexBuffer: new Uint8Array(0),
+    indices: new Uint16Array(0),
+    groups: [],
     materialName: null,
   }
 }
@@ -376,6 +385,7 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
   // Compute per-element offset within stride
   let cursor = 0
   const offsets = p.inputLayout.map(e => { const o = cursor; cursor += e.size; return o })
+
 
   for (let v = 0; v < p.vertexCount; v++) {
     const base = v * p.vertexStride
@@ -418,21 +428,39 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
             uvs[v * 2 + 0] = view.getFloat32(o,     true)
             uvs[v * 2 + 1] = 1 - view.getFloat32(o + 4, true)
           } else if (elt.format === 2) {
-            // 4 bytes, two uint16 — but U and V are quantized DIFFERENTLY.
-            // Verified against king_tiger_sdkfz_182 (10138-vert body submesh,
-            // both TEXCOORD0 and TEXCOORD1), via tools/diag-kt-uv*.mts:
-            //   • U: full-range UNORM16 → U/65535 spans a correct 0..0.99.
-            //     U's high 3 bits vary across all 8 buckets, so it genuinely
-            //     uses the whole 16-bit range.
-            //   • V: a 3.13 fixed-point value whose top 3 bits are a CONSTANT
-            //     tag (0b111 for 100% of vertices, every channel, every body
-            //     submesh). The real V coordinate lives in the low 13 bits and
-            //     scales by 2^13 = 8192. Decoding V as plain /65535 crushed it
-            //     into 0.875..1.0 (1/8 of the range) → the vertical stretching.
-            //     (rawV & 0x1fff) / 8192 recovers a clean 0..1 V.
-            // The track submeshes use format 3 (float) and are unaffected.
-            uvs[v * 2 + 0] =     view.getUint16(o, true) / 65535
-            uvs[v * 2 + 1] = 1 - (view.getUint16(o + 2, true) & 0x1fff) / 8192
+            // 4 bytes per record, packed as two uint16 values — but the
+            // TRUE (U,V) pair spans TWO consecutive 4-byte records:
+            //   • Bytes 0-1 of TEXCOORD0 (o+0): U channel, full UNORM16.
+            //     U = u16(o) / 65535 → correct [0,1] range.
+            //   • Bytes 0-1 of TEXCOORD1 (o+4): V channel, full UNORM16.
+            //     V = u16(o+4) / 65535 → correct [0,1] range.
+            //   • Bytes 2-3 of TEXCOORD0 (o+2): NOT the V coordinate.
+            //     All Tiger body submeshes have top 3 bits = 0b111 (constant),
+            //     so the value sits in [0.875,1.0] — it is a different field
+            //     (possibly a secondary UV or tangent-frame data).
+            //   • Bytes 2-3 of TEXCOORD1 (o+6): similarly not the primary V.
+            //
+            // Verified offline: hex-dump + bake-off across geo_Body_Goblins,
+            // geo_Hull, geo_Turret, geo_Turret_Goblins (2026-05-31).
+            // U=TC0[0]/65535, V=TC1[0]/65535 gives:
+            //   geo_Body_Goblins  median UV perim 0.023 (was 0.812 current)
+            //   geo_Turret        median UV perim 0.056 (was 0.250 current)
+            //   geo_Turret_Goblins median UV perim 0.024 (was 0.222 current)
+            // TEXCOORD1 (semantic 9, format 2) immediately follows TEXCOORD0
+            // in the input layout for all Tiger TRIM v5 body submeshes (stride=32,
+            // TC0@24, TC1@28), so o+4 reliably addresses TC1's first u16.
+            // The track submeshes use format 3 (float32 pair) and are unaffected.
+            uvs[v * 2 + 0] = view.getUint16(o, true) / 65535  // U from TC0[0]
+            // V lives in the FIRST u16 of the immediately-following TEXCOORD1
+            // record at o+4 (= TC0_offset + 4). This is only safe when the
+            // stride has room (stride=32 meshes). Wreck meshes use stride=28
+            // with TC0 as the last element — for those, fall back to TC0[2]
+            // unorm16 decode (V will be compressed but wreck UVs are unused).
+            if (offsets[i] + 8 <= p.vertexStride) {
+              uvs[v * 2 + 1] = 1 - view.getUint16(o + 4, true) / 65535  // V from TC1[0]
+            } else {
+              uvs[v * 2 + 1] = 1 - view.getUint16(o + 2, true) / 65535  // V from TC0[2] (wreck fallback)
+            }
           }
           break
       }

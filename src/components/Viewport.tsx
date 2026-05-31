@@ -11,7 +11,7 @@ import {
   Fog,
   Group,
   Mesh,
-  BoxGeometry,
+  CylinderGeometry,
   PlaneGeometry,
   MeshStandardMaterial,
   MeshPhysicalMaterial,
@@ -38,6 +38,7 @@ import {
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { locateArchives } from '@/lib/coh2-fs'
+import { getPreloadedArchive, cacheArchive, getPreloadedBytes, cacheBytes } from '@/lib/preload'
 import { SgaArchive } from '@/lib/sga'
 import { parseRgm, type RgmModel } from '@/lib/rgm'
 import { decodeRgt, rgtToCompressedTexture } from '@/lib/rgt'
@@ -237,6 +238,21 @@ const DESTROYED_PATTERNS = [
   /\bocclus(?:ion|der)\b/i,
   /\bremains\b/i,
   /\bcrater\b/i,
+  // Destruction-state debris the Tiger I (and other RGMs) ship inside the
+  // intact group: `Crushed_Mesh_01/02/03` (collapsed hull panels),
+  // `geo_Body_Chunks_*` (broken-off body fragments), and `orphan_Hatch_*` /
+  // `orphans_wheel_*` (parts flung off on death — duplicates of the intact
+  // `geo_Hull_Hatch_*` / `geo_Wheel_*`). These leaked into the intact view
+  // and rendered as wreckage on the pristine tank because no prior pattern
+  // matched them. NOTE: use `(?![a-z])` (a letter-only negative lookahead),
+  // NOT a trailing `\b`: `\b` treats `_` as a word char, so `\bcrushed\b`
+  // never matches `Crushed_Mesh` (no boundary between `crushed` and `_`) —
+  // which is why the earlier attempt silently did nothing. No leading `\b`
+  // either, for the same reason (`geo_Body_Chunks` has `_` before the token).
+  // These tokens are inherently destruction-only — safe to always hide.
+  /crushed(?![a-z])/i,
+  /orphans?(?![a-z])/i,
+  /body_chunks?(?![a-z])/i,
 ]
 function isDestroyedMesh(name: string): boolean {
   return DESTROYED_PATTERNS.some(re => re.test(name))
@@ -1079,18 +1095,20 @@ export default function Viewport({
       // hugs the vehicle's silhouette closely and reads as a "tank
       // stand" rather than a slab the tank is parked on.
       //
-      // Multi-material order is +X, -X, +Y(top), -Y(bottom), +Z, -Z.  The
-      // top face gets the grass texture; the four side faces and the
-      // hidden bottom get a solid dark-earth material instead.
+      // Circular plinth. CylinderGeometry group order is: 0 = lateral side,
+      // 1 = top cap, 2 = bottom cap. The top cap gets the grass texture; the
+      // curved side and hidden bottom get the solid dark-earth material.
       //
-      // Why split the materials? Each face of a BoxGeometry has its own UV
-      // square in [0,1]², independent of face aspect.  On a 5×0.2 m side
-      // face that means the texture's V axis is compressed to the 20 cm
-      // strip — combined with ClampToEdgeWrapping, the GPU stretches one
-      // row of pixels around the whole edge, producing the rainbow vertical
-      // "tearing" stripe seen on screen.  Painting the sides solid avoids
-      // sampling the texture at those punishing UVs entirely.
-      const slabGeo = new BoxGeometry(5, 0.2, 5)
+      // Why split the materials? The thin (20 cm) curved side wraps the grass
+      // texture's V axis into a tiny strip, producing a smeared "tearing"
+      // band — same problem the old square slab had on its edge faces. Painting
+      // the side + bottom solid avoids sampling the texture at those UVs.
+      //
+      // Radius 2.9 (Ø5.8) circumscribes the tank's ~5-unit auto-scaled length
+      // with a small margin so tracks/barrel don't overhang the disc; 64
+      // radial segments keep the rim visually smooth. Height 0.2 matches the
+      // old slab thickness so the top still rests at Y=0 with position.y=-0.10.
+      const slabGeo = new CylinderGeometry(2.9, 2.9, 0.2, 64)
       // Pick the season-matching texture at build time. If the winter
       // variant is missing (procedural fallback path), the summer texture
       // is used and `seasonGroundTint()` colour-multiplies it instead.
@@ -1117,13 +1135,11 @@ export default function Viewport({
         roughness: 1.0,
         metalness: 0,
       })
+      // CylinderGeometry group order: 0 = side, 1 = top cap, 2 = bottom cap.
       const slabMaterials: MeshStandardMaterial[] = [
-        slabMatEdge, // +X
-        slabMatEdge, // -X
-        slabMatTop, // +Y (top — grass)
-        slabMatEdge, // -Y (bottom — unseen but consistent)
-        slabMatEdge, // +Z
-        slabMatEdge, // -Z
+        slabMatEdge, // 0: curved side — dark earth
+        slabMatTop, // 1: top cap — grass
+        slabMatEdge, // 2: bottom cap — unseen but consistent
       ]
 
       const slab = new Mesh(slabGeo, slabMaterials)
@@ -1870,8 +1886,10 @@ export default function Viewport({
     setErr(null)
 
     const run = async () => {
+      console.log(`[viewport] heavy effect run() start — vehicle=${vehicle?.id} season=${showDestroyed}`)
       try {
         const archives = await locateArchives(root)
+        console.log(`[viewport] locateArchives done: ${archives ? 'found' : 'null'}`)
         if (!archives) throw new Error('Archives folder not found.')
         // Search across every Art*.sga that ships with CoH2. Vehicle meshes
         // are usually in ArtHigh.sga but the diffuse RGTs live in faction-
@@ -1891,16 +1909,37 @@ export default function Viewport({
           'ArtWestGerman.sga',
         ]
         let sga: SgaArchive | null = null
+        // Warm rgmArchiveCache with preloaded archives so the RGM search
+        // below reuses already-opened SGAs (skipping fileStat + header IPC).
+        const rgmArchiveCache = new Map<string, SgaArchive>()
+        for (const sgaName of sgaCandidates) {
+          const pre = getPreloadedArchive(sgaName)
+          if (pre) rgmArchiveCache.set(sgaName, pre)
+        }
+
         let rgmBytes: Uint8Array | null = null
         for (const sgaName of sgaCandidates) {
           try {
-            const fh = await archives.getFileHandle(sgaName)
-            const file = await fh.getFile()
-            const a = await SgaArchive.open(file)
+            let a: SgaArchive
+            if (rgmArchiveCache.has(sgaName)) {
+              a = rgmArchiveCache.get(sgaName)!
+              console.log(`[viewport] rgm-search: ${sgaName} (preload cache hit)`)
+            } else {
+              console.log(`[viewport] rgm-search: getFileHandle(${sgaName})…`)
+              const fh = await archives.getFileHandle(sgaName)
+              console.log(`[viewport] rgm-search: getFile(${sgaName})…`)
+              const file = await fh.getFile()
+              console.log(`[viewport] rgm-search: SgaArchive.open(${sgaName})…`)
+              a = await SgaArchive.open(file)
+              rgmArchiveCache.set(sgaName, a)
+              cacheArchive(sgaName, a)
+            }
+            console.log(`[viewport] rgm-search: readByPath(${sgaName})…`)
             const b = await a.readByPath(rgmPath(vehicle))
             if (b) {
               sga = a
               rgmBytes = b
+              console.log(`[viewport] rgm found in ${sgaName}`)
               break
             }
           } catch (e) {
@@ -1910,6 +1949,7 @@ export default function Viewport({
         if (!sga || !rgmBytes) {
           throw new Error(`Couldn't find ${rgmPath(vehicle)} in any of the loaded archives.`)
         }
+        console.log(`[viewport] RGM found, parsing — vehicle=${vehicle?.id}`)
         const model = parseRgm(rgmBytes)
         if (cancelled) return
 
@@ -2028,11 +2068,24 @@ export default function Viewport({
         const archiveCache = new Map<string, SgaArchive>()
         const getArchive = async (name: string): Promise<SgaArchive | null> => {
           if (archiveCache.has(name)) return archiveCache.get(name)!
+          // Check the module-level preload cache first — preloadCommonArchives/
+          // preloadFaction already opened and parsed these SGAs; reusing them
+          // skips the fileStat + header-read IPC calls on every item.
+          const preloaded = getPreloadedArchive(name)
+          if (preloaded) {
+            archiveCache.set(name, preloaded)
+            return preloaded
+          }
           try {
+            console.log(`[viewport] getArchive: opening ${name} (no preload cache hit)`)
+            const t0 = Date.now()
             const fh = await archives.getFileHandle(name)
             const file = await fh.getFile()
             const a = await SgaArchive.open(file)
+            console.log(`[viewport] getArchive: ${name} opened in ${Date.now()-t0}ms`)
             archiveCache.set(name, a)
+            // Share back into preload cache for subsequent items
+            cacheArchive(name, a)
             return a
           } catch {
             return null
@@ -2052,8 +2105,18 @@ export default function Viewport({
           paths: string[],
         ): Promise<{ bytes: Uint8Array; path: string } | null> => {
           for (const p of paths) {
+            // Check module-level bytes cache first — avoids re-reading large
+            // files (e.g. 2 MB winter skin RGTs) on subsequent items.
+            const cached = getPreloadedBytes(p)
+            if (cached) { console.log(`[viewport] findFirstReadable cache hit: ${p}`); return { bytes: cached, path: p } }
+            const t0 = Date.now()
             const b = await a.readByPath(p)
-            if (b) return { bytes: b, path: p }
+            const dt = Date.now() - t0
+            if (dt > 1000) console.log(`[viewport] readByPath(${p}) took ${dt}ms, got ${b ? b.byteLength : 'null'} bytes`)
+            if (b) {
+              cacheBytes(p, b)
+              return { bytes: b, path: p }
+            }
           }
           return null
         }
@@ -2062,9 +2125,12 @@ export default function Viewport({
           { name: 'rgm SGA', archive: sga },
         ]
         for (const sgaName of sgaCandidates) {
+          console.log(`[viewport] opening ${sgaName}…`)
           const a = await getArchive(sgaName)
+          console.log(`[viewport] ${sgaName}: ${a ? 'ok' : 'null'}`)
           if (a && a !== sga) archivesToTry.push({ name: sgaName, archive: a })
         }
+        console.log(`[viewport] getArchive loop done, archivesToTry=${archivesToTry.length}`)
         // Search strategy — order matters because some archives (notably
         // ArtArmies.sga) contain shared *tread* textures whose names also
         // end in `_dif.rgt` and live under `art/armies/shared_textures/`.
@@ -2091,19 +2157,23 @@ export default function Viewport({
           !/(?:^|_)(treads?|wheels?|tracks?)_[a-z0-9_]*_dif\.rgt$/i.test(p)
         const bodyPaths = allPaths.filter(isBodyPath)
         if (season === 'winter') {
-          outerWinter: for (const { archive: a } of archivesToTry) {
+          outerWinter: for (const { name: aName, archive: a } of archivesToTry) {
             const winter = findWinterPathsInSga(a)
+            console.log(`[viewport] winter search in ${aName}: ${winter.length} candidates`)
             const hit = await findFirstReadable(a, winter)
             if (hit) {
+              console.log(`[viewport] winter texture found: ${hit.path}`)
               rgtBytes = hit.bytes
               break outerWinter
             }
           }
         }
         if (!rgtBytes) {
-          outerSummer: for (const { archive: a } of archivesToTry) {
+          outerSummer: for (const { name: aName, archive: a } of archivesToTry) {
+            console.log(`[viewport] summer search in ${aName}: ${bodyPaths.length} paths`)
             const hit = await findFirstReadable(a, bodyPaths)
             if (hit) {
+              console.log(`[viewport] summer texture found: ${hit.path} in ${aName}`)
               rgtBytes = hit.bytes
               break outerSummer
             }
@@ -2119,10 +2189,13 @@ export default function Viewport({
           )
         }
         if (rgtBytes) {
+          console.log(`[viewport] decoding diffuse texture (${rgtBytes.byteLength} bytes)`)
           try {
+            const t0 = Date.now()
             const rgt = decodeRgt(rgtBytes)
             diffuseImage = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
             diffuse = new CanvasTexture(diffuseImage)
+            console.log(`[viewport] diffuse decoded in ${Date.now()-t0}ms`)
             // UVs are stored as (u, 1 - v_orig) per rgm.ts:412; flipY=true is required
             // so image rows sample in the correct orientation. flipY=false V-mirrors the texture.
             diffuse.flipY = true
@@ -2306,13 +2379,16 @@ export default function Viewport({
           // Material params come Windows-style with backslashes, no extension.
           const norm = rawPath.replace(/\\/g, '/').toLowerCase()
           const candidate = norm.endsWith('.rgt') ? norm : `${norm}.rgt`
+          // Check bytes cache first
+          const cached = getPreloadedBytes(candidate)
+          if (cached) return cached
           const direct = await sga!.readByPath(candidate)
-          if (direct) return direct
+          if (direct) { cacheBytes(candidate, direct); return direct }
           for (const sgaName of sgaCandidates) {
             const a = await getArchive(sgaName)
             if (!a) continue
             const b = await a.readByPath(candidate)
-            if (b) return b
+            if (b) { cacheBytes(candidate, b); return b }
           }
           return null
         }
@@ -2508,7 +2584,7 @@ export default function Viewport({
           // border SVG animation gets a chance to repaint. Without
           // this, 4 back-to-back decodes per material × N materials
           // can stall the main thread for hundreds of ms.
-          const decodeYield = () => new Promise<void>(r => requestAnimationFrame(() => r()))
+          const decodeYield = () => new Promise<void>(r => setTimeout(r, 0))
           if (difPath) {
             const b = await resolveRgtPath(difPath)
             if (b) dTex = decodeTextureBytes(b, 'diffuse')
@@ -2667,7 +2743,21 @@ export default function Viewport({
 
         // Auto-fit: scale model so longest axis = ~5 units, centre it
         // horizontally, and rest its tracks ON the ground (bbox.min.y = 0).
-        const box = new Box3().setFromObject(group)
+        //
+        // Fix: exclude helper/wreck/proxy/orphan meshes from the bounding-box
+        // used for scale computation. On the Tiger I, Crushed_Mesh_*, orphan_*
+        // and similar non-renderable helpers sit far from the tank origin and
+        // inflate `longest` from ~7.5 to ~10.2, causing the tank to be scaled
+        // to a sliver (scale ~0.49 instead of ~0.66). We still include all
+        // children in the later finalBox so the ground-plane rest is correct.
+        const HELPER_NAME_RE = /crushed|proxy|marker|wreck|destroy|spawn|orphan/i
+        const fitChildren = group.children.filter(
+          c => !HELPER_NAME_RE.test(c.name ?? ''),
+        )
+        const fitBox = new Box3()
+        for (const c of fitChildren) fitBox.expandByObject(c)
+        // Fall back to the full group box if all children are helpers.
+        const box = fitBox.isEmpty() ? new Box3().setFromObject(group) : fitBox
         const size = box.getSize(new Vector3())
         const longest = Math.max(size.x, size.y, size.z)
         const scale = longest > 0.0001 ? 5 / longest : 0.01
@@ -2679,21 +2769,24 @@ export default function Viewport({
         vehicleApparentLengthRef.current = longest * scale
 
         // ── Find the exact centre of the vehicle ────────────────────────
-        // Bbox-of-body is skewed by long gun barrels; bbox-of-everything
-        // is skewed by gun + antenna + turret bustles. The robust answer
-        // is a triangle-area-weighted centroid of the body geometry —
-        // that's the actual "centre of mass" of the painted hull, and it
-        // lands squarely in the chassis regardless of how far the barrel
-        // pokes. We compute it in group-local space, then apply the
-        // group's uniform scale so the result is in world units.
+        // REQ-1: Use the XZ centre of the SAME debris-excluded fitBox that
+        // drives the scale computation (above). This guarantees the model's
+        // geometric centre lands at world X=0, Z=0 — exactly over the pad
+        // centre — for every vehicle without skew from long gun barrels,
+        // area-weighting bias, or body-mesh detection failures.
         //
-        // Body meshes are those whose material uses the body diffuse
-        // (everything else is treads / wreck / proxy). A vehicle's body is
-        // often split across multiple submeshes (hull + turret + skirts +
-        // hatch) — aggregating the area-weighted centroid across ALL of
-        // them gives a stable hull centroid. Using only the first body
-        // mesh (e.g. a hatch) drifts the centroid into the hatch position,
-        // causing the off-centre framing seen on some vehicles.
+        // The fitBox is in group-local pre-scale space. Multiplying its
+        // centre by `scale` converts it to post-scale world-space (group
+        // position is still (0,0,0) at this point, so local == world).
+        const fitBoxCenter = box.getCenter(new Vector3())
+        // World-space XZ centre after auto-scale is applied.
+        const fitCenterX = fitBoxCenter.x * scale
+        const fitCenterZ = fitBoxCenter.z * scale
+
+        // Keep the area-weighted centroid only for the CAMERA TARGET Y
+        // (so the orbit pivot sits at the hull's visual centre of mass,
+        // not at the bbox midpoint which can be dragged upward by a tall
+        // gun mantlet or downward by deep track skirts).
         const bodyMeshes = group.children.filter(
           c =>
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- checking custom __usesBodyDiffuse property set on Three.js materials above
@@ -2703,11 +2796,7 @@ export default function Viewport({
 
         const centroidLocal = new Vector3()
         if (bodyMeshes.length > 0) {
-          // Triangle-area-weighted centroid: each triangle contributes
-          // its centroid scaled by its area, and the running totals are
-          // normalised at the end across every body submesh. Pure vertex
-          // average over-weights dense regions (tessellated lugs /
-          // hatches) and under-weights sparse flat panels.
+          // Triangle-area-weighted centroid for Y-pivot only.
           const sum = new Vector3()
           let totalArea = 0
           const a = new Vector3(),
@@ -2746,23 +2835,32 @@ export default function Viewport({
           }
           if (totalArea > 0) centroidLocal.copy(sum).divideScalar(totalArea)
         }
-        // Apply scale (group's uniform scale) to take centroid into the
-        // post-scale, pre-position world-space frame.
-        const centroidWorld = centroidLocal.clone().multiplyScalar(scale)
+        // Scale centroid Y into post-scale world space (used for camera
+        // target only — XZ positioning now uses fitBoxCenter instead).
+        const centroidWorldY = centroidLocal.y * scale
 
         // Recompute full bbox AFTER scaling so we know where the bottom
         // is (we want the lowest mesh — typically a track or skirt — to
         // rest on y=0, not the body's centroid).
         const scaledBox = new Box3().setFromObject(group)
-        const scaledCenter = scaledBox.getCenter(new Vector3())
 
-        // Centre X/Z on the body centroid (or on the bbox centre if no
-        // body mesh was found), then push the lowest point of the
-        // entire group down to y=0.
-        const centerX = bodyMesh && centroidLocal.lengthSq() > 0 ? centroidWorld.x : scaledCenter.x
-        const centerZ = bodyMesh && centroidLocal.lengthSq() > 0 ? centroidWorld.z : scaledCenter.z
-        group.position.x = -centerX
-        group.position.z = -centerZ
+        // REQ-1: Centre the vehicle's BODY centre-of-mass exactly over the
+        // pad centre (world X=0, Z=0). We use the area-weighted centroid of
+        // the body geometry (computed above) rather than the bounding-box
+        // centre because a bounding box is fragile: a long gun barrel — or
+        // any small outlying attachment (antenna, stowage, tow cable, spare
+        // track) that the helper-name filter doesn't catch — drags the box
+        // centre to one side, leaving the hull visibly off-pad while the
+        // barrel overhangs the edge. Surface-area weighting makes the centroid
+        // robust: thin/small parts contribute little area, so the heavy
+        // hull+turret mass lands dead-centre on the pad for every vehicle.
+        // Falls back to the debris-excluded fitBox centre only when no body
+        // meshes were detected (so a model with no body diffuse still centres).
+        const haveCentroid = bodyMeshes.length > 0 && centroidLocal.lengthSq() > 0
+        const centreX = haveCentroid ? centroidLocal.x * scale : fitCenterX
+        const centreZ = haveCentroid ? centroidLocal.z * scale : fitCenterZ
+        group.position.x = -centreX
+        group.position.z = -centreZ
         group.position.y = -scaledBox.min.y
         scene.add(group)
 
@@ -2770,14 +2868,11 @@ export default function Viewport({
         // user orbits around the tank, not a hardcoded point in space.
         const finalBox = new Box3().setFromObject(group)
         const finalSize = finalBox.getSize(new Vector3())
-        // Target the body's centroid (which now sits at world X/Z = 0
-        // after the centring step above). Y uses the body centroid too,
-        // promoted into world space (centroid in scaled-group coords +
-        // group.position.y). If no body centroid was found, fall back to
-        // the bbox midpoint.
+        // Target the body's centroid Y (which gives the best orbit pivot),
+        // at X/Z=0 (the pad centre, where the model is now guaranteed to sit).
         const finalCenter =
           bodyMesh && centroidLocal.lengthSq() > 0
-            ? new Vector3(0, centroidWorld.y + group.position.y, 0)
+            ? new Vector3(0, centroidWorldY + group.position.y, 0)
             : finalBox.getCenter(new Vector3())
         // Re-frame the camera tightly on the freshly-loaded vehicle.
         if (controlsRef.current) {
