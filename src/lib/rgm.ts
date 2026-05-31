@@ -455,15 +455,6 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
   // above as degenerate), recompute geometrically — must be after index is set.
   if (!geo.getAttribute('normal')) geo.computeVertexNormals()
 
-  // Tangent frame for normal mapping. Without an explicit tangent attribute,
-  // three.js derives tangents per-fragment from screen-space derivatives, which
-  // produces hard seam / faceted "straight line" artifacts along UV edges and
-  // makes normal-mapped armour look broken. Compute proper per-vertex tangents
-  // (needs position + normal + uv + index, all present here).
-  if (geo.getAttribute('uv') && geo.getAttribute('normal') && geo.getIndex()) {
-    try { geo.computeTangents() } catch { /* non-fatal: derivative tangents fallback */ }
-  }
-
   // Re-apply per-Object groups so callers can render with multi-material later
   for (let g = 0; g < p.groups.length; g++) {
     geo.addGroup(p.groups[g].start, p.groups[g].count, g)
