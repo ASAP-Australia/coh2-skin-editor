@@ -85,8 +85,10 @@ describe('SCENE_PRESETS', () => {
 describe('in_game_field preset', () => {
   const p: ScenePreset = SCENE_PRESETS['in_game_field']
 
-  it('uses reinhard tone mapping', () => {
-    expect(p.toneMapping).toBe('reinhard')
+  it('uses neutral (Khronos PBR Neutral) tone mapping', () => {
+    // Restored render path: PBR-neutral tonemapping preserves albedo/atlas
+    // colour without the reinhard desaturation that washed out the camo.
+    expect(p.toneMapping).toBe('neutral')
   })
 
   it('uses a cubemap background', () => {
