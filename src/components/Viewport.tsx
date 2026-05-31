@@ -37,6 +37,7 @@ import {
   BufferAttribute,
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { locateArchives } from '@/lib/coh2-fs'
 import { getPreloadedArchive, cacheArchive, getPreloadedBytes, cacheBytes } from '@/lib/preload'
 import { SgaArchive } from '@/lib/sga'
@@ -1853,6 +1854,21 @@ export default function Viewport({
             }
           }
           needsRenderRef.current = true
+        } else if (presetRef.current.background.kind === 'cubemap' && !cubemapRef.current) {
+          if (rendererRef.current) {
+            if (envMapRef.current) { envMapRef.current.dispose(); envMapRef.current = null }
+            const pmrem = new PMREMGenerator(rendererRef.current)
+            try {
+              pmrem.compileEquirectangularShader()
+              const env = pmrem.fromScene(new RoomEnvironment()).texture
+              envMapRef.current = env
+              scene.environment = env
+              ;(scene as { environmentIntensity?: number }).environmentIntensity = 0.3
+            } catch (e) {
+              console.warn('[viewport] RoomEnvironment PMREM bake failed, no IBL:', e)
+            } finally { pmrem.dispose() }
+          }
+          needsRenderRef.current = true
         }
       })()
       // Immediate placeholder — grey-blue sky-ish color while the cubemap
@@ -2704,7 +2720,7 @@ export default function Viewport({
             // to keep deep-shade panels legible without the cubemap's
             // hue bleeding onto painted steel. Foliage / terrain /
             // wreck props inherit the full 0.3 scene knob.
-            envMapIntensity: 0.15,
+            envMapIntensity: 0.6,
             // CoH2 RGM submeshes have inconsistent winding — some panels
             // (Puma turret, Panther skirts) end up with their normals
             // facing inwards, rendering as solid black. DoubleSide makes

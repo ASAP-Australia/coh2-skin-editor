@@ -70,28 +70,30 @@ export const SCENE_PRESETS: Record<PresetId, ScenePreset> = {
     // constants — see corsix's `coh2-explorer` (essence_panel.cpp) which uses
     // the official shader source to render previews. Tonemapping confirmed
     // from Barrero, "CoH2 Rendering Tech" (2013, gamedevs.org PDF), which
-    // documents a deferred HDR pipeline. ACES is too contrasty/warm for this
-    // 2013-era look; Reinhard is the closest standard Three.js operator.
-    toneMapping: 'reinhard',
+    // documents a deferred HDR pipeline. Essence's viewer path is effectively
+    // linear (tonemap off); Reinhard crushes midtones and reads the dunkelgelb
+    // base as a dark olive, so use Neutral (Khronos PBR Neutral) — preserves
+    // diffuse brightness + saturation without ACES contrast.
+    toneMapping: 'neutral',
     exposure: 1.0,
-    // Hemi — derived from Essence's `fxlight_ambcolour (0.5, 0.55, 0.6)`
-    // × `ambientscale 0.7` = (0.35, 0.385, 0.42) ≈ #596977. We split this
-    // into a HemisphereLight (sky/ground separation) to capture the
-    // cool sky bounce vs warm ground bounce that a deferred pipeline
-    // gets "for free" from its ambient probe.
-    hemi: { sky: 0x8899bb, ground: 0x4a3f2e, intensity: 1.2 },
+    // Hemi — provides flat neutral ambient fill while the PMREM RoomEnvironment
+    // (wired in Viewport.tsx via scene.environment) handles diffuse irradiance
+    // and specular IBL (the Essence EnvMapDiffuse / EnvMapSpecular role).
+    // Intensity reduced from 1.2 → 0.5 to avoid double-counting ambient once
+    // the PMREM env is active. Sky/ground are kept near-neutral grey (no
+    // blue-sky/brown-ground tint) because Corsix's analysis shows the real
+    // ambient is flat: `ambientscale (0.7)` × a white EnvMapDiffuse cube.
+    hemi: { sky: 0xd0d0d0, ground: 0x888888, intensity: 0.9 },
     directionalLights: [
-      // Key (sun): the surprising finding from corsix's extracted shader
-      // constants is `fxlight_suncolour (0.9, 1.0, 1.0)` — a slight CYAN
-      // tint, NOT the warm golden you'd expect. The "warm summer" feel of
-      // CoH2 comes from terrain/diffuse colour, not the sun light. We
-      // boost intensity to 3.0 so the Three.js HDR pipeline matches the
-      // game's perceived brightness (deferred + HDR headroom). Position
-      // derives from `dirlight0_dir (-0.577, -0.577, 0.577)` — invert for
-      // light-source coordinates, scale to vehicle bbox = roughly (5,5,-5).
-      // This is the SHADOW CASTER (Viewport.tsx wires shadowMap.enabled
-      // only on directionalLights[0]).
-      { color: 0xe6ffff, intensity: 3.0, position: [5, 5, -5] },
+      // Key (sun): `dirlight0` in the Essence shader is WHITE (1,1,1), NOT
+      // the cyan `fxlight_suncolour (0.9,1.0,1.0)` — that constant is the
+      // PARTICLE subsystem light, not the vehicle key light. Confirmed via
+      // corsix's coh2-explorer (essence_panel.cpp). Intensity 3.0 and
+      // position (5,5,-5) are deliberately tuned for Three.js HDR headroom
+      // — do not change. Position derives from `dirlight0_dir (-0.577,
+      // -0.577, 0.577)` inverted to light-source coordinates. Shadow caster
+      // (Viewport.tsx wires shadowMap only on directionalLights[0]).
+      { color: 0xffffff, intensity: 3.0, position: [5, 5, -5] },
       // Cool fill from camera-left. Reads as faint sky-bounce on the
       // shaded side rather than a competing key.
       { color: 0xcdd3d8, intensity: 0.45, position: [-6, 5, -2] },
