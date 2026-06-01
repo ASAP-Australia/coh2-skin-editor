@@ -428,39 +428,25 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
             uvs[v * 2 + 0] = view.getFloat32(o,     true)
             uvs[v * 2 + 1] = 1 - view.getFloat32(o + 4, true)
           } else if (elt.format === 2) {
-            // 4 bytes per record, packed as two uint16 values — but the
-            // TRUE (U,V) pair spans TWO consecutive 4-byte records:
-            //   • Bytes 0-1 of TEXCOORD0 (o+0): U channel, full UNORM16.
-            //     U = u16(o) / 65535 → correct [0,1] range.
-            //   • Bytes 0-1 of TEXCOORD1 (o+4): V channel, full UNORM16.
-            //     V = u16(o+4) / 65535 → correct [0,1] range.
-            //   • Bytes 2-3 of TEXCOORD0 (o+2): NOT the V coordinate.
-            //     All Tiger body submeshes have top 3 bits = 0b111 (constant),
-            //     so the value sits in [0.875,1.0] — it is a different field
-            //     (possibly a secondary UV or tangent-frame data).
-            //   • Bytes 2-3 of TEXCOORD1 (o+6): similarly not the primary V.
-            //
-            // Verified offline: hex-dump + bake-off across geo_Body_Goblins,
-            // geo_Hull, geo_Turret, geo_Turret_Goblins (2026-05-31).
-            // U=TC0[0]/65535, V=TC1[0]/65535 gives:
-            //   geo_Body_Goblins  median UV perim 0.023 (was 0.812 current)
-            //   geo_Turret        median UV perim 0.056 (was 0.250 current)
-            //   geo_Turret_Goblins median UV perim 0.024 (was 0.222 current)
-            // TEXCOORD1 (semantic 9, format 2) immediately follows TEXCOORD0
-            // in the input layout for all Tiger TRIM v5 body submeshes (stride=32,
-            // TC0@24, TC1@28), so o+4 reliably addresses TC1's first u16.
+            // 4-byte TEXCOORD0 record [b0,b1,b2,b3]. The (U,V) pair is the two
+            // MIDDLE bytes as UNORM8, not a uint16 pair:
+            //   • b1 (o+1): U channel, full-range unorm8 → U = b1 / 255.
+            //   • b2 (o+2): V channel, full-range unorm8 → V = b2 / 255.
+            //   • b0 (o+0): near-zero ([0,31]) — a separate small field, NOT
+            //     the low byte of U (a u16 decode of b0|b1 scores far worse).
+            //   • b3 (o+3): near-constant ([224,255]) — a separate field.
+            // Found by a metric-driven scan: per-triangle UV perimeter vs 3D
+            // perimeter Pearson r — a near-isometric artist unwrap maximises it.
+            // u8@b1/b2 scores r≈0.92 on geo_Hull AND geo_Turret; every uint16 /
+            // half / snorm / split-TC candidate scores ≤0.45 and visually
+            // collapses the unwrap into slivers (the long-standing "smear").
+            // Visual overlay over the diffuse atlas confirms b1/b2 lands the
+            // turret UVs on the turret-roof island and hull UVs on the hull
+            // plates. V is flipped to match flipY=true on the CanvasTexture
+            // (same convention as the format===3 track path above).
             // The track submeshes use format 3 (float32 pair) and are unaffected.
-            uvs[v * 2 + 0] = view.getUint16(o, true) / 65535  // U from TC0[0]
-            // V lives in the FIRST u16 of the immediately-following TEXCOORD1
-            // record at o+4 (= TC0_offset + 4). This is only safe when the
-            // stride has room (stride=32 meshes). Wreck meshes use stride=28
-            // with TC0 as the last element — for those, fall back to TC0[2]
-            // unorm16 decode (V will be compressed but wreck UVs are unused).
-            if (offsets[i] + 8 <= p.vertexStride) {
-              uvs[v * 2 + 1] = 1 - view.getUint16(o + 4, true) / 65535  // V from TC1[0]
-            } else {
-              uvs[v * 2 + 1] = 1 - view.getUint16(o + 2, true) / 65535  // V from TC0[2] (wreck fallback)
-            }
+            uvs[v * 2 + 0] = p.vertexBuffer[o + 1] / 255      // U from b1
+            uvs[v * 2 + 1] = 1 - p.vertexBuffer[o + 2] / 255  // V from b2 (flipped)
           }
           break
       }
