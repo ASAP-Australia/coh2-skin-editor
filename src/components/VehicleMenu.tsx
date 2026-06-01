@@ -28,8 +28,8 @@ import LoadingBorder from './ui/loading-border'
 // Class grouping is used to control the visual ORDER of pills
 // (heaviest → lightest). The user asked us to remove the All/Super/Heavy/
 // Medium/Light/Utility filter row that previously sat above this rail —
-// the rail itself is now just an ordered horizontal scroller with class
-// separators kept as subtle dots between groups.
+// the rail itself is now just an ordered horizontal scroller, with no
+// separators between class groups.
 const CLASS_ORDER: VehicleClass[] = ['super_heavy', 'heavy', 'medium', 'light', 'utility']
 
 /** Per-vehicle icon resolver. Implemented in the parent so the menu stays
@@ -98,14 +98,8 @@ export default function VehicleMenu({
         >
           {CLASS_ORDER.map(cls => ({ cls, group: vehicles.filter(v => v.class === cls) }))
             .filter(({ group }) => group.length > 0)
-            .map(({ cls, group }, gi) => (
+            .map(({ cls, group }) => (
               <div key={cls} className="flex items-center gap-0 shrink-0">
-                {gi > 0 && (
-                  <span
-                    aria-hidden
-                    className="mx-2 h-1 w-1 rounded-full bg-white/15 shrink-0 select-none"
-                  />
-                )}
                 {group.map(vehicle => {
                   const isActive = selected?.id === vehicle.id
                   const isDirty = dirtyVehicles.has(vehicle.id)

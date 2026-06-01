@@ -35,6 +35,7 @@ import {
   Vector2,
   BufferGeometry,
   BufferAttribute,
+  TextureLoader,
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
@@ -53,6 +54,11 @@ import {
   applySeasonOverrides,
 } from '@/lib/scene-settings'
 import { loadSkybox, proceduralSkybox, listAvailableEnvs, filterEnvsBySeason } from '@/lib/skybox'
+// brown_mud_dry (Poly Haven, CC0): uniform dry-mud granules with no large
+// distinctive features — chosen over excavated_soil_wall because a grain-only
+// surface hides the tile seams when repeated, so the band doesn't read as
+// "obviously repeating". Darkened at the material via a low color multiplier.
+import dirtTextureUrl from '@/assets/textures/brown_mud_dry_2k.jpg'
 import { loadStructure } from '@/lib/structure-loader'
 import { computeExplodeDirection } from '@/lib/explode-direction'
 // PMREM IBL is active for the in_game_field preset — the scene
@@ -990,6 +996,10 @@ export default function Viewport({
   useEffect(() => {
     const GRASS_RGT_PATH =
       'art/environment/objects/terrain/nis_grass_plain_01/swampy_field_01_dif.rgt'
+    // CC0 dirt texture (Poly Haven "Excavated Soil Wall", 2K JPG, bundled).
+    // Replaces game mud_dry_02_dif.rgt (512×512 DXT1) — same visual intent
+    // (soil cross-section on the plinth side) but higher resolution and
+    // no SGA dependency. One texture for both seasons.
 
     const scene = sceneRef.current
     if (!scene) return
@@ -1015,6 +1025,8 @@ export default function Viewport({
     let cancelled = false
     let slabSummerTex: Texture | null = null
     let slabWinterTex: Texture | null = null
+    let slabDirtTex: Texture | null = null
+    let slabDirtTexBot: Texture | null = null
 
     // Helper — apply the shared "single coverage, slight rotation" treatment
     // so both seasons share the same UV setup and the GPU sampling matches.
@@ -1067,9 +1079,63 @@ export default function Viewport({
         console.log('[viewport] slab: grass RGT unavailable, using procedural fallback', e)
       }
 
+      // ── Load CC0 bundled dirt texture (side UV) ───────────────────────
+      // brown_mud_dry_2k.jpg is Vite-bundled and always available —
+      // no SGA dependency. Load synchronously via TextureLoader.
+      //
+      // Side UV rationale: the cylinder side maps u:0→1 around the full
+      // circumference and v:0→1 over the 0.2 m height. Square-tile repeat:
+      //   repeat.x = circumference / DIRT_TILE_M
+      //   repeat.y = height / DIRT_TILE_M
+      // DIRT_TILE_M = 1.0 m → ~18 tiles around the rim, 0.2 tiles tall.
+      // Each printed tile is square in world space → no stretch. Bumped from
+      // 0.7→1.0 m so there are fewer repeats around the rim; combined with
+      // brown_mud_dry's feature-less granular surface the tiling no longer
+      // reads as an obvious repeating pattern.
+      if (!cancelled) {
+        try {
+          const loader = new TextureLoader()
+          const dirtTex = await new Promise<Texture>((resolve, reject) => {
+            loader.load(dirtTextureUrl, resolve, undefined, reject)
+          })
+          if (!cancelled) {
+            dirtTex.colorSpace = SRGBColorSpace
+            const SLAB_RADIUS = 2.9 // must match CylinderGeometry below
+            const SLAB_HEIGHT = 0.2
+            const SIDE_CIRCUMFERENCE = 2 * Math.PI * SLAB_RADIUS // ≈ 18.22 m
+            const DIRT_TILE_M = 1.0 // world size of one tile — fewer repeats, hides tiling
+            dirtTex.wrapS = dirtTex.wrapT = RepeatWrapping
+            dirtTex.repeat.set(
+              SIDE_CIRCUMFERENCE / DIRT_TILE_M, // ≈ 18.2 tiles around rim
+              SLAB_HEIGHT / DIRT_TILE_M,         // ≈ 0.2 → same world scale → no stretch
+            )
+            dirtTex.anisotropy = MAX_ANISO
+            slabDirtTex = dirtTex
+            // Bottom cap: load a second independent texture instance from
+            // the same URL so its UV (planar disc, single coverage) doesn't
+            // conflict with the side's tiled UV. Clone() shares the GPU
+            // image data (no re-upload) but gives an independent repeat/
+            // rotation state.
+            const dirtTexBot = dirtTex.clone()
+            dirtTexBot.colorSpace = SRGBColorSpace
+            dirtTexBot.wrapS = dirtTexBot.wrapT = RepeatWrapping
+            dirtTexBot.repeat.set(1, 1)
+            dirtTexBot.center.set(0.5, 0.5)
+            dirtTexBot.rotation = Math.PI / 7  // same rotation as grass top
+            dirtTexBot.anisotropy = MAX_ANISO
+            dirtTexBot.needsUpdate = true
+            slabDirtTexBot = dirtTexBot
+          }
+        } catch (e) {
+          console.log('[viewport] slab: CC0 dirt texture failed to load', e)
+        }
+      }
+
       if (cancelled) {
         slabSummerTex?.dispose()
         slabWinterTex?.dispose()
+        slabDirtTex?.dispose()
+        slabDirtTexBot?.dispose()
         return
       }
 
@@ -1098,12 +1164,15 @@ export default function Viewport({
       //
       // Circular plinth. CylinderGeometry group order is: 0 = lateral side,
       // 1 = top cap, 2 = bottom cap. The top cap gets the grass texture; the
-      // curved side and hidden bottom get the solid dark-earth material.
+      // curved side and bottom get the dirt texture (mud_dry_02_dif.rgt) tiled
+      // with an aspect-correct repeat (see UV setup above) so each soil tile is
+      // square in world space — seamless and un-stretched on the thin 0.2 m
+      // band. Falls back to a flat dark-earth color if the RGT is unavailable.
       //
-      // Why split the materials? The thin (20 cm) curved side wraps the grass
-      // texture's V axis into a tiny strip, producing a smeared "tearing"
-      // band — same problem the old square slab had on its edge faces. Painting
-      // the side + bottom solid avoids sampling the texture at those UVs.
+      // Why a separate dirt texture instead of extending the grass UVs? The
+      // grass texture's V axis collapses into a ~1% strip on the 20 cm side,
+      // producing a smeared single-colour band. A dedicated dirt tile sized to
+      // ~0.5 m/tile reads as a clean soil cross-section.
       //
       // Radius 2.9 (Ø5.8) circumscribes the tank's ~5-unit auto-scaled length
       // with a small margin so tracks/barrel don't overhang the disc; 64
@@ -1128,19 +1197,33 @@ export default function Viewport({
       } else {
         slabMatTop.color.setHex(seasonGroundTint(slabMatTop, seasonRef.current))
       }
-      // Edge / underside material — a darker earth tone that reads as a
-      // soil cross-section poking out beneath the turf.  Slightly rougher
-      // than the grass top so it matches in lighting response.
+      // Edge / underside material — brown_mud_dry tiled with an aspect-correct
+      // repeat (square tiles, no stretch) when available, falling back to a
+      // flat dark-earth color. Color multiplier 0x584636 is a DARK warm earth
+      // tone (~34% luminance): brown_mud_dry's albedo is a fairly light tan, so
+      // multiplying it down keeps the rim reading as deep packed soil rather
+      // than a bright sandy band. roughness:1 prevents any specular highlight
+      // on the thin rim.
       const slabMatEdge = new MeshStandardMaterial({
-        color: 0x2e2418, // dark loam — multiplies into ambient + key light
+        map: slabDirtTex ?? null,
+        color: slabDirtTex ? 0x584636 : 0x2e2418, // dark earth tint w/ texture, dark loam fallback
+        roughness: 1.0,
+        metalness: 0,
+      })
+      // Bottom cap: separate material + separate texture instance so the
+      // planar-disc UV (repeat 1×1, rotated) doesn't fight the side's
+      // tiled-band UV. Uses same dirt texture image but independent state.
+      const slabMatBot = new MeshStandardMaterial({
+        map: slabDirtTexBot ?? slabDirtTex ?? null,
+        color: slabDirtTexBot ? 0x584636 : 0x2e2418,
         roughness: 1.0,
         metalness: 0,
       })
       // CylinderGeometry group order: 0 = side, 1 = top cap, 2 = bottom cap.
       const slabMaterials: MeshStandardMaterial[] = [
-        slabMatEdge, // 0: curved side — dark earth
-        slabMatTop, // 1: top cap — grass
-        slabMatEdge, // 2: bottom cap — unseen but consistent
+        slabMatEdge, // 0: curved side — tiled dirt (aspect-correct square tiles)
+        slabMatTop,  // 1: top cap — grass (or snow)
+        slabMatBot,  // 2: bottom cap — planar dirt disc (same UV as grass top)
       ]
 
       const slab = new Mesh(slabGeo, slabMaterials)
@@ -1155,8 +1238,11 @@ export default function Viewport({
         slabGeo.dispose()
         slabMatTop.dispose()
         slabMatEdge.dispose()
+        slabMatBot.dispose()
         slabSummerTex?.dispose()
         slabWinterTex?.dispose()
+        slabDirtTex?.dispose()
+        slabDirtTexBot?.dispose()
         return
       }
       sceneObj.add(slab)
@@ -1740,11 +1826,21 @@ export default function Viewport({
                     // so a winter request never accidentally falls back
                     // to `caen_midday` (clear sunny day) and vice-versa.
                     // `stormy_sky` is season-agnostic and stays in both.
+                    // Season-specific canonical skies — verified paths in
+                    // ArtEnvironment.sga (see game-skybox-assets.md §4).
+                    // These are tried first so a normal install always gets
+                    // the best-matching sky without falling through the
+                    // full chain.
+                    const canonicalSkies =
+                      season === 'winter'
+                        ? ['cold_clear_day_00', 'cloudy_day_00']
+                        : ['sun_day_clouds_00', 'sunny_day_clouds', 'cloudy_day_00', 'green_yellow_cloudy']
                     const langresIds =
                       season === 'winter'
                         ? ['langreskaya_winter', 'langres_winter']
                         : ['langreskaya', 'langres', 'langreskaya_summer']
                     tryEnvs.push(
+                      ...canonicalSkies,
                       ...langresIds,
                       'caen_midday',
                       'caen_dawn',

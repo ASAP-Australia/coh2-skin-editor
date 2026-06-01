@@ -39,6 +39,7 @@ import { buildSga, type SgaInputFile } from './sga-writer'
 import { paintDecals, preloadDecalImages, type RenderContext } from './decal-painter'
 import { findVehicleSpec, inferProjectFactions, vehicleFolder, type Faction } from './vehicles'
 import type { Coh2SkinProject } from './project'
+import { compositeIconAtlas } from './icon-atlas-composite'
 
 const TEMPLATE_GUID = '935a02ef44344ea29108b57b9cb7b9f5'
 const TEMPLATE_FILES = [
@@ -519,6 +520,20 @@ export async function exportSkinPack(
     if (tmplPath.endsWith('.info') || tmplPath.endsWith('.ucs')) continue
     // Rewrite GUID in the path (for .gfx and _i1.dds which are named after the GUID)
     const destPath = tmplPath.replace(TEMPLATE_GUID, newGuid)
+
+    // If this is the atlas DDS and any slot has a custom icon, composite them.
+    if (tmplPath.endsWith('_i1.dds') && project.exportSlots.some(s => s.slotIcon)) {
+      let atlasBytes: Uint8Array
+      try {
+        atlasBytes = await compositeIconAtlas(tmpl[tmplPath], project.exportSlots)
+      } catch (err) {
+        console.warn('icon-atlas-composite: falling back to template DDS —', err)
+        atlasBytes = rewriteGuid(tmpl[tmplPath], newGuid)
+      }
+      sgaFiles.push({ path: destPath, bytes: atlasBytes, compress: true })
+      continue
+    }
+
     // Also rewrite GUID references inside the bytes (e.g. .gfx may reference the GUID)
     const destBytes = rewriteGuid(tmpl[tmplPath], newGuid)
     sgaFiles.push({ path: destPath, bytes: destBytes, compress: true })

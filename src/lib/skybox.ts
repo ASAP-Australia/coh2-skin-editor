@@ -1,10 +1,13 @@
 /**
  * CoH2 skybox loader — builds a Three.js CubeTexture from ArtEnvironment.sga.
  *
- * CoH2 skybox textures live under art/ui/skies/<envName>/ and use:
- *   <envName>_sky_side.rgt  — 4:1 strip: front | right | back | left
- *   <envName>_sky_top.rgt   — top cap
- *   <envName>_sky_bot.rgt   — bottom cap (may also be _sky_bottom.rgt)
+ * CoH2 skybox textures live under art/environment/skies/<envName>/ and use:
+ *   <envName>_side_dif.rgt  — 4-panel strip: front | right | back | left
+ *   <envName>_top_dif.rgt   — top cap
+ *   (no bottom-cap asset exists; a solid colour is used for the ny face)
+ *
+ * Exact paths vary per env, so SIDE_TOP_LOOKUP holds verified path pairs and
+ * loadSkybox falls back to a naming heuristic for envs not in the table.
  *
  * Returns null (not a rejection) if the assets aren't found so callers can
  * fall back to a plain background colour gracefully.
@@ -23,7 +26,55 @@ export const SKYBOX_ENVS = [
   'foggy_autumn_day',
   'caen_dawn', 'caen_midday', 'caen_night',
   'stormy_sky',
+  // Two-part side+top verified skies (season-aware)
+  'sun_day_clouds_00',
+  'cold_clear_day_00',
+  'cloudy_day_00',
+  'green_yellow_cloudy',
+  'night_sky_00',
+  'night_sun_setting_00',
+  'sunny_day_clouds',
 ]
+
+/**
+ * Verified explicit lookup table for two-part (side+top) sky assets.
+ * Paths confirmed present in ArtEnvironment.sga.
+ * Key = env name; value = { side, top } archive paths.
+ */
+const SIDE_TOP_LOOKUP: Record<string, { side: string; top: string }> = {
+  sun_day_clouds_00: {
+    side: 'art/environment/skies/sun_day_clouds_00/sun_day_clouds_00_side_dif.rgt',
+    top:  'art/environment/skies/sun_day_clouds_00/sun_day_clouds_00_top_dif.rgt',
+  },
+  cold_clear_day_00: {
+    side: 'art/environment/skies/cold_clear_day_00/cold_clear_day_side_00_dif.rgt',
+    top:  'art/environment/skies/cold_clear_day_00/cold_clear_day_top_00_dif.rgt',
+  },
+  cloudy_day_00: {
+    side: 'art/environment/skies/cloudy_day_00/cloudy_day_00_side_dif.rgt',
+    top:  'art/environment/skies/cloudy_day_00/cloudy_day_00_top_dif.rgt',
+  },
+  green_yellow_cloudy: {
+    side: 'art/environment/skies/green_yellow_cloudy/green_yellow_cloudy_side_dif.rgt',
+    top:  'art/environment/skies/green_yellow_cloudy/green_yellow_cloudy_top_dif.rgt',
+  },
+  night_sky_00: {
+    side: 'art/environment/skies/night_sky_00/night_sky_side_00_dif.rgt',
+    top:  'art/environment/skies/night_sky_00/night_sky_top_00_dif.rgt',
+  },
+  night_sun_setting_00: {
+    side: 'art/environment/skies/night_sun_setting_00/night_sun_setting_00_side_dif.rgt',
+    top:  'art/environment/skies/night_sun_setting_00/night_sun_setting_00_top_dif.rgt',
+  },
+  sunny_day_clouds: {
+    side: 'art/environment/skies/sunny_day_clouds/seq_suncloud_skysidewrap_dif.rgt',
+    top:  'art/environment/skies/sunny_day_clouds/seq_suncloud_skytopbottom_dif.rgt',
+  },
+  mission_00: {
+    side: 'art/environment/skies/mission_00/seq_test_skysidewrap_dif.rgt',
+    top:  'art/environment/skies/mission_00/seq_test_skytopbottom_dif.rgt',
+  },
+}
 
 /** Classify a skybox environment name into a season bucket.
  *
@@ -33,9 +84,19 @@ export const SKYBOX_ENVS = [
  *   - `stormy_sky` → 'either' (overcast works for both seasons)
  *   - Everything else → 'summer' (default; most CoH2 stock envs are warm)
  */
+const WINTER_ENVS = new Set([
+  'cold_clear_day_00',
+  'm13_halbe',
+  'winter_day_cloudy',
+  'winter_evening_frozen',
+  'winter_night_clear',
+])
+const EITHER_ENVS = new Set(['stormy_sky', 'greysky', 'night_sky_00', 'night_sun_setting_00'])
+
 export function seasonOfEnv(env: string): 'summer' | 'winter' | 'either' {
   const lower = env.toLowerCase()
-  if (lower === 'stormy_sky') return 'either'
+  if (EITHER_ENVS.has(lower)) return 'either'
+  if (WINTER_ENVS.has(lower)) return 'winter'
   if (/_winter$/.test(lower)) return 'winter'
   if (/_summer$/.test(lower)) return 'summer'
   return 'summer'
@@ -205,34 +266,53 @@ export function proceduralGroundTexture(season: 'summer' | 'winter'): HTMLCanvas
 }
 
 /** Try to load a skybox for the given environment name from the archive.
- *  Returns null (graceful) if assets are not found. */
+ *  Returns null (graceful) if assets are not found.
+ *
+ *  Strategy:
+ *  1. Check SIDE_TOP_LOOKUP for an explicit verified path pair.
+ *  2. Fall back to the generic naming heuristic using the CORRECT
+ *     path prefix `art/environment/skies/` (was `art/ui/skies/` — bug fix).
+ */
 export async function loadSkybox(archive: SgaArchive, envName: string): Promise<THREE.CubeTexture | null> {
-  const base = `art/ui/skies/${envName}/${envName}`
-
-  // Try multiple naming conventions seen in CoH2 SGAs
-  const sideVariants = [
-    `${base}_sky_side.rgt`,
-    `${base}_sky.rgt`,
-    `art/ui/skies/${envName}/sky_side.rgt`,
-    `art/ui/skies/${envName}/sky.rgt`,
-  ]
-  const topVariants = [
-    `${base}_sky_top.rgt`,
-    `art/ui/skies/${envName}/sky_top.rgt`,
-    `${base}_sky_top_bot.rgt`,
-  ]
-  const botVariants = [
-    `${base}_sky_bot.rgt`,
-    `${base}_sky_bottom.rgt`,
-    `art/ui/skies/${envName}/sky_bot.rgt`,
-    `${base}_sky_top_bot.rgt`,
-  ]
-
   let sideCanvas: HTMLCanvasElement | null = null
-  for (const path of sideVariants) {
-    sideCanvas = await loadRgtCanvas(archive, path)
-    if (sideCanvas) break
+  let topCanvas: HTMLCanvasElement | null = null
+
+  // --- Priority 1: explicit lookup table (verified paths) ---
+  const known = SIDE_TOP_LOOKUP[envName]
+  if (known) {
+    sideCanvas = await loadRgtCanvas(archive, known.side)
+    if (sideCanvas) {
+      topCanvas = await loadRgtCanvas(archive, known.top)
+    }
   }
+
+  // --- Priority 2: generic heuristic with FIXED path prefix ---
+  if (!sideCanvas) {
+    const base = `art/environment/skies/${envName}/${envName}`
+    const sideVariants = [
+      `${base}_side_dif.rgt`,
+      `${base}_sky_side.rgt`,
+      `${base}_sky.rgt`,
+      `art/environment/skies/${envName}/sky_side.rgt`,
+      `art/environment/skies/${envName}/sky.rgt`,
+    ]
+    for (const path of sideVariants) {
+      sideCanvas = await loadRgtCanvas(archive, path)
+      if (sideCanvas) break
+    }
+    if (sideCanvas) {
+      const topVariants = [
+        `${base}_top_dif.rgt`,
+        `${base}_sky_top.rgt`,
+        `art/environment/skies/${envName}/sky_top.rgt`,
+      ]
+      for (const path of topVariants) {
+        topCanvas = await loadRgtCanvas(archive, path)
+        if (topCanvas) break
+      }
+    }
+  }
+
   if (!sideCanvas) {
     console.warn('[skybox] no side texture found for', envName)
     return null
@@ -241,25 +321,15 @@ export async function loadSkybox(archive: SgaArchive, envName: string): Promise<
   // Side strip is 4 panels wide. Slice: front(0), right(1), back(2), left(3)
   const panelW = Math.floor(sideCanvas.width / 4)
   const panelH = sideCanvas.height
-  const front  = sliceCanvas(sideCanvas, 0,           0, panelW, panelH)
-  const right  = sliceCanvas(sideCanvas, panelW,      0, panelW, panelH)
-  const back   = sliceCanvas(sideCanvas, panelW * 2,  0, panelW, panelH)
-  const left   = sliceCanvas(sideCanvas, panelW * 3,  0, panelW, panelH)
-
-  let topCanvas: HTMLCanvasElement | null = null
-  for (const path of topVariants) {
-    topCanvas = await loadRgtCanvas(archive, path)
-    if (topCanvas) break
-  }
-  let botCanvas: HTMLCanvasElement | null = null
-  for (const path of botVariants) {
-    botCanvas = await loadRgtCanvas(archive, path)
-    if (botCanvas) break
-  }
+  const front  = sliceCanvas(sideCanvas, 0,          0, panelW, panelH)
+  const right  = sliceCanvas(sideCanvas, panelW,     0, panelW, panelH)
+  const back   = sliceCanvas(sideCanvas, panelW * 2, 0, panelW, panelH)
+  const left   = sliceCanvas(sideCanvas, panelW * 3, 0, panelW, panelH)
 
   const fallback = solidCanvas(panelW, '#c8c8d8')
   const top = topCanvas ?? fallback
-  const bot = botCanvas ?? fallback
+  // No game asset has a bottom face — use grey-brown solid (camera never looks straight down)
+  const bot = solidCanvas(panelW, '#5a5040')
 
   // CubeTexture face order: px(right), nx(left), py(top), ny(bottom), pz(front), nz(back)
   const cubeTex = new THREE.CubeTexture([
@@ -275,10 +345,17 @@ export async function loadSkybox(archive: SgaArchive, envName: string): Promise<
 export async function listAvailableEnvs(archive: SgaArchive): Promise<string[]> {
   const available: string[] = []
   for (const env of SKYBOX_ENVS) {
-    const base = `art/ui/skies/${env}/${env}`
-    // Quick presence check — just try one path
-    const bytes = await archive.readByPath(`${base}_sky_side.rgt`)
-                ?? await archive.readByPath(`art/ui/skies/${env}/sky_side.rgt`)
+    // Check explicit lookup first
+    const known = SIDE_TOP_LOOKUP[env]
+    if (known) {
+      const bytes = await archive.readByPath(known.side)
+      if (bytes) { available.push(env); continue }
+    }
+    // Generic heuristic with FIXED path prefix
+    const base = `art/environment/skies/${env}/${env}`
+    const bytes = await archive.readByPath(`${base}_side_dif.rgt`)
+                ?? await archive.readByPath(`${base}_sky_side.rgt`)
+                ?? await archive.readByPath(`art/environment/skies/${env}/sky_side.rgt`)
                 ?? await archive.readByPath(`${base}_sky.rgt`)
     if (bytes) available.push(env)
   }

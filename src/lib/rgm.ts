@@ -429,24 +429,24 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
             uvs[v * 2 + 1] = 1 - view.getFloat32(o + 4, true)
           } else if (elt.format === 2) {
             // 4-byte TEXCOORD0 record [b0,b1,b2,b3]. The (U,V) pair is the two
-            // MIDDLE bytes as UNORM8, not a uint16 pair:
-            //   • b1 (o+1): U channel, full-range unorm8 → U = b1 / 255.
-            //   • b2 (o+2): V channel, full-range unorm8 → V = b2 / 255.
+            // MIDDLE bytes as UNORM8, cross-assigned to the OPPOSITE channels
+            // from a naive read:
+            //   • U = b2 / 255   (byte o+2)
+            //   • V = 1 - b1 / 255   (byte o+1, flipped for flipY=true)
             //   • b0 (o+0): near-zero ([0,31]) — a separate small field, NOT
-            //     the low byte of U (a u16 decode of b0|b1 scores far worse).
+            //     the low byte of a u16 (a u16 decode scores far worse).
             //   • b3 (o+3): near-constant ([224,255]) — a separate field.
-            // Found by a metric-driven scan: per-triangle UV perimeter vs 3D
-            // perimeter Pearson r — a near-isometric artist unwrap maximises it.
-            // u8@b1/b2 scores r≈0.92 on geo_Hull AND geo_Turret; every uint16 /
-            // half / snorm / split-TC candidate scores ≤0.45 and visually
-            // collapses the unwrap into slivers (the long-standing "smear").
-            // Visual overlay over the diffuse atlas confirms b1/b2 lands the
-            // turret UVs on the turret-roof island and hull UVs on the hull
-            // plates. V is flipped to match flipY=true on the CanvasTexture
-            // (same convention as the format===3 track path above).
+            // The b1/b2 channel pair was found by a metric-driven scan
+            // (per-triangle UV vs 3D perimeter Pearson r ≈ 0.92 on geo_Hull AND
+            // geo_Turret; every uint16/half/snorm/split-TC candidate ≤0.45 and
+            // visually collapses the unwrap into slivers — the old "smear").
+            // The U↔V channel assignment (b2→U, b1→V) — which the correlation
+            // metric is blind to — was confirmed by visual render comparison
+            // against the diffuse atlas. V is flipped to match flipY=true on the
+            // CanvasTexture (same convention as the format===3 track path above).
             // The track submeshes use format 3 (float32 pair) and are unaffected.
-            uvs[v * 2 + 0] = p.vertexBuffer[o + 1] / 255      // U from b1
-            uvs[v * 2 + 1] = 1 - p.vertexBuffer[o + 2] / 255  // V from b2 (flipped)
+            uvs[v * 2 + 0] = p.vertexBuffer[o + 2] / 255
+            uvs[v * 2 + 1] = 1 - p.vertexBuffer[o + 1] / 255
           }
           break
       }
