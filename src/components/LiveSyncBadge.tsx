@@ -45,11 +45,41 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CheckCircle2, XCircle, Loader2, Circle, Power, Upload, RotateCcw } from 'lucide-react'
+import { CheckCircle2, XCircle, Loader2, Circle, Power, Upload, RotateCcw, Cloud, CloudOff } from 'lucide-react'
 import { useLiveSync } from '@/lib/live-sync'
-import type { LiveSyncState } from '@/lib/live-sync'
+import type { LiveSyncState, WorkshopSyncState, WorkshopSyncStatus } from '@/lib/live-sync'
 
 // ─── Icon mapping ─────────────────────────────────────────────────────────────
+
+/**
+ * Tiny Workshop-sync status dot shown in the corner of the badge.
+ * Only rendered when state is not 'idle'.
+ */
+export function WorkshopSyncIndicator({ state, reason }: { state: WorkshopSyncState; reason: string }) {
+  if (state === 'idle') return null
+  return (
+    <span
+      title={`Workshop: ${reason}`}
+      aria-label={`Workshop sync: ${reason}`}
+      style={{
+        position: 'absolute',
+        bottom: 4,
+        right: 4,
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        background:
+          state === 'pushing' ? 'rgb(56 189 248)' /* sky-400 */
+          : state === 'synced' ? 'rgb(52 211 153)' /* emerald-400 */
+          : 'rgb(248 113 113)' /* red-400 — error */,
+        boxShadow: '0 0 0 1.5px rgba(0,0,0,0.6)',
+        flexShrink: 0,
+        // Pulse animation when actively pushing.
+        animation: state === 'pushing' ? 'liveSyncWsPulse 1.4s ease-in-out infinite' : 'none',
+      }}
+    />
+  )
+}
 
 export function StateIcon({ state }: { state: LiveSyncState }) {
   switch (state) {
@@ -111,6 +141,8 @@ interface Props {
 export default function LiveSyncBadge({ variant = 'dock', iconPicker }: Props) {
   const sync = useLiveSync()
   const { state, reason, enabled, actions } = sync
+  // Defensive default: never hard-crash the badge if a snapshot omits workshopSync.
+  const workshopSync = sync.workshopSync ?? { state: 'idle' as const, reason: '' }
   const [open, setOpen] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
 
@@ -218,10 +250,11 @@ export default function LiveSyncBadge({ variant = 'dock', iconPicker }: Props) {
         }
       >
         <StateIcon state={state} />
+        <WorkshopSyncIndicator state={workshopSync.state} reason={workshopSync.reason} />
       </button>
 
       {open && iconPicker && (
-        <LiveSyncPopover reason={reason} state={state} iconPicker={iconPicker} />
+        <LiveSyncPopover reason={reason} state={state} workshopSync={workshopSync} iconPicker={iconPicker} />
       )}
     </div>
   )
@@ -244,10 +277,12 @@ export default function LiveSyncBadge({ variant = 'dock', iconPicker }: Props) {
 function LiveSyncPopover({
   reason,
   state,
+  workshopSync,
   iconPicker,
 }: {
   reason: string
   state: LiveSyncState
+  workshopSync: WorkshopSyncStatus
   iconPicker: IconPickerProps
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -295,8 +330,8 @@ function LiveSyncPopover({
         zIndex: 50,
       }}
     >
-      {/* Status line */}
-      <div className="flex items-center gap-2 mb-3">
+      {/* Local sync status line */}
+      <div className="flex items-center gap-2 mb-2">
         <StateIcon state={state} />
         <span
           className="text-[12px] leading-tight text-white/85"
@@ -305,6 +340,27 @@ function LiveSyncPopover({
           {reason}
         </span>
       </div>
+
+      {/* Workshop auto-sync status (only shown when relevant) */}
+      {workshopSync.state !== 'idle' && (
+        <div
+          className="flex items-center gap-2 mb-2"
+          data-testid="live-sync-popover-workshop-reason"
+        >
+          {workshopSync.state === 'pushing' && (
+            <Loader2 size={13} className="text-sky-400 animate-spin shrink-0" aria-hidden />
+          )}
+          {workshopSync.state === 'synced' && (
+            <Cloud size={13} className="text-emerald-400 shrink-0" aria-hidden />
+          )}
+          {workshopSync.state === 'error' && (
+            <CloudOff size={13} className="text-red-400 shrink-0" aria-hidden />
+          )}
+          <span className="text-[11px] leading-tight text-white/60">
+            {workshopSync.reason}
+          </span>
+        </div>
+      )}
 
       <div
         style={{

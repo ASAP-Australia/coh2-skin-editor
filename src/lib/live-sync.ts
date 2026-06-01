@@ -29,16 +29,26 @@ import type { Coh2DecalPackProject } from '@/lib/decal-pack-project'
 // dynamic `await import(...)` to avoid the extra microtask delays that
 // would push picker-fallback timing past the test suite's microtask
 // flush limits.
-import { isElectron, detectModsPath, detectInstallPath, nativePathToHandle } from '@/lib/native-fs'
+import { isElectron, detectModsPath, detectInstallPath, nativePathToHandle, makeTmpPublishDir, writeFile } from '@/lib/native-fs'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type LiveSyncState = 'idle' | 'syncing' | 'synced' | 'queued' | 'error' | 'disabled'
 
+/** State of the background Workshop auto-update (separate from local sync). */
+export type WorkshopSyncState = 'idle' | 'pushing' | 'synced' | 'error'
+
+export interface WorkshopSyncStatus {
+  state: WorkshopSyncState
+  reason: string
+}
+
 export interface LiveSyncSnapshot {
   state: LiveSyncState
   reason: string
   enabled: boolean
+  /** Status of the last (or in-progress) Workshop auto-update. */
+  workshopSync: WorkshopSyncStatus
   actions: {
     toggle: () => void
     syncNow: () => void
@@ -131,6 +141,17 @@ class LiveSyncManager {
   private _freshnessTimer: number | null = null
   private _syncedAt = 0
 
+  // ── Workshop push state ───────────────────────────────────────────────────
+  /** Coalescing timer handle for the Workshop push (12 s idle delay). */
+  private _wsTimer: number | null = null
+  /** Whether a Workshop update IPC call is currently in flight. */
+  private _wsInFlight = false
+  /** The workshopId currently being pushed (guard against overlapping pushes). */
+  private _wsPushingId: string | null = null
+  /** Current Workshop auto-update state. */
+  private _wsState: WorkshopSyncState = 'idle'
+  private _wsReason = ''
+
   constructor() {
     // v1.0: Live Sync is always ON. Every edit (decal drag, camo change,
     // name/icon update) is debounced and written into the user's CoH2
@@ -159,6 +180,7 @@ class LiveSyncManager {
       state: this._state,
       reason: this._reason,
       enabled: this._state !== 'disabled',
+      workshopSync: { state: this._wsState, reason: this._wsReason },
       actions: {
         toggle: () => this.setEnabled(this._state === 'disabled'),
         syncNow: () => {
@@ -349,6 +371,15 @@ class LiveSyncManager {
       this._syncedAt = Date.now()
       this._setState('synced', 'Synced just now')
       this._startFreshnessTicker()
+
+      // 5. If the project has a real Workshop ID, schedule an auto-update
+      //    of the existing listing. This is fire-and-forget — failures are
+      //    isolated from local sync (the badge reports them separately via
+      //    workshopSync status, and this catch block is NOT reached).
+      const wsId = (project as { workshopId?: string }).workshopId
+      if (isRealWorkshopId(wsId)) {
+        this._scheduleWorkshopPush(kind, project, bytes.filename, wsId)
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       const name = err instanceof Error ? (err as { name?: string }).name : undefined
@@ -381,6 +412,142 @@ class LiveSyncManager {
           void this._runSync(kind, project)
         }, 100)
       }
+    }
+  }
+
+  // ── Workshop auto-update ──────────────────────────────────────────────────
+
+  private _setWsState(state: WorkshopSyncState, reason: string) {
+    this._wsState = state
+    this._wsReason = reason
+    this._snapshot = null
+    this._notify()
+  }
+
+  /**
+   * Coalesce Workshop pushes: reset a 12-second idle timer on each call.
+   * If a push for this workshopId is already in flight, skip (no queue).
+   *
+   * The 12 s delay gives the user time to finish a burst of edits before
+   * we invoke the Steam IPC call (which has its own rate-limit risks).
+   * The local 1.5 s debounce is intentionally much shorter — local FS
+   * writes are cheap; Workshop API calls are not.
+   */
+  private _scheduleWorkshopPush(
+    kind: SyncKind,
+    project: AnyProject,
+    sgaFilename: string,
+    workshopId: string,
+  ) {
+    // If a push for this exact item is already in flight, skip — no queue.
+    if (this._wsInFlight && this._wsPushingId === workshopId) return
+
+    // Cancel any pending coalesce timer and restart the 12 s window.
+    if (this._wsTimer != null) {
+      window.clearTimeout(this._wsTimer)
+      this._wsTimer = null
+    }
+
+    this._setWsState('pushing', 'Workshop update pending…')
+
+    this._wsTimer = window.setTimeout(() => {
+      this._wsTimer = null
+      void this._doWorkshopUpdate(kind, project, sgaFilename, workshopId)
+    }, 12_000)
+  }
+
+  /**
+   * Execute the Workshop update IPC call.
+   *
+   * contentPath: the native mods subdirectory that already contains the
+   *   SGA Live Sync just wrote (no re-build needed).
+   * previewPath: a temp PNG generated from the project's stored thumbnail
+   *   or icon — the smallest available data URL we already have.
+   *   Never creates a new Workshop item (uses `.update()` only).
+   */
+  private async _doWorkshopUpdate(
+    kind: SyncKind,
+    project: AnyProject,
+    sgaFilename: string,
+    workshopId: string,
+  ) {
+    if (!isElectron()) return // Workshop API only available in Electron
+    if (this._wsInFlight) return // guard against concurrent calls
+
+    this._wsInFlight = true
+    this._wsPushingId = workshopId
+
+    try {
+      this._setWsState('pushing', 'Pushing to Workshop…')
+
+      // ── Resolve the native mods root path ───────────────────────────────
+      const modsPath = await detectModsPath()
+      if (!modsPath) {
+        this._setWsState('error', 'Workshop update skipped — mods path not detected')
+        return
+      }
+
+      // ── Build contentPath: the subdirectory where the SGA lives ──────────
+      // Must match the subdirectory logic in _writeFile().
+      let contentPath: string
+      if (kind === 'skin') {
+        contentPath = `${modsPath}/skins`
+      } else if (kind === 'decal') {
+        contentPath = `${modsPath}/decals/subscriptions`
+      } else {
+        contentPath = `${modsPath}/faceplates/subscriptions`
+      }
+
+      // ── Generate a preview PNG from the project's stored thumbnail ────────
+      // We intentionally avoid re-rendering the editor canvas (no access
+      // to React refs from the singleton). Instead we use the smallest
+      // image data the project already stores:
+      //   • skin: project.thumbnail (data URL, ≤64 px)
+      //   • faceplate: project.inventoryIcon or null
+      //   • decal: rendered via renderDecalIcon (already called during _build)
+      // The preview is written to a fresh temp file to satisfy the required
+      // previewPath argument of the update API.
+      const previewPng = await buildWorkshopPreviewFromProject(kind, project)
+      const tmpDir = await makeTmpPublishDir()
+      const previewPath = `${tmpDir}/preview.png`
+      await writeFile(previewPath, previewPng)
+
+      // ── Compose the update input ──────────────────────────────────────────
+      const p = project as { packName?: string; packDescription?: string; workshopId?: string }
+      const tagsByKind: Record<SyncKind, string[]> = {
+        skin: ['Skin'],
+        faceplate: ['Faceplate'],
+        decal: ['Decal'],
+      }
+      const input = {
+        contentPath,
+        previewPath,
+        title: p.packName ?? 'Untitled',
+        description: p.packDescription ?? '',
+        tags: tagsByKind[kind],
+        // Preserve the existing Workshop visibility by using 3 (Unlisted)
+        // as a safe default — we cannot read back the current visibility
+        // without an extra IPC round-trip, and auto-syncing should never
+        // silently make a Private item Public. The user can change
+        // visibility explicitly via PublishSection.
+        visibility: 3 as const,
+        changeNote: 'Auto-synced by Live Sync',
+      }
+
+      // SAFETY: we only ever call .update(), never .publish().
+      // isRealWorkshopId() was already verified by the caller.
+      await window.electronAPI!.steam.workshop.update(workshopId, input)
+      void sgaFilename // referenced so the param isn't unused
+
+      this._setWsState('synced', 'Workshop synced')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn('[live-sync] Workshop auto-update failed (non-fatal):', msg)
+      this._setWsState('error', `Workshop update failed: ${msg}`)
+      // Intentionally NOT re-thrown — local sync already succeeded.
+    } finally {
+      this._wsInFlight = false
+      this._wsPushingId = null
     }
   }
 
@@ -519,7 +686,11 @@ class LiveSyncManager {
       // passing the 64×64 icon source would produce blank vehicle markings.
       const decalRgba = await renderDecalTexture(decalProject, DECAL_TEXTURE_SIZE)
 
-      const result = await buildDecalMod({ project: decalProject, iconRgba, decalRgba, guid })
+      // v6: compute per-part per-faction RGBAs for the atlas bake.
+      const { partsForBake } = await import('@/lib/atlas-parts')
+      const partRgbas = await partsForBake(decalProject)
+
+      const result = await buildDecalMod({ project: decalProject, iconRgba, decalRgba, partRgbas, guid })
       const filename = `${guid}.sga`
       return { bytes: result.sga, filename }
     } else {
@@ -841,7 +1012,10 @@ async function renderDecalIcon(
     // Cache decoded source bitmaps so a project with repeated source-image
     // references doesn't decode the same PNG/JPG twice per sync.
     const bitmapCache = new Map<string, ImageBitmap | HTMLImageElement>()
-    const visible = project.decals.filter(d => d.visible)
+    // v6: collect all shared layers from all parts. v5: use decals[].
+    const visible = project.parts
+      ? project.parts.flatMap(part => part.shared.filter(d => d.visible))
+      : project.decals.filter(d => d.visible)
     let prevCanvas: OffscreenCanvas | HTMLCanvasElement | null = null
 
     // Compose each decal into the icon canvas. Each decal renders at the
@@ -906,6 +1080,12 @@ async function renderDecalTexture(
     const { rasteriseDecal } = await import('@/lib/decal-pack-export')
     const { DECAL_PACK_SIZE } = await import('@/lib/decal-pack-project')
 
+    // v6 projects: atlas is composited per-faction inside buildDecalMod via partRgbas.
+    // Return a blank buffer here; the caller must pass partRgbas separately.
+    if (project.parts) {
+      return new Uint8ClampedArray(size * size * 4)
+    }
+    // v5 legacy path below:
     const bitmapCache = new Map<string, ImageBitmap | HTMLImageElement>()
     const visible = project.decals.filter(d => d.visible)
     let prevCanvas: OffscreenCanvas | HTMLCanvasElement | null = null
@@ -979,6 +1159,120 @@ function loadImageFromDataUrl(dataUrl: string): Promise<HTMLImageElement> {
     img.onload = () => resolve(img)
     img.onerror = () => reject(new Error('Image decode failed'))
     img.src = dataUrl
+  })
+}
+
+// ─── Workshop helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Guard: true for a real Steam Workshop ID (same range check as PublishSection.tsx:72
+ * and PublishToWorkshopDialog.tsx:84). IDs above 5×10⁹ are fake locally-generated
+ * IDs produced by freshPackId() — treat as unpublished.
+ */
+export function isRealWorkshopId(id: string | undefined | null): id is string {
+  if (!id) return false
+  const n = Number(id)
+  return Number.isFinite(n) && n > 0 && n <= 5_000_000_000
+}
+
+/**
+ * Build a minimal Workshop preview PNG from whatever image data the project
+ * already stores, without touching the editor canvas.
+ *
+ * Priority:
+ *   1. faceplate.inventoryIcon (user-supplied square icon, purpose-built)
+ *   2. skin.thumbnail (tiny data URL persisted with the project)
+ *   3. decal: render a 128×128 icon from the decal stack (reuses renderDecalIcon)
+ *   4. Fallback: 256×256 solid #1e2028 placeholder PNG
+ *
+ * The result is always ≥256 px and < 1 MB so Steam accepts it. The existing
+ * Workshop preview is NOT replaced pixel-for-pixel — it is updated to reflect
+ * the current project state.
+ */
+async function buildWorkshopPreviewFromProject(
+  kind: SyncKind,
+  project: AnyProject,
+): Promise<ArrayBuffer> {
+  const PREVIEW_SIZE = 512
+
+  // Helper: convert a data URL (any image type) to a PNG ArrayBuffer at PREVIEW_SIZE×PREVIEW_SIZE.
+  async function dataUrlToPng(dataUrl: string): Promise<ArrayBuffer> {
+    const img = await loadImageFromDataUrl(dataUrl)
+    const canvas = document.createElement('canvas')
+    canvas.width = PREVIEW_SIZE
+    canvas.height = PREVIEW_SIZE
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('no 2d context')
+    // Fill background so a transparent PNG has a neutral backdrop.
+    ctx.fillStyle = '#1e2028'
+    ctx.fillRect(0, 0, PREVIEW_SIZE, PREVIEW_SIZE)
+    // Center-fit the source image.
+    const scale = Math.min(PREVIEW_SIZE / img.naturalWidth, PREVIEW_SIZE / img.naturalHeight)
+    const w = Math.round(img.naturalWidth * scale)
+    const h = Math.round(img.naturalHeight * scale)
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(img, Math.round((PREVIEW_SIZE - w) / 2), Math.round((PREVIEW_SIZE - h) / 2), w, h)
+    return await canvasToArrayBuffer(canvas)
+  }
+
+  // Helper: encode canvas to PNG ArrayBuffer.
+  async function canvasToArrayBuffer(canvas: HTMLCanvasElement): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(blob => {
+        if (!blob) { reject(new Error('toBlob returned null')); return }
+        blob.arrayBuffer().then(resolve, reject)
+      }, 'image/png')
+    })
+  }
+
+  try {
+    if (kind === 'faceplate') {
+      const fp = project as Coh2FaceplateProject
+      if (fp.inventoryIcon) return await dataUrlToPng(fp.inventoryIcon)
+      // Fall through — try the atlas banner as a fallback thumbnail below.
+    }
+
+    if (kind === 'skin') {
+      const sp = project as Coh2SkinProject
+      // vehicleIcons is a Record<string, string> of data URLs cached on the project.
+      const icons = Object.values(sp.vehicleIcons)
+      const thumb = icons.length > 0 ? icons[0] : null
+      if (thumb) return await dataUrlToPng(thumb)
+    }
+
+    if (kind === 'decal') {
+      const dp = project as Coh2DecalPackProject
+      const { DECAL_PACK_SIZE } = await import('@/lib/decal-pack-project')
+      const iconRgba = await renderDecalIcon(dp, DECAL_PACK_SIZE)
+      // Convert the RGBA buffer to a canvas then PNG.
+      const canvas = document.createElement('canvas')
+      canvas.width = DECAL_PACK_SIZE
+      canvas.height = DECAL_PACK_SIZE
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('no 2d context')
+      const imgData = new ImageData(new Uint8ClampedArray(iconRgba.buffer) as Uint8ClampedArray<ArrayBuffer>, DECAL_PACK_SIZE, DECAL_PACK_SIZE)
+      ctx.putImageData(imgData, 0, 0)
+      return await canvasToArrayBuffer(canvas)
+    }
+  } catch (err) {
+    console.warn('[live-sync] buildWorkshopPreviewFromProject fell back to placeholder:', err)
+  }
+
+  // Final fallback: a 256×256 solid colour PNG.
+  const canvas = document.createElement('canvas')
+  canvas.width = 256
+  canvas.height = 256
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    ctx.fillStyle = '#1e2028'
+    ctx.fillRect(0, 0, 256, 256)
+  }
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (!blob) { reject(new Error('toBlob returned null')); return }
+      blob.arrayBuffer().then(resolve, reject)
+    }, 'image/png')
   })
 }
 

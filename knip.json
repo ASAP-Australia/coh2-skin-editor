@@ -14,7 +14,14 @@
     "**/__tests__/**",
     "tools/**",
     "scripts/**",
-    "e2e/**"
+    "e2e/**",
+    // package.json's "main" field points at the compiled electron output
+    // (dist-electron/main.js), so knip auto-adds it as an entry and then
+    // reports its runtime require()s (./diffusion, ./steam, …) as unresolved
+    // because the sibling compiled modules don't exist at analysis time.
+    // The TypeScript sources under electron/ are the real input; the built
+    // artifact must not be scanned.
+    "dist-electron/**"
   ],
   "ignoreDependencies": [
     "tw-animate-css",

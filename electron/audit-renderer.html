@@ -1,0 +1,1510 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Audit Renderer</title>
+  <style>
+    body { margin: 0; background: #000; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<canvas id="c" width="512" height="512"></canvas>
+<script>
+// ──────────────────────────────────────────────────────────────────────────────
+// Audit renderer — runs in an Electron BrowserWindow with nodeIntegration:true.
+// Parses CoH2 SGA archives, decodes RGM meshes + RGT diffuse textures, renders
+// each vehicle with Three.js using the same light rig as Viewport.tsx /
+// scene-settings.ts, and returns PNG data URLs via IPC.
+// ──────────────────────────────────────────────────────────────────────────────
+
+'use strict';
+
+const { ipcRenderer } = require('electron');
+const fs = require('fs');
+const path = require('path');
+const THREE = require('three');
+const pako = require('pako');
+
+// ── Vehicle catalog (mirrors vehicles.ts) ────────────────────────────────────
+const VEHICLES = [
+  { id: 'tiger',                faction: 'german',      displayName: 'Tiger I' },
+  { id: 'elefant',              faction: 'german',      displayName: 'Elefant' },
+  { id: 'brummbar',             faction: 'german',      displayName: 'Brummbär' },
+  { id: 'stug_iii',             faction: 'german',      displayName: 'StuG III' },
+  { id: 'ostwind_flak_panzer',  faction: 'german',      displayName: 'Ostwind' },
+  { id: 'panzerwerfer',         faction: 'german',      displayName: 'Panzerwerfer' },
+  { id: 'halftrack',            faction: 'german',      displayName: 'Sd.Kfz. 251' },
+  { id: 'sdkfz_250',            faction: 'german',      displayName: 'Sd.Kfz. 250' },
+  { id: 'sdkfz_222',            faction: 'german',      displayName: 'Sd.Kfz. 222' },
+  { id: 'king_tiger_sdkfz_182',    faction: 'west_german', displayName: 'King Tiger' },
+  { id: 'jagdtiger',               faction: 'west_german', displayName: 'Jagdtiger' },
+  { id: 'sturmtiger',              faction: 'west_german', displayName: 'Sturmtiger' },
+  { id: 'panther_ausf_g',          faction: 'west_german', displayName: 'Panther' },
+  { id: 'jagdpanzer_iv_sdkfz_162', faction: 'west_german', displayName: 'Jagdpanzer IV' },
+  { id: 'panzer_iv_sdkfz_ausf_i',  faction: 'west_german', displayName: 'Panzer IV' },
+  { id: 'hetzer',                  faction: 'west_german', displayName: 'Hetzer' },
+  { id: 'puma_sdkfz_234',          faction: 'west_german', displayName: 'Puma' },
+  { id: 'panzer_ii_luchs_sdkfz_123', faction: 'west_german', displayName: 'Luchs' },
+  { id: 'kubelwagen',              faction: 'west_german', displayName: 'Kübelwagen' },
+  { id: 'is2m_heavy_tank',     faction: 'soviet', displayName: 'IS-2' },
+  { id: 'isu152',              faction: 'soviet', displayName: 'ISU-152' },
+  { id: 'kv1_heavy_tank',      faction: 'soviet', displayName: 'KV-1' },
+  { id: 'kv2_heavy_tank',      faction: 'soviet', displayName: 'KV-2' },
+  { id: 't34_76',              faction: 'soviet', displayName: 'T-34/76' },
+  { id: 't_34_85',             faction: 'soviet', displayName: 'T-34/85' },
+  { id: 't70m_light_tank',     faction: 'soviet', displayName: 'T-70' },
+  { id: 'su85',                faction: 'soviet', displayName: 'SU-85' },
+  { id: 'su-76m',              faction: 'soviet', displayName: 'SU-76M' },
+  { id: 'm3a1_scout_car',      faction: 'soviet', displayName: 'M3A1 Scout' },
+  { id: 'halftrack',           faction: 'soviet', displayName: 'Lend-Lease Truck' },
+  { id: 'm26_pershing',           faction: 'aef', displayName: 'Pershing' },
+  { id: 'm4a3e8_sherman_easy_8',  faction: 'aef', displayName: 'Easy 8' },
+  { id: 'm4a3_sherman_76mm',      faction: 'aef', displayName: 'Sherman 76mm' },
+  { id: 'm4a1_sherman_calliope',  faction: 'aef', displayName: 'Calliope' },
+  { id: 'm10_tank_destroyer',     faction: 'aef', displayName: 'M10 Wolverine' },
+  { id: 'm36_tank_destroyer',     faction: 'aef', displayName: 'M36 Jackson' },
+  { id: 'm5a1_stuart',            faction: 'aef', displayName: 'M5 Stuart' },
+  { id: 'm8_greyhound',           faction: 'aef', displayName: 'Greyhound' },
+  { id: 'm7b1_priest',            faction: 'aef', displayName: 'Priest' },
+  { id: 'm3_halftrack',           faction: 'aef', displayName: 'M3 Halftrack' },
+  { id: 'm15a1_aa_halftrack',     faction: 'aef', displayName: 'AA Halftrack' },
+  { id: 'churchill',        faction: 'british', displayName: 'Churchill' },
+  { id: 'comet',            faction: 'british', displayName: 'Comet' },
+  { id: 'cromwell',         faction: 'british', displayName: 'Cromwell' },
+  { id: 'centaur',          faction: 'british', displayName: 'Centaur AA' },
+  { id: 'sherman_firefly',  faction: 'british', displayName: 'Firefly' },
+  { id: 'valentine',        faction: 'british', displayName: 'Valentine' },
+  { id: 'sexton',           faction: 'british', displayName: 'Sexton SPG' },
+];
+
+// SGAs to search for vehicles (highest-density first)
+const VEHICLE_SGAS = [
+  'ArtHigh.sga', 'ArtHighXP1.sga', 'ArtHighXP2.sga',
+  'ArtArmies.sga', 'ArtGermanEF.sga', 'ArtSovietEF.sga',
+  'ArtAEF.sga', 'ArtBritish.sga', 'ArtWestGerman.sga',
+];
+
+// On-disk folder alias map (mirrors vehicles.ts VEHICLE_FOLDER_ALIAS).
+// Vehicles whose id does NOT match their real art folder name:
+//   centaur   → centaur_aa        (ArtHighXP2.sga)
+//   t_34_85   → t34_85            (ArtHigh.sga)
+//   valentine → valentine_command (ArtHighXP2.sga)
+const VEHICLE_FOLDER_ALIAS = {
+  centaur:   'centaur_aa',
+  t_34_85:   't34_85',
+  valentine: 'valentine_command',
+};
+
+/** Returns the real on-disk folder name for a vehicle id. */
+function vehicleFolder(vehicleId) {
+  return VEHICLE_FOLDER_ALIAS[vehicleId] ?? vehicleId;
+}
+
+/** Build the canonical RGM path for a vehicle using alias-corrected folder. */
+function buildRgmPath(faction, vehicleId) {
+  const folder = vehicleFolder(vehicleId);
+  return `art/armies/${faction}/vehicles/${folder}/${folder}.rgm`;
+}
+
+// ── SGA Reader (v7 only, fd-based for large-file support) ───────────────────
+// Uses fs.readSync with file descriptors so files >2 GiB work. dataPos
+// values stored in v7 SGA TOCs are u32 but the absolute offset
+// (archiveDataStart + fileDef.dataPos) can exceed 2^31 — Node.js handles
+// this correctly since JS numbers cover integers up to 2^53.
+
+function readFdRange(fd, absPos, len) {
+  const buf = Buffer.alloc(len);
+  let bytesRead = 0;
+  while (bytesRead < len) {
+    const n = fs.readSync(fd, buf, bytesRead, len - bytesRead, absPos + bytesRead);
+    if (n === 0) break;
+    bytesRead += n;
+  }
+  return new Uint8Array(buf.buffer, buf.byteOffset, bytesRead);
+}
+
+function openSga(filePath) {
+  // Check file size — if <2GB we can readFileSync (fast); otherwise use fd
+  const stat = fs.statSync(filePath);
+  const useStream = stat.size > 1.8 * 1024 * 1024 * 1024;
+
+  if (!useStream) {
+    const buf = fs.readFileSync(filePath);
+    const u8 = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    const magic = String.fromCharCode(...u8.subarray(0, 8));
+    if (magic !== '_ARCHIVE') throw new Error(`Not an SGA: ${filePath}`);
+    const major = view.getUint16(8, true);
+    if (major !== 7) throw new Error(`SGA v${major} not supported in buffered mode`);
+    return openSgaV7Buffered(u8, view);
+  }
+
+  // Large file: use fd-based reading — only TOC loaded into RAM, file bytes
+  // are fetched on demand via readFdRange.
+  const fd = fs.openSync(filePath, 'r');
+  const header = readFdRange(fd, 0, 172);
+  const hView = new DataView(header.buffer, header.byteOffset, header.byteLength);
+  const magic = String.fromCharCode(...header.subarray(0, 8));
+  if (magic !== '_ARCHIVE') { fs.closeSync(fd); throw new Error(`Not an SGA: ${filePath}`); }
+  const major = hView.getUint16(8, true);
+  if (major !== 7) { fs.closeSync(fd); throw new Error(`SGA v${major} not supported in streaming mode`); }
+  return openSgaV7Fd(fd, hView);
+}
+
+function openSgaV7Buffered(u8, view) {
+  const headerSize = view.getUint32(140, true);
+  const dataStart  = view.getUint32(144, true);
+  const headerPos  = 152;
+  const toc        = new DataView(u8.buffer, u8.byteOffset + headerPos, headerSize);
+  const { folders, files, nameMap } = parseSgaV7Toc(toc, u8, headerPos);
+  return {
+    fd: null, u8,
+    dataStart,
+    folders, files, nameMap,
+  };
+}
+
+function openSgaV7Fd(fd, hView) {
+  const headerSize = hView.getUint32(140, true);
+  const dataStart  = hView.getUint32(144, true); // u32 — absolute SGA-data-section offset
+  const headerPos  = 152;
+  const tocBuf     = readFdRange(fd, headerPos, headerSize);
+  const toc        = new DataView(tocBuf.buffer, tocBuf.byteOffset, tocBuf.byteLength);
+  const { folders, files, nameMap } = parseSgaV7Toc(toc, tocBuf, 0);
+  return { fd, u8: null, dataStart, folders, files, nameMap };
+}
+
+function parseSgaV7Toc(toc, u8ForNames, u8NameBaseOffset) {
+  const folderPos   = toc.getUint32(8,  true);
+  const folderCount = toc.getUint32(12, true);
+  const filePos     = toc.getUint32(16, true);
+  const fileCount   = toc.getUint32(20, true);
+  const namePos     = toc.getUint32(24, true);
+  const nameCount   = toc.getUint32(28, true);
+
+  const td = new TextDecoder('utf-8', { fatal: false });
+  const nameMap = new Map();
+  {
+    // Names are at namePos within the TOC buffer
+    let cur = namePos;
+    let cnt = 0;
+    while (cur < u8ForNames.length - u8NameBaseOffset && cnt < nameCount) {
+      const absIdx = u8NameBaseOffset + cur;
+      let end = absIdx;
+      while (end < u8ForNames.length && u8ForNames[end] !== 0) end++;
+      nameMap.set(cur - namePos, td.decode(u8ForNames.subarray(absIdx, end)));
+      cur = end - u8NameBaseOffset + 1;
+      cnt++;
+    }
+  }
+
+  const folders = [];
+  for (let i = 0; i < folderCount; i++) {
+    const o = folderPos + i * 20;
+    folders.push({
+      namePos:     toc.getUint32(o,      true),
+      folderFirst: toc.getUint32(o + 4,  true),
+      folderLast:  toc.getUint32(o + 8,  true),
+      fileFirst:   toc.getUint32(o + 12, true),
+      fileLast:    toc.getUint32(o + 16, true),
+    });
+  }
+
+  const files = [];
+  for (let i = 0; i < fileCount; i++) {
+    const o = filePos + i * 30;
+    // dataPos is a u32 in the TOC — interpreted as unsigned via >>> 0
+    const dataPos = toc.getUint32(o + 4, true) >>> 0;
+    files.push({
+      namePos:     toc.getUint32(o,      true),
+      dataPos,  // offset relative to the archive's data section start
+      storeLength: toc.getUint32(o + 8,  true),
+      length:      toc.getUint32(o + 12, true),
+      storage:     u8ForNames[u8NameBaseOffset + o + 21],
+    });
+  }
+
+  return { folders, files, nameMap };
+}
+
+function sgaFileBytes(sga, file) {
+  let raw;
+  if (sga.fd !== null) {
+    // fd-based: compute absolute byte position in the file.
+    // dataStart and file.dataPos are both u32 values; their sum fits in a
+    // JS double (safe up to 2^53).
+    const absPos = sga.dataStart + file.dataPos;
+    raw = readFdRange(sga.fd, absPos, file.storeLength);
+  } else {
+    const start = sga.dataStart + file.dataPos;
+    raw = sga.u8.subarray(start, start + file.storeLength);
+  }
+  if (file.storage === 0) {
+    return raw instanceof Uint8Array ? raw.slice() : raw;
+  }
+  if (file.storage === 1 || file.storage === 2) {
+    try { return pako.inflate(raw); } catch { return pako.inflateRaw(raw); }
+  }
+  throw new Error(`Unknown SGA storage type ${file.storage}`);
+}
+
+function sgaFolderForFile(sga, fileIndex) {
+  let bestRange = Infinity, bestName = '';
+  for (const fld of sga.folders) {
+    if (fld.fileFirst <= fileIndex && fileIndex < fld.fileLast) {
+      const range = fld.fileLast - fld.fileFirst;
+      if (range < bestRange) {
+        bestRange = range;
+        bestName = sga.nameMap.get(fld.namePos) ?? '';
+      }
+    }
+  }
+  return bestName;
+}
+
+function sgaReadByPath(sga, targetPath) {
+  const norm = targetPath.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+  for (let i = 0; i < sga.files.length; i++) {
+    const f = sga.files[i];
+    const fname = sga.nameMap.get(f.namePos) ?? '';
+    const folder = sgaFolderForFile(sga, i);
+    const full = ((folder ? folder + '/' : '') + fname).replace(/\\/g, '/').toLowerCase();
+    if (full === norm) return sgaFileBytes(sga, f);
+  }
+  return null;
+}
+
+// ── Relic Chunky parser ───────────────────────────────────────────────────────
+
+function parseChunky(u8) {
+  const MAGIC = 'Relic Chunky\r\n\x1a\0';
+  for (let i = 0; i < 14; i++) {
+    if (u8[i] !== MAGIC.charCodeAt(i)) throw new Error('Not a Chunky file');
+  }
+  const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  // version at offset 16; header 36 bytes
+  const root = parseChunks(u8, view, 36, u8.length);
+  return root;
+}
+
+function parseChunks(u8, view, start, end) {
+  const chunks = [];
+  let pos = start;
+  while (pos + 28 <= end) {
+    const kind = String.fromCharCode(u8[pos], u8[pos+1], u8[pos+2], u8[pos+3]);
+    if (kind !== 'DATA' && kind !== 'FOLD') break;
+    const fourCC = String.fromCharCode(u8[pos+4], u8[pos+5], u8[pos+6], u8[pos+7]);
+    const version   = view.getUint32(pos + 8,  true);
+    const size      = view.getUint32(pos + 12, true);
+    const nameSize  = view.getUint32(pos + 16, true);
+    // unknown_a at +20, unknown_b at +24
+    const nameStart = pos + 28;
+    const payloadStart = nameStart + nameSize;
+    const td = new TextDecoder('utf-8', { fatal: false });
+    let name = '';
+    if (nameSize > 0) {
+      let nEnd = nameStart;
+      while (nEnd < nameStart + nameSize && u8[nEnd] !== 0) nEnd++;
+      name = td.decode(u8.subarray(nameStart, nEnd));
+    }
+    const chunk = {
+      kind, fourCC, version, name,
+      payloadOffset: payloadStart,
+      payloadSize: size,
+      children: [],
+    };
+    if (kind === 'FOLD') {
+      chunk.children = parseChunks(u8, view, payloadStart, payloadStart + size);
+    }
+    chunks.push(chunk);
+    pos = payloadStart + size;
+  }
+  return chunks;
+}
+
+function findChunk(chunks, fourCC) {
+  for (const c of chunks) {
+    if (c.fourCC === fourCC) return c;
+    if (c.children) {
+      const found = findChunk(c.children, fourCC);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function findAllChunks(chunks, fourCC) {
+  const out = [];
+  for (const c of chunks) {
+    if (c.fourCC === fourCC) out.push(c);
+    if (c.children) out.push(...findAllChunks(c.children, fourCC));
+  }
+  return out;
+}
+
+// ── Reader helper ─────────────────────────────────────────────────────────────
+
+class Reader {
+  constructor(u8, offset) {
+    this.u8 = u8;
+    this.view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    this.pos = offset;
+  }
+  u32() { const v = this.view.getUint32(this.pos, true); this.pos += 4; return v; }
+  i32() { const v = this.view.getInt32(this.pos, true); this.pos += 4; return v; }
+  u16() { const v = this.view.getUint16(this.pos, true); this.pos += 2; return v; }
+  f32() { const v = this.view.getFloat32(this.pos, true); this.pos += 4; return v; }
+  skip(n) { this.pos += n; }
+  bytes(n) { const v = this.u8.subarray(this.pos, this.pos + n).slice(); this.pos += n; return v; }
+  lpstr() {
+    const len = this.u32();
+    const td = new TextDecoder('utf-8', { fatal: false });
+    const s = td.decode(this.u8.subarray(this.pos, this.pos + len - (len > 0 ? 1 : 0)));
+    this.pos += len;
+    return s;
+  }
+}
+
+// ── RGT decoder ───────────────────────────────────────────────────────────────
+
+function decodeRgt(u8) {
+  const root = parseChunky(u8);
+  const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+
+  const tfmt = findChunk(root, 'TFMT');
+  const tman = findChunk(root, 'TMAN');
+  const tdat = findChunk(root, 'TDAT');
+  if (!tfmt || !tman || !tdat) throw new Error('RGT missing TFMT/TMAN/TDAT');
+
+  const width  = view.getUint32(tfmt.payloadOffset, true);
+  const height = view.getUint32(tfmt.payloadOffset + 4, true);
+  const formatCode = view.getUint32(tfmt.payloadOffset + 16, true);
+
+  const mipCount = view.getUint32(tman.payloadOffset, true);
+  let cursor = tman.payloadOffset + 4;
+  const mips = [];
+  for (let i = 0; i < mipCount; i++) {
+    const unc = view.getUint32(cursor, true); cursor += 4;
+    const cmp = view.getUint32(cursor, true); cursor += 4;
+    mips.push({ unc, cmp });
+  }
+
+  let offset = 0;
+  for (let i = 0; i < mips.length - 1; i++) offset += mips[i].cmp;
+  const last = mips[mips.length - 1];
+  const compressed = u8.subarray(tdat.payloadOffset + offset, tdat.payloadOffset + offset + last.cmp);
+
+  let pixels;
+  try { pixels = pako.inflate(compressed); }
+  catch (e) { throw new Error(`Failed to inflate top mip: ${e.message}`); }
+
+  // Strip optional per-mip 16-byte header
+  if (pixels.length >= 16) {
+    const hv = new DataView(pixels.buffer, pixels.byteOffset);
+    if (hv.getUint32(4, true) === width && hv.getUint32(8, true) === height) {
+      pixels = pixels.subarray(16);
+    }
+  }
+
+  let fourCC;
+  switch (formatCode) {
+    case 13: case 22: fourCC = 'DXT1'; break;
+    case 15: case 24: fourCC = 'DXT5'; break;
+    default: {
+      const blocks = Math.max(1, Math.ceil(width/4)) * Math.max(1, Math.ceil(height/4));
+      fourCC = Math.abs(pixels.length - blocks*8) < Math.abs(pixels.length - blocks*16) ? 'DXT1' : 'DXT5';
+    }
+  }
+
+  return { width, height, fourCC, pixels };
+}
+
+// ── BC decoder (software fallback) ───────────────────────────────────────────
+
+function decodeBc1(src, width, height) {
+  const out = new Uint8ClampedArray(width * height * 4);
+  const bW = Math.max(1, Math.ceil(width/4));
+  const bH = Math.max(1, Math.ceil(height/4));
+  let off = 0;
+  for (let by = 0; by < bH; by++) {
+    for (let bx = 0; bx < bW; bx++) {
+      decodeColourBlock(src, off, false, bx*4, by*4, width, height, out);
+      off += 8;
+    }
+  }
+  return out;
+}
+
+function decodeBc3(src, width, height) {
+  const out = new Uint8ClampedArray(width * height * 4);
+  const bW = Math.max(1, Math.ceil(width/4));
+  const bH = Math.max(1, Math.ceil(height/4));
+  let off = 0;
+  const ab = new Uint8Array(16);
+  for (let by = 0; by < bH; by++) {
+    for (let bx = 0; bx < bW; bx++) {
+      decodeAlphaBlock(src, off, ab);
+      off += 8;
+      decodeColourBlock(src, off, true, bx*4, by*4, width, height, out, ab);
+      off += 8;
+    }
+  }
+  return out;
+}
+
+function decodeAlphaBlock(src, o, ab) {
+  const a0 = src[o], a1 = src[o+1];
+  const pal = new Uint8Array(8);
+  pal[0]=a0; pal[1]=a1;
+  if (a0>a1) {
+    pal[2]=(6*a0+1*a1)/7; pal[3]=(5*a0+2*a1)/7;
+    pal[4]=(4*a0+3*a1)/7; pal[5]=(3*a0+4*a1)/7;
+    pal[6]=(2*a0+5*a1)/7; pal[7]=(1*a0+6*a1)/7;
+  } else {
+    pal[2]=(4*a0+1*a1)/5; pal[3]=(3*a0+2*a1)/5;
+    pal[4]=(2*a0+3*a1)/5; pal[5]=(1*a0+4*a1)/5;
+    pal[6]=0; pal[7]=255;
+  }
+  let lo = src[o+2]|(src[o+3]<<8)|(src[o+4]<<16);
+  let hi = src[o+5]|(src[o+6]<<8)|(src[o+7]<<16);
+  for (let i=0;i<8;i++) { ab[i]=pal[lo&7]; lo>>>=3; }
+  for (let i=8;i<16;i++) { ab[i]=pal[hi&7]; hi>>>=3; }
+}
+
+function decodeColourBlock(src, o, bc3, x0, y0, w, h, out, ab) {
+  const c0=src[o]|(src[o+1]<<8), c1=src[o+2]|(src[o+3]<<8);
+  const r0=((c0>>11)&0x1f)<<3, g0=((c0>>5)&0x3f)<<2, b0=(c0&0x1f)<<3;
+  const r1=((c1>>11)&0x1f)<<3, g1=((c1>>5)&0x3f)<<2, b1=(c1&0x1f)<<3;
+  const p=[r0|(r0>>5),g0|(g0>>6),b0|(b0>>5),255, r1|(r1>>5),g1|(g1>>6),b1|(b1>>5),255, 0,0,0,255, 0,0,0,255];
+  if (bc3||c0>c1) {
+    p[8]=(p[0]*2+p[4])/3; p[9]=(p[1]*2+p[5])/3; p[10]=(p[2]*2+p[6])/3;
+    p[12]=(p[0]+p[4]*2)/3; p[13]=(p[1]+p[5]*2)/3; p[14]=(p[2]+p[6]*2)/3;
+  } else {
+    p[8]=(p[0]+p[4])/2; p[9]=(p[1]+p[5])/2; p[10]=(p[2]+p[6])/2;
+    p[12]=0; p[13]=0; p[14]=0; p[15]=0;
+  }
+  const idx=src[o+4]|(src[o+5]<<8)|(src[o+6]<<16)|(src[o+7]<<24);
+  for (let py=0;py<4;py++) for (let px=0;px<4;px++) {
+    const code=(idx>>>((py*4+px)*2))&3;
+    const x=x0+px, y=y0+py;
+    if (x>=w||y>=h) continue;
+    const di=(y*w+x)*4;
+    out[di]=p[code*4]; out[di+1]=p[code*4+1]; out[di+2]=p[code*4+2];
+    out[di+3]= bc3&&ab ? ab[py*4+px] : p[code*4+3];
+  }
+}
+
+function bcToImageData(pixels, width, height, fourCC) {
+  const rgba = fourCC==='DXT1' ? decodeBc1(pixels,width,height) : decodeBc3(pixels,width,height);
+  return new ImageData(new Uint8ClampedArray(rgba.buffer.slice(rgba.byteOffset, rgba.byteOffset+rgba.byteLength)), width, height);
+}
+
+// ── RGM mesh parser ───────────────────────────────────────────────────────────
+
+const SEMANTIC = { POSITION:0, NORMAL:3, TEXCOORD0:8 };
+const FORMAT_SIZE = { 2:4, 3:8, 4:12, 5:16, 13:4 };
+
+function parseRgm(u8) {
+  const root = parseChunky(u8);
+  const meshes = [];
+  const textureSets = findAllChunks(root, 'TSET').map(c => c.name);
+  const materials = new Map();
+  for (const m of findAllChunks(root, 'MTRL')) {
+    materials.set(m.name, parseMtrl(u8, m));
+  }
+  walkMeshes(root, '', (node, parentName) => {
+    const dataChunk = node.children.find(c => c.kind==='DATA' && c.fourCC==='DATA');
+    if (!dataChunk) return;
+    try {
+      let payload;
+      if (node.fourCC==='MRGM' && dataChunk.version===8) {
+        payload = parseMrgmV8(u8, dataChunk);
+      } else if (node.fourCC==='TRIM' && dataChunk.version===5) {
+        payload = parseTrimV5(u8, dataChunk);
+      } else return;
+      const geo = buildGeometry(payload);
+      if (geo && geo.attributes.position && geo.attributes.position.count > 0) {
+        meshes.push({ name: parentName||node.name, geometry: geo, materialName: payload.materialName });
+      }
+    } catch(e) {
+      console.warn('[rgm] skip submesh', node.name||parentName, e.message);
+      // Re-throw TRIM v5 failures so the caller can record them
+      if (e.message && e.message.includes('TRIM')) throw e;
+    }
+  });
+  return { meshes, textureSets, materials };
+}
+
+function walkMeshes(chunks, parentName, visit) {
+  for (const c of chunks) {
+    if (c.kind!=='FOLD') continue;
+    if (c.fourCC==='MRGM'||c.fourCC==='TRIM') {
+      visit(c, parentName);
+    } else {
+      const nm = (c.fourCC==='MESH'||c.fourCC==='MGRP') ? (c.name||parentName) : parentName;
+      walkMeshes(c.children, nm, visit);
+    }
+  }
+}
+
+function parseMtrl(u8, mtrl) {
+  let shader=''; const params=[];
+  for (const c of mtrl.children) {
+    if (c.kind!=='DATA') continue;
+    if (c.fourCC==='INFO') { const r=new Reader(u8,c.payloadOffset); shader=r.lpstr(); }
+    else if (c.fourCC===' VAR'||c.fourCC==='VAR ') {
+      const r=new Reader(u8,c.payloadOffset);
+      const key=r.lpstr(); const type=r.u32(); let value=null;
+      try {
+        if (type===9||type===2||type===3||type===5) value=r.lpstr();
+        else if (type===1) value=r.f32();
+        else if (type===4) value=[r.f32(),r.f32(),r.f32(),r.f32()];
+        else if (type===0||type===6) value=r.i32();
+      } catch {}
+      params.push({key,type,value});
+    }
+  }
+  return {shader,params};
+}
+
+function parseMrgmV8(u8, chunk) {
+  const r = new Reader(u8, chunk.payloadOffset);
+  r.skip(1);
+  const numObj = r.u32();
+  const groups=[], idxBufs=[];
+  let totalIdx=0;
+  for (let i=0;i<numObj;i++) {
+    const ni=r.u32(); const buf=new Uint16Array(ni);
+    for (let k=0;k<ni;k++) buf[k]=r.u16();
+    r.skip(13);
+    const name=r.lpstr();
+    groups.push({start:totalIdx,count:ni,name}); idxBufs.push(buf); totalIdx+=ni;
+  }
+  const indices=new Uint16Array(totalIdx);
+  let off=0; for (const b of idxBufs){indices.set(b,off);off+=b.length;}
+  const numInput=r.u32(); const inputLayout=[];
+  for (let i=0;i<numInput;i++) {
+    const sem=r.u32(); r.skip(4); const fmt=r.u32();
+    const size=FORMAT_SIZE[fmt]; if(!size) throw new Error(`Unknown fmt ${fmt}`);
+    inputLayout.push({semantic:sem,format:fmt,size});
+  }
+  const numVerts=r.u32(), stride=r.u32();
+  const vbuf=r.bytes(numVerts*stride);
+  let materialName=null;
+  try { r.skip(4); materialName=r.lpstr(); } catch {}
+  return {inputLayout,vertexStride:stride,vertexCount:numVerts,vertexBuffer:vbuf,indices,groups,materialName};
+}
+
+function parseTrimV5(u8, chunk) {
+  const r = new Reader(u8, chunk.payloadOffset);
+  const v1=r.u32(), v2=r.u32();
+  if (v1!==5) throw new Error(`TRIM v5: unexpected header marker ${v1} (expected 5)`);
+  const numInput=r.u32();
+  if (numInput===0||numInput>100) throw new Error(`TRIM v5: suspicious numInput=${numInput}`);
+  const inputLayout=[];
+  for (let i=0;i<numInput;i++) {
+    const sem=r.u32(); r.skip(4); const fmt=r.u32();
+    const size=FORMAT_SIZE[fmt]; if(!size) throw new Error(`Unknown fmt ${fmt}`);
+    inputLayout.push({semantic:sem,format:fmt,size});
+  }
+  const numVerts=r.u32(), stride=r.u32();
+  if (stride===0||numVerts===0||numVerts>1000000) throw new Error(`TRIM v5: invalid params verts=${numVerts} stride=${stride}`);
+  const vbuf=r.bytes(numVerts*stride);
+  const numIdx=r.u32();
+  if (numIdx===0||numIdx>10000000) throw new Error(`TRIM v5: invalid index count ${numIdx}`);
+  const indices=new Uint16Array(numIdx);
+  for (let k=0;k<numIdx;k++) indices[k]=r.u16();
+  return {inputLayout,vertexStride:stride,vertexCount:numVerts,vertexBuffer:vbuf,indices,groups:[{start:0,count:numIdx,name:''}],materialName:null};
+}
+
+function halfToFloat(h) {
+  const s=(h>>15)&1, e=(h>>10)&31, f=h&0x3ff;
+  if (e===0) return f===0 ? 0 : (s?-1:1)*Math.pow(2,-14)*(f/1024);
+  if (e===31) return f===0 ? (s?-Infinity:Infinity) : NaN;
+  return (s?-1:1)*Math.pow(2,e-15)*(1+f/1024);
+}
+
+function buildGeometry(p) {
+  if (!p.vertexCount||!p.indices.length) return null;
+  const geo = new THREE.BufferGeometry();
+  const view = new DataView(p.vertexBuffer.buffer, p.vertexBuffer.byteOffset, p.vertexBuffer.byteLength);
+  const pos = new Float32Array(p.vertexCount*3);
+  let nrm=null, uvs=null;
+  let cur=0;
+  const offsets = p.inputLayout.map(e=>{const o=cur;cur+=e.size;return o;});
+  for (let v=0;v<p.vertexCount;v++) {
+    const base=v*p.vertexStride;
+    for (let i=0;i<p.inputLayout.length;i++) {
+      const elt=p.inputLayout[i], o=base+offsets[i];
+      if (elt.semantic===SEMANTIC.POSITION && elt.format===4) {
+        pos[v*3]= view.getFloat32(o,true);
+        pos[v*3+1]= view.getFloat32(o+4,true);
+        pos[v*3+2]=-view.getFloat32(o+8,true);
+      } else if (elt.semantic===SEMANTIC.NORMAL) {
+        if (!nrm) nrm=new Float32Array(p.vertexCount*3);
+        if (elt.format===4) {
+          nrm[v*3]= view.getFloat32(o,true);
+          nrm[v*3+1]= view.getFloat32(o+4,true);
+          nrm[v*3+2]=-view.getFloat32(o+8,true);
+        } else if (elt.format===2) {
+          const sn=b=>(b>127?b-256:b)/127;
+          nrm[v*3]= sn(p.vertexBuffer[o]);
+          nrm[v*3+1]= sn(p.vertexBuffer[o+1]);
+          nrm[v*3+2]=-sn(p.vertexBuffer[o+2]);
+        }
+      } else if (elt.semantic===SEMANTIC.TEXCOORD0) {
+        if (!uvs) uvs=new Float32Array(p.vertexCount*2);
+        if (elt.format===3) {
+          uvs[v*2]= view.getFloat32(o,true);
+          uvs[v*2+1]=1-view.getFloat32(o+4,true);
+        } else if (elt.format===2) {
+          uvs[v*2]= halfToFloat(view.getUint16(o,true));
+          uvs[v*2+1]=1-halfToFloat(view.getUint16(o+2,true));
+        }
+      }
+    }
+  }
+  const flipped=new Uint16Array(p.indices.length);
+  for (let i=0;i+2<p.indices.length;i+=3) {
+    flipped[i]=p.indices[i]; flipped[i+1]=p.indices[i+2]; flipped[i+2]=p.indices[i+1];
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  if (nrm) geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  if (uvs) geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.setIndex(new THREE.BufferAttribute(flipped, 1));
+  if (!geo.getAttribute('normal')) geo.computeVertexNormals();
+  geo.computeBoundingBox();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+// ── Three.js renderer ─────────────────────────────────────────────────────────
+
+const CANVAS = document.getElementById('c');
+const SIZE = 512;
+CANVAS.width = SIZE;
+CANVAS.height = SIZE;
+
+const renderer = new THREE.WebGLRenderer({
+  canvas: CANVAS,
+  antialias: true,
+  preserveDrawingBuffer: true,
+  alpha: false,
+});
+renderer.setSize(SIZE, SIZE, false);
+renderer.setPixelRatio(1);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+// Scene-settings presets mirror scene-settings.ts applySeasonOverrides()
+// for the 'in_game_field' preset (Reinhard tone mapping, seasonal lights).
+const SCENE_PRESETS = {
+  summer: {
+    toneMapping: THREE.ReinhardToneMapping,
+    exposure: 1.0,
+    hemi: { sky: 0x8899bb, ground: 0x4a3f2e, intensity: 1.2 },
+    lights: [
+      { color: 0xe6ffff, intensity: 3.0, pos: [5, 5, -5] },
+      { color: 0xcdd3d8, intensity: 0.45, pos: [-6, 5, -2] },
+      { color: 0xdce0e6, intensity: 0.5, pos: [-3, 3, -10] },
+    ],
+    bgColor: 0x3a4a5e,
+  },
+  winter: {
+    toneMapping: THREE.ReinhardToneMapping,
+    exposure: 0.95,
+    hemi: { sky: 0x8ab0d0, ground: 0xd0dce8, intensity: 1.3 },
+    lights: [
+      { color: 0xc8dff0, intensity: 1.5, pos: [1, 3, -10] },
+      { color: 0x3355aa, intensity: 0.25, pos: [-5, 5, 5] },
+      { color: 0xa89880, intensity: 0.15, pos: [-3, 1, -8] },
+    ],
+    bgColor: 0xb0c8d8,
+  },
+};
+
+const CAM_AZIMUTH = 35 * Math.PI / 180;
+const CAM_ELEVATION = 20 * Math.PI / 180;
+const CAM_FOV = 28;
+const FIT_MARGIN = 1.15;
+
+// ── Environment IBL (PMREM from ArtEnvironment.sga skybox) ───────────────────
+//
+// Mirrors Viewport.tsx lines ~1793-1836:
+//   • Opens ArtEnvironment.sga (read-only, already open alongside vehicle SGAs)
+//   • Loads mission_06 skybox (standard summer CoH2 sky) — the 4:1 side-strip
+//     + top + bottom RGTs — decodes them into canvas faces, builds a CubeTexture,
+//     bakes a PMREM env map from it, applies as scene.environment.
+//   • environmentIntensity = 0.3 (scene level), envMapIntensity = 0.15 (per material)
+//     — exact values from Viewport.tsx comments.
+//   • Fallback: THREE.RoomEnvironment neutral PMREM at the same intensity if
+//     ArtEnvironment.sga or the skybox RGTs are not found.
+//
+// SUBSTITUTION NOTE: The headless context decodes RGT pixels to ImageData and
+// builds the CubeTexture from canvas elements (same pixel path as Viewport.tsx
+// via bcToCanvas → CanvasTexture). This is identical in content to the editor.
+
+const ENV_NAME = 'mission_06';  // standard CoH2 summer field skybox
+let cachedEnvMap = null;        // THREE.Texture | null after first build
+let envMapBuilt  = false;       // true after one attempt (even if null)
+
+/**
+ * Decode one RGT from the ArtEnvironment SGA and return an HTMLCanvasElement.
+ * Returns null if the path is not found or decoding fails.
+ */
+function loadEnvRgtToCanvas(envSga, sgaPath) {
+  try {
+    const bytes = sgaReadByPath(envSga, sgaPath);
+    if (!bytes) return null;
+    const rgt = decodeRgt(bytes);
+    const imageData = bcToImageData(rgt.pixels, rgt.width, rgt.height, rgt.fourCC);
+    const c = document.createElement('canvas');
+    c.width = rgt.width; c.height = rgt.height;
+    c.getContext('2d').putImageData(imageData, 0, 0);
+    return c;
+  } catch (e) {
+    console.warn('[audit-env] failed to decode', sgaPath, e.message);
+    return null;
+  }
+}
+
+function sliceCanvas(src, x, y, w, h) {
+  const dst = document.createElement('canvas');
+  dst.width = w; dst.height = h;
+  dst.getContext('2d').drawImage(src, x, y, w, h, 0, 0, w, h);
+  return dst;
+}
+
+function solidCanvas(size, color) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = color; ctx.fillRect(0, 0, size, size);
+  return c;
+}
+
+/**
+ * Build or return the cached PMREM env map Texture.
+ * Always call this before building a scene.
+ * Returns a Texture (may be a neutral RoomEnvironment fallback) or null.
+ */
+function getOrBuildEnvMap(renderer_) {
+  if (envMapBuilt) return cachedEnvMap;
+  envMapBuilt = true;
+
+  // Try to open ArtEnvironment.sga
+  let envSga = null;
+  try {
+    const envSgaPath = path.join(coh2Install, 'CoH2', 'Archives', 'ArtEnvironment.sga');
+    if (fs.existsSync(envSgaPath)) {
+      envSga = openSga(envSgaPath);
+    }
+  } catch(e) {
+    console.warn('[audit-env] Failed to open ArtEnvironment.sga:', e.message);
+  }
+
+  if (envSga) {
+    // Load skybox faces for mission_06
+    const base = `art/ui/skies/${ENV_NAME}/${ENV_NAME}`;
+    const sideVariants = [
+      `${base}_sky_side.rgt`,
+      `${base}_sky.rgt`,
+      `art/ui/skies/${ENV_NAME}/sky_side.rgt`,
+    ];
+    const topVariants  = [`${base}_sky_top.rgt`, `art/ui/skies/${ENV_NAME}/sky_top.rgt`];
+    const botVariants  = [`${base}_sky_bot.rgt`, `${base}_sky_bottom.rgt`];
+
+    let sideCanvas = null;
+    for (const p of sideVariants) { sideCanvas = loadEnvRgtToCanvas(envSga, p); if (sideCanvas) break; }
+
+    if (sideCanvas) {
+      // Side strip: 4 panels left→right: front | right | back | left
+      const panelW = Math.floor(sideCanvas.width / 4);
+      const pH = sideCanvas.height;
+      const front = sliceCanvas(sideCanvas, 0,          0, panelW, pH);
+      const right = sliceCanvas(sideCanvas, panelW,     0, panelW, pH);
+      const back  = sliceCanvas(sideCanvas, panelW * 2, 0, panelW, pH);
+      const left  = sliceCanvas(sideCanvas, panelW * 3, 0, panelW, pH);
+
+      let topCanvas = null;
+      for (const p of topVariants) { topCanvas = loadEnvRgtToCanvas(envSga, p); if (topCanvas) break; }
+      let botCanvas = null;
+      for (const p of botVariants) { botCanvas = loadEnvRgtToCanvas(envSga, p); if (botCanvas) break; }
+
+      const fallback = solidCanvas(panelW, '#c8c8d8');
+      const top = topCanvas ?? fallback;
+      const bot = botCanvas ?? fallback;
+
+      // CubeTexture face order: px(right), nx(left), py(top), ny(bottom), pz(front), nz(back)
+      const cubeTex = new THREE.CubeTexture([right, left, top, bot, front, back]);
+      cubeTex.colorSpace = THREE.SRGBColorSpace;
+      cubeTex.needsUpdate = true;
+
+      const pmrem = new THREE.PMREMGenerator(renderer_);
+      try {
+        const env = pmrem.fromCubemap(cubeTex).texture;
+        cubeTex.dispose();
+        cachedEnvMap = env;
+        console.log('[audit-env] PMREM built from ArtEnvironment.sga/' + ENV_NAME + ' — real CoH2 skybox IBL, environmentIntensity=0.3');
+      } catch(e) {
+        console.warn('[audit-env] PMREM fromCubemap failed:', e.message, '— falling back to RoomEnvironment');
+        cubeTex.dispose();
+      } finally {
+        pmrem.dispose();
+      }
+    } else {
+      console.warn('[audit-env] Could not find skybox side RGT for', ENV_NAME, '— using neutral fallback');
+    }
+  }
+
+  // Fallback: neutral RoomEnvironment (approximates a uniformly lit studio box)
+  // at the same 0.3 scene-level intensity — keeps ambient pickup present and
+  // prevents the black-tank problem, though without CoH2 skybox chromaticity.
+  if (!cachedEnvMap) {
+    try {
+      const pmrem = new THREE.PMREMGenerator(renderer_);
+      pmrem.compileEquirectangularShader();
+      // Build a 6-face solid-colour cube approximating a mid-grey sky (0x8899bb)
+      // — matches the summer hemi sky colour so the ambient colour is consistent.
+      const neutralSize = 64;
+      const faces = [];
+      const skyColor  = '#8899bb';
+      const gndColor  = '#4a3f2e';
+      for (let i = 0; i < 6; i++) {
+        // py = top gets sky, ny = bottom gets ground, sides get sky
+        const color = (i === 3) ? gndColor : skyColor;
+        faces.push(solidCanvas(neutralSize, color));
+      }
+      const cubeTex = new THREE.CubeTexture(faces);
+      cubeTex.colorSpace = THREE.SRGBColorSpace;
+      cubeTex.needsUpdate = true;
+      const env = pmrem.fromCubemap(cubeTex).texture;
+      cubeTex.dispose();
+      pmrem.dispose();
+      cachedEnvMap = env;
+      console.log('[audit-env] Neutral PMREM fallback applied (sky=#8899bb/ground=#4a3f2e) — substitute, not real CoH2 skybox');
+    } catch(e) {
+      console.warn('[audit-env] Neutral PMREM also failed:', e.message, '— no IBL applied');
+      cachedEnvMap = null;
+    }
+  }
+
+  return cachedEnvMap;
+}
+
+// ── SGA search state ──────────────────────────────────────────────────────────
+
+let sgaHandles = null;  // { [sgaName]: SGA or null }
+let coh2Install = null;
+
+function getSgaHandles() {
+  if (sgaHandles) return sgaHandles;
+  sgaHandles = {};
+  for (const name of VEHICLE_SGAS) {
+    const fp = path.join(coh2Install, 'CoH2', 'Archives', name);
+    if (fs.existsSync(fp)) {
+      try { sgaHandles[name] = openSga(fp); }
+      catch(e) { console.warn(`[audit] failed to open ${name}:`, e.message); sgaHandles[name]=null; }
+    } else {
+      sgaHandles[name] = null;
+    }
+  }
+  return sgaHandles;
+}
+
+function findFileInSgas(targetPath) {
+  const handles = getSgaHandles();
+  for (const name of VEHICLE_SGAS) {
+    const sga = handles[name];
+    if (!sga) continue;
+    const bytes = sgaReadByPath(sga, targetPath);
+    if (bytes) return bytes;
+  }
+  return null;
+}
+
+// Find the diffuse RGT for a vehicle based on material params + texture sets
+function findDiffuseRgt(rgmResult, faction, vehicleId) {
+  // Try material params first (type 9 = texture path)
+  for (const [, mat] of rgmResult.materials) {
+    for (const p of mat.params) {
+      if (p.value && typeof p.value === 'string') {
+        const v = p.value.toLowerCase();
+        if (v.includes('_dif') || v.includes('diffuse')) {
+          // Try as-is and with .rgt extension
+          for (const candidate of [v, v + '.rgt', v.replace(/\\/g, '/') + '.rgt']) {
+            const bytes = findFileInSgas(candidate);
+            if (bytes) return bytes;
+          }
+        }
+      }
+    }
+  }
+  // Fallback: use texture sets
+  for (const ts of rgmResult.textureSets) {
+    const norm = ts.replace(/\\/g, '/').toLowerCase();
+    if (norm.includes('_dif') || norm.includes('diffuse')) {
+      for (const candidate of [norm + '.rgt', norm]) {
+        const bytes = findFileInSgas(candidate);
+        if (bytes) return bytes;
+      }
+    }
+  }
+  // Last resort: derive from path — use alias-corrected folder so centaur/valentine/t_34_85 resolve
+  const folder = vehicleFolder(vehicleId);
+  const base = `art/armies/${faction}/vehicles/${folder}/${folder}`;
+  const bytes = findFileInSgas(`${base}_dif.rgt`);
+  if (bytes) return bytes;
+  return null;
+}
+
+// Skip destroyed/wreck submesh names
+const SKIP_RE = [/destroy(?:ed)?(?![a-z])/i, /wreck/i, /destruction/i, /burnt/i, /broken/i, /\bdmg\b/i, /_dam_/i, /wreak/i, /(?<![a-z0-9])damaged?(?![a-z0-9])/i, /(?<![a-z0-9])dam(?![a-z0-9])/i, /_d_(?:fr|fl|rr|rl|front|back|rear|left|right|side|\d+)(?:_|$)/i];
+function shouldSkip(name) { return SKIP_RE.some(re => re.test(name)); }
+
+// ── Render one vehicle + season ───────────────────────────────────────────────
+
+function renderVehicle(vehicle, season, coh2Install_) {
+  const { id: vehicleId, faction } = vehicle;
+  const rgmPath_ = buildRgmPath(faction, vehicleId);
+
+  let meshLoaded = false, diffuseLoaded = false, errorMsg = null;
+
+  // 1. Load RGM
+  let rgmResult;
+  try {
+    const rgmBytes = findFileInSgas(rgmPath_);
+    if (!rgmBytes) throw new Error(`RGM not found in any SGA: ${rgmPath_}`);
+    rgmResult = parseRgm(rgmBytes);
+    if (!rgmResult.meshes.length) throw new Error('RGM parsed but produced 0 meshes');
+    meshLoaded = true;
+  } catch(e) {
+    errorMsg = `MESH FAIL: ${e.message}`;
+    console.warn(`[audit] ${vehicleId}/${season}: ${errorMsg}`);
+    return renderErrorFrame(vehicleId, season, errorMsg, { meshLoaded: false, diffuseLoaded: false });
+  }
+
+  // 2. Load diffuse texture
+  let diffuseMap = null;
+  try {
+    const rgtBytes = findDiffuseRgt(rgmResult, faction, vehicleId);
+    if (!rgtBytes) throw new Error('Diffuse RGT not found');
+    const rgt = decodeRgt(rgtBytes);
+    const imageData = bcToImageData(rgt.pixels, rgt.width, rgt.height, rgt.fourCC);
+    // Check if all white/empty
+    let sumR=0;
+    for (let i=0;i<Math.min(1024,imageData.data.length);i+=4) sumR+=imageData.data[i];
+    const avgR = sumR / (Math.min(1024,imageData.data.length)/4);
+    if (avgR > 250) {
+      console.warn(`[audit] ${vehicleId}/${season}: diffuse decoded as near-white (avg R=${avgR.toFixed(0)})`);
+    }
+    diffuseMap = new THREE.DataTexture(
+      new Uint8Array(imageData.data.buffer.slice(imageData.data.byteOffset, imageData.data.byteOffset+imageData.data.byteLength)),
+      rgt.width, rgt.height,
+      THREE.RGBAFormat, THREE.UnsignedByteType
+    );
+    diffuseMap.colorSpace = THREE.SRGBColorSpace;
+    diffuseMap.flipY = true;
+    diffuseMap.wrapS = diffuseMap.wrapT = THREE.RepeatWrapping;
+    diffuseMap.needsUpdate = true;
+    diffuseLoaded = true;
+  } catch(e) {
+    console.warn(`[audit] ${vehicleId}/${season}: diffuse failed: ${e.message} — using grey fallback`);
+    errorMsg = (errorMsg ? errorMsg + ' | ' : '') + `DIFFUSE FAIL: ${e.message}`;
+  }
+
+  // 3. Set up Three.js scene with preset lighting
+  const preset = SCENE_PRESETS[season];
+  renderer.toneMapping = preset.toneMapping;
+  renderer.toneMappingExposure = preset.exposure;
+  renderer.setClearColor(preset.bgColor, 1);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(preset.bgColor);
+
+  // Apply environment IBL (mirrors Viewport.tsx ~line 1813):
+  //   scene.environment = pmremFromCubemap; environmentIntensity = 0.3
+  const envMap = getOrBuildEnvMap(renderer);
+  if (envMap) {
+    scene.environment = envMap;
+    scene.environmentIntensity = 0.3;
+  }
+
+  const hemi = new THREE.HemisphereLight(preset.hemi.sky, preset.hemi.ground, preset.hemi.intensity);
+  scene.add(hemi);
+  for (const ld of preset.lights) {
+    const dl = new THREE.DirectionalLight(ld.color, ld.intensity);
+    dl.position.set(...ld.pos);
+    scene.add(dl);
+  }
+
+  // 4. Build group from intact submeshes
+  const group = new THREE.Group();
+  for (const mesh of rgmResult.meshes) {
+    if (shouldSkip(mesh.name)) continue;
+    const mat = new THREE.MeshStandardMaterial({
+      map: diffuseMap ?? null,
+      color: diffuseMap ? 0xffffff : 0x888888,
+      metalness: 0.3,
+      roughness: 0.7,
+      // DoubleSide: CoH2 RGM winding is inconsistent (Puma turret, Panther skirts
+      // can have inward normals). Mirrors Viewport.tsx MeshStandardMaterial setup.
+      side: THREE.DoubleSide,
+      // Per-material env pickup capped to 0.15 (× scene-level 0.3 = 0.045 effective).
+      // Matches Viewport.tsx comment at line ~2626: "cap vehicles at 0.15".
+      envMapIntensity: 0.15,
+    });
+    const m = new THREE.Mesh(mesh.geometry, mat);
+    group.add(m);
+  }
+  if (group.children.length === 0) {
+    // All submeshes were wreck-classified — add them all
+    for (const mesh of rgmResult.meshes) {
+      const mat = new THREE.MeshStandardMaterial({
+        map: diffuseMap??null, color: diffuseMap?0xffffff:0x888888,
+        side: THREE.DoubleSide, envMapIntensity: 0.15,
+      });
+      group.add(new THREE.Mesh(mesh.geometry, mat));
+    }
+  }
+
+  // 5. Centre and frame
+  const bbox = new THREE.Box3().setFromObject(group);
+  const centre = new THREE.Vector3();
+  bbox.getCenter(centre);
+  group.position.sub(centre);
+  scene.add(group);
+
+  const sphere = new THREE.Sphere();
+  new THREE.Box3().setFromObject(group).getBoundingSphere(sphere);
+  const fitDist = (sphere.radius * FIT_MARGIN) / Math.tan(CAM_FOV * Math.PI / 360);
+
+  const camera = new THREE.PerspectiveCamera(CAM_FOV, 1, fitDist*0.05, fitDist*5);
+  camera.position.set(
+    Math.sin(CAM_AZIMUTH)*Math.cos(CAM_ELEVATION)*fitDist,
+    Math.sin(CAM_ELEVATION)*fitDist,
+    Math.cos(CAM_AZIMUTH)*Math.cos(CAM_ELEVATION)*fitDist,
+  );
+  camera.lookAt(0, 0, 0);
+
+  // 6. Render
+  renderer.render(scene, camera);
+
+  // 7. Label the frame
+  const ctx2d = CANVAS.getContext('2d');  // NOTE: this won't work while WebGL owns the canvas
+  // We'll add labels in the contact sheet instead.
+
+  const pngBase64 = CANVAS.toDataURL('image/png').split(',')[1];
+
+  // 8. Cleanup
+  group.traverse(o => {
+    if (o.isMesh) {
+      o.geometry?.dispose();
+      if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
+      else o.material?.dispose();
+    }
+  });
+  diffuseMap?.dispose();
+
+  return { vehicleId, faction, season, pngBase64, meshLoaded, diffuseLoaded, error: errorMsg };
+}
+
+function renderErrorFrame(vehicleId, season, errorMsg, flags) {
+  // Draw a labeled error frame to a 2D canvas then encode it
+  const offCanvas = document.createElement('canvas');
+  offCanvas.width = SIZE; offCanvas.height = SIZE;
+  const ctx = offCanvas.getContext('2d');
+  ctx.fillStyle = '#1a0000';
+  ctx.fillRect(0, 0, SIZE, SIZE);
+  ctx.fillStyle = '#ff4444';
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText(vehicleId, 16, 40);
+  ctx.fillStyle = '#ffaa44';
+  ctx.font = '14px monospace';
+  ctx.fillText(season, 16, 64);
+  ctx.fillStyle = '#ff8888';
+  ctx.font = '12px monospace';
+  // Word-wrap error message
+  const words = errorMsg.split(' ');
+  let line = '', y = 100;
+  for (const w of words) {
+    const test = line + (line ? ' ' : '') + w;
+    if (ctx.measureText(test).width > SIZE-32 && line) {
+      ctx.fillText(line, 16, y); y += 18; line = w;
+    } else line = test;
+  }
+  if (line) ctx.fillText(line, 16, y);
+  ctx.strokeStyle = '#ff4444'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(SIZE,SIZE); ctx.moveTo(SIZE,0); ctx.lineTo(0,SIZE);
+  ctx.stroke();
+  const pngBase64 = offCanvas.toDataURL('image/png').split(',')[1];
+  return { vehicleId, faction: '', season, pngBase64, ...flags, error: errorMsg };
+}
+
+// ── Badge UV zone (from AtlasPreview3D.tsx BADGE_RECT, on 2048² diffuse) ─────
+// { x:896, y:1152, w:512, h:512 } in the 2048² texture.
+const BADGE_RECT = { x: 896, y: 1152, w: 512, h: 512 };
+
+/**
+ * Paint a high-contrast asymmetric badge marker into RGBA pixel data.
+ * The marker: magenta/white roundel with an upward arrow and vehicle-id text.
+ * Asymmetric so orientation (flip/rotation) is immediately visible in renders.
+ *
+ * @param {Uint8ClampedArray} rgba  - flat RGBA pixel data, width × height × 4
+ * @param {number} texW             - texture width (e.g. 2048)
+ * @param {number} texH             - texture height (e.g. 2048)
+ * @param {string} vehicleId        - text label to bake into the badge
+ */
+function paintBadgeOnRgba(rgba, texW, texH, vehicleId) {
+  // Badge occupies BADGE_RECT in the texture — scale to actual texture dims.
+  const scaleX = texW / 2048;
+  const scaleY = texH / 2048;
+  const bx = Math.round(BADGE_RECT.x * scaleX);
+  const by = Math.round(BADGE_RECT.y * scaleY);
+  const bw = Math.round(BADGE_RECT.w * scaleX);
+  const bh = Math.round(BADGE_RECT.h * scaleY);
+
+  const cx = bx + bw / 2;
+  const cy = by + bh / 2;
+  const r  = Math.min(bw, bh) / 2 * 0.85;
+
+  // Flood-fill badge area with a semi-transparent base
+  for (let py = by; py < by + bh; py++) {
+    for (let px = bx; px < bx + bw; px++) {
+      if (px < 0 || py < 0 || px >= texW || py >= texH) continue;
+      const idx = (py * texW + px) * 4;
+      // Dark navy background for entire badge rect
+      rgba[idx]   = 20;
+      rgba[idx+1] = 20;
+      rgba[idx+2] = 80;
+      rgba[idx+3] = 255;
+    }
+  }
+
+  // Draw outer magenta ring
+  const ringOuter = r;
+  const ringInner = r * 0.72;
+  for (let py = by; py < by + bh; py++) {
+    for (let px = bx; px < bx + bw; px++) {
+      if (px < 0 || py < 0 || px >= texW || py >= texH) continue;
+      const dx = px - cx, dy = py - cy;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist <= ringOuter && dist >= ringInner) {
+        const idx = (py * texW + px) * 4;
+        rgba[idx]   = 255;
+        rgba[idx+1] = 0;
+        rgba[idx+2] = 220;
+        rgba[idx+3] = 255;
+      }
+    }
+  }
+
+  // White interior circle
+  for (let py = by; py < by + bh; py++) {
+    for (let px = bx; px < bx + bw; px++) {
+      if (px < 0 || py < 0 || px >= texW || py >= texH) continue;
+      const dx = px - cx, dy = py - cy;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < ringInner) {
+        const idx = (py * texW + px) * 4;
+        rgba[idx]   = 255;
+        rgba[idx+1] = 255;
+        rgba[idx+2] = 255;
+        rgba[idx+3] = 255;
+      }
+    }
+  }
+
+  // Draw upward-pointing arrow — bright yellow, asymmetric (arrow left of center)
+  // Arrow shaft: narrow rectangle going from center to top of inner circle
+  const arrowTipY  = Math.round(cy - ringInner * 0.82);
+  const arrowBaseY = Math.round(cy + ringInner * 0.1);
+  const arrowShaftHW = Math.round(bw * 0.04);
+  const arrowCX = Math.round(cx - bw * 0.08); // offset left so it's asymmetric
+  for (let py = arrowTipY; py <= arrowBaseY; py++) {
+    for (let px = arrowCX - arrowShaftHW; px <= arrowCX + arrowShaftHW; px++) {
+      if (px < 0 || py < 0 || px >= texW || py >= texH) continue;
+      const idx = (py * texW + px) * 4;
+      rgba[idx]   = 255; rgba[idx+1] = 230; rgba[idx+2] = 0; rgba[idx+3] = 255;
+    }
+  }
+  // Arrow head triangle (pointing up)
+  const headTipY  = arrowTipY;
+  const headBaseY = Math.round(arrowTipY + bh * 0.13);
+  const headHW    = Math.round(bw * 0.09);
+  for (let py = headTipY; py <= headBaseY; py++) {
+    const frac = (py - headTipY) / Math.max(1, headBaseY - headTipY);
+    const hw = Math.round(frac * headHW);
+    for (let px = arrowCX - hw; px <= arrowCX + hw; px++) {
+      if (px < 0 || py < 0 || px >= texW || py >= texH) continue;
+      const idx = (py * texW + px) * 4;
+      rgba[idx]   = 255; rgba[idx+1] = 230; rgba[idx+2] = 0; rgba[idx+3] = 255;
+    }
+  }
+
+  // Bake vehicle id text by drawing each character as a pixel block
+  // Use an offscreen canvas to get font pixels, then copy into rgba
+  const labelCanvas = document.createElement('canvas');
+  const lw = bw, lh = Math.round(bh * 0.2);
+  labelCanvas.width = lw; labelCanvas.height = lh;
+  const lctx = labelCanvas.getContext('2d');
+  lctx.fillStyle = '#000080';
+  lctx.fillRect(0, 0, lw, lh);
+  lctx.fillStyle = '#ffff00';
+  const fontSize = Math.max(10, Math.round(lh * 0.65));
+  lctx.font = `bold ${fontSize}px monospace`;
+  lctx.textBaseline = 'middle';
+  lctx.fillText(vehicleId, 4, lh / 2);
+  const labelData = lctx.getImageData(0, 0, lw, lh);
+  // Composite label at bottom of badge rect
+  const labelY = by + bh - lh;
+  for (let py = 0; py < lh; py++) {
+    for (let px = 0; px < lw; px++) {
+      const si = (py * lw + px) * 4;
+      const di = ((labelY + py) * texW + (bx + px)) * 4;
+      if (bx + px < 0 || labelY + py < 0 || bx + px >= texW || labelY + py >= texH) continue;
+      rgba[di]   = labelData.data[si];
+      rgba[di+1] = labelData.data[si+1];
+      rgba[di+2] = labelData.data[si+2];
+      rgba[di+3] = 255;
+    }
+  }
+}
+
+/**
+ * Render one vehicle (summer season only) with the badge decal composited.
+ * Returns a RenderResult with an extra `isDecal:true` flag.
+ */
+function renderVehicleDecal(vehicle) {
+  const { id: vehicleId, faction } = vehicle;
+  const rgmPath_ = buildRgmPath(faction, vehicleId);
+  const season = 'summer';
+
+  let meshLoaded = false, diffuseLoaded = false, errorMsg = null;
+
+  // 1. Load RGM
+  let rgmResult;
+  try {
+    const rgmBytes = findFileInSgas(rgmPath_);
+    if (!rgmBytes) throw new Error(`RGM not found in any SGA: ${rgmPath_}`);
+    rgmResult = parseRgm(rgmBytes);
+    if (!rgmResult.meshes.length) throw new Error('RGM parsed but produced 0 meshes');
+    meshLoaded = true;
+  } catch(e) {
+    errorMsg = `MESH FAIL: ${e.message}`;
+    console.warn(`[audit-decal] ${vehicleId}: ${errorMsg}`);
+    const errFrame = renderErrorFrame(vehicleId, season, errorMsg, { meshLoaded: false, diffuseLoaded: false });
+    return { ...errFrame, faction: vehicle.faction, isDecal: true };
+  }
+
+  // 2. Load diffuse, composite badge, create texture
+  let diffuseMap = null;
+  try {
+    const rgtBytes = findDiffuseRgt(rgmResult, faction, vehicleId);
+    if (!rgtBytes) throw new Error('Diffuse RGT not found');
+    const rgt = decodeRgt(rgtBytes);
+    const imageData = bcToImageData(rgt.pixels, rgt.width, rgt.height, rgt.fourCC);
+
+    // Paint badge into the decoded RGBA pixels
+    paintBadgeOnRgba(imageData.data, rgt.width, rgt.height, vehicleId);
+
+    diffuseMap = new THREE.DataTexture(
+      new Uint8Array(imageData.data.buffer.slice(imageData.data.byteOffset, imageData.data.byteOffset + imageData.data.byteLength)),
+      rgt.width, rgt.height,
+      THREE.RGBAFormat, THREE.UnsignedByteType
+    );
+    diffuseMap.colorSpace = THREE.SRGBColorSpace;
+    diffuseMap.flipY = true;
+    diffuseMap.wrapS = diffuseMap.wrapT = THREE.RepeatWrapping;
+    diffuseMap.needsUpdate = true;
+    diffuseLoaded = true;
+  } catch(e) {
+    console.warn(`[audit-decal] ${vehicleId}: diffuse failed: ${e.message} — using grey fallback`);
+    errorMsg = (errorMsg ? errorMsg + ' | ' : '') + `DIFFUSE FAIL: ${e.message}`;
+  }
+
+  // 3. Render with summer preset
+  const preset = SCENE_PRESETS['summer'];
+  renderer.toneMapping = preset.toneMapping;
+  renderer.toneMappingExposure = preset.exposure;
+  renderer.setClearColor(preset.bgColor, 1);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(preset.bgColor);
+
+  // Apply PMREM IBL — same as renderVehicle (and Viewport.tsx)
+  const envMap = getOrBuildEnvMap(renderer);
+  if (envMap) {
+    scene.environment = envMap;
+    scene.environmentIntensity = 0.3;
+  }
+
+  const hemi = new THREE.HemisphereLight(preset.hemi.sky, preset.hemi.ground, preset.hemi.intensity);
+  scene.add(hemi);
+  for (const ld of preset.lights) {
+    const dl = new THREE.DirectionalLight(ld.color, ld.intensity);
+    dl.position.set(...ld.pos);
+    scene.add(dl);
+  }
+
+  const group = new THREE.Group();
+  for (const mesh of rgmResult.meshes) {
+    if (shouldSkip(mesh.name)) continue;
+    const mat = new THREE.MeshStandardMaterial({
+      map: diffuseMap ?? null,
+      color: diffuseMap ? 0xffffff : 0x888888,
+      metalness: 0.3, roughness: 0.7,
+      side: THREE.DoubleSide,
+      envMapIntensity: 0.15,
+    });
+    group.add(new THREE.Mesh(mesh.geometry, mat));
+  }
+  if (group.children.length === 0) {
+    for (const mesh of rgmResult.meshes) {
+      const mat = new THREE.MeshStandardMaterial({
+        map: diffuseMap??null, color: diffuseMap?0xffffff:0x888888,
+        side: THREE.DoubleSide, envMapIntensity: 0.15,
+      });
+      group.add(new THREE.Mesh(mesh.geometry, mat));
+    }
+  }
+
+  const bbox = new THREE.Box3().setFromObject(group);
+  const centre = new THREE.Vector3();
+  bbox.getCenter(centre);
+  group.position.sub(centre);
+  scene.add(group);
+
+  const sphere = new THREE.Sphere();
+  new THREE.Box3().setFromObject(group).getBoundingSphere(sphere);
+  const fitDist = (sphere.radius * FIT_MARGIN) / Math.tan(CAM_FOV * Math.PI / 360);
+
+  // ── LEFT view (standard front-3/4 angle, same as vanilla pass) ────────────
+  const cameraLeft = new THREE.PerspectiveCamera(CAM_FOV, 1, fitDist*0.05, fitDist*5);
+  cameraLeft.position.set(
+    Math.sin(CAM_AZIMUTH)*Math.cos(CAM_ELEVATION)*fitDist,
+    Math.sin(CAM_ELEVATION)*fitDist,
+    Math.cos(CAM_AZIMUTH)*Math.cos(CAM_ELEVATION)*fitDist,
+  );
+  cameraLeft.lookAt(0, 0, 0);
+  renderer.render(scene, cameraLeft);
+  const pngBase64Left = CANVAS.toDataURL('image/png').split(',')[1];
+
+  // ── RIGHT view (mirrored azimuth — shows right hull side where badge UV zone maps) ──
+  // The badge UV zone (BADGE_RECT x:896,y:1152,w:512,h:512) maps to the RIGHT
+  // side of the hull. Mirroring azimuth by π rotates the vehicle so the right
+  // side faces the camera; elevation stays the same for a fair comparison.
+  const CAM_AZIMUTH_RIGHT = CAM_AZIMUTH + Math.PI;  // 180° yaw flip
+  const cameraRight = new THREE.PerspectiveCamera(CAM_FOV, 1, fitDist*0.05, fitDist*5);
+  cameraRight.position.set(
+    Math.sin(CAM_AZIMUTH_RIGHT)*Math.cos(CAM_ELEVATION)*fitDist,
+    Math.sin(CAM_ELEVATION)*fitDist,
+    Math.cos(CAM_AZIMUTH_RIGHT)*Math.cos(CAM_ELEVATION)*fitDist,
+  );
+  cameraRight.lookAt(0, 0, 0);
+  renderer.render(scene, cameraRight);
+  const pngBase64Right = CANVAS.toDataURL('image/png').split(',')[1];
+
+  // Composite: LEFT | RIGHT side-by-side in a 1024×512 canvas for the decal contact sheet
+  const comboCanvas = document.createElement('canvas');
+  comboCanvas.width = SIZE * 2; comboCanvas.height = SIZE;
+  const comboCtx = comboCanvas.getContext('2d');
+  const imgL = new Image(); imgL.src = 'data:image/png;base64,' + pngBase64Left;
+  const imgR = new Image(); imgR.src = 'data:image/png;base64,' + pngBase64Right;
+  // Synchronous draw — images are data URLs so they decode immediately
+  comboCtx.drawImage(imgL, 0, 0, SIZE, SIZE);
+  comboCtx.drawImage(imgR, SIZE, 0, SIZE, SIZE);
+  // Label the sides
+  comboCtx.fillStyle = 'rgba(0,0,0,0.65)';
+  comboCtx.fillRect(0, SIZE-20, SIZE, 20);
+  comboCtx.fillRect(SIZE, SIZE-20, SIZE, 20);
+  comboCtx.fillStyle = '#eee';
+  comboCtx.font = '12px monospace';
+  comboCtx.fillText('LEFT (front-3/4)', 6, SIZE-5);
+  comboCtx.fillText('RIGHT HULL (badge side)', SIZE+6, SIZE-5);
+  const pngBase64 = comboCanvas.toDataURL('image/png').split(',')[1];
+
+  group.traverse(o => {
+    if (o.isMesh) {
+      o.geometry?.dispose();
+      if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
+      else o.material?.dispose();
+    }
+  });
+  diffuseMap?.dispose();
+
+  return { vehicleId, faction, season, pngBase64, meshLoaded, diffuseLoaded, error: errorMsg, isDecal: true };
+}
+
+// ── Main audit loop ───────────────────────────────────────────────────────────
+
+ipcRenderer.on('audit:start', async (_event, { coh2Install: install, vehicles: vehicleSubset, decalVehicles: decalSubset }) => {
+  coh2Install = install;
+  console.log('[audit-renderer] Starting, CoH2 install:', coh2Install);
+
+  // Use provided subset, or fall back to full VEHICLES list
+  const vehicleList = vehicleSubset ?? VEHICLES;
+  const decalList   = decalSubset   ?? VEHICLES;
+
+  const results = [];
+
+  for (const vehicle of vehicleList) {
+    for (const season of ['summer', 'winter']) {
+      console.log(`[audit-renderer] Rendering ${vehicle.faction}/${vehicle.id}/${season}`);
+      try {
+        const result = renderVehicle(vehicle, season, coh2Install);
+        // Set faction for error frames
+        if (!result.faction) result.faction = vehicle.faction;
+        results.push(result);
+      } catch(e) {
+        console.error(`[audit-renderer] Fatal error for ${vehicle.id}/${season}:`, e.message);
+        results.push({
+          vehicleId: vehicle.id,
+          faction: vehicle.faction,
+          season,
+          pngBase64: null,
+          meshLoaded: false,
+          diffuseLoaded: false,
+          error: `FATAL: ${e.message}`,
+        });
+      }
+    }
+  }
+
+  console.log('[audit-renderer] All vehicles rendered, starting decal pass');
+
+  // ── Decal pass (summer only) ───────────────────────────────────────────────
+  const decalResults = [];
+  for (const vehicle of decalList) {
+    console.log(`[audit-renderer] Decal pass: ${vehicle.faction}/${vehicle.id}`);
+    try {
+      const result = renderVehicleDecal(vehicle);
+      if (!result.faction) result.faction = vehicle.faction;
+      decalResults.push(result);
+    } catch(e) {
+      console.error(`[audit-renderer] Fatal decal error for ${vehicle.id}:`, e.message);
+      decalResults.push({
+        vehicleId: vehicle.id,
+        faction: vehicle.faction,
+        season: 'summer',
+        pngBase64: null,
+        meshLoaded: false,
+        diffuseLoaded: false,
+        error: `FATAL: ${e.message}`,
+        isDecal: true,
+      });
+    }
+  }
+
+  console.log('[audit-renderer] Decal pass complete, sending results');
+  ipcRenderer.send('audit:complete', { results, decalResults });
+});
+
+// Signal ready
+window.addEventListener('load', () => {
+  console.log('[audit-renderer] Page loaded, signaling ready');
+  ipcRenderer.send('audit:ready');
+});
+</script>
+</body>
+</html>

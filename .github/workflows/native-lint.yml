@@ -1,0 +1,43 @@
+name: native-lint
+
+# C++ static analysis for NAPI addon via clang-tidy + cppcheck.
+#
+# Runs on every push and PR that modifies files under native/coh2-workshop/src/
+# or the workflow itself. Lines-changed-only mode avoids drowning in pre-existing
+# vendored Steamworks SDK noise.
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - native/coh2-workshop/src/**
+      - .github/workflows/native-lint.yml
+  pull_request:
+    branches: [main, master]
+    paths:
+      - native/coh2-workshop/src/**
+      - .github/workflows/native-lint.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: native-lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpp-lint:
+    name: C++ Lint (clang-tidy + cppcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cpp-linter/cpp-linter-action@v2
+        with:
+          style: 'file'
+          tidy-checks: 'modernize-*,bugprone-*,performance-*'
+          files-changed-only: false
+          lines-changed-only: true
+          extensions: 'cpp,h'
+          root-dir: 'native/coh2-workshop/src'

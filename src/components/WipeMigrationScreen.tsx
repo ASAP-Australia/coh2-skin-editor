@@ -96,7 +96,6 @@ export default function WipeMigrationScreen({ modsPath, onComplete }: Props) {
         if (cancelled) return
         // Scan-time errors are non-fatal: we don't want a corrupt mods
         // folder to block the user out of the editor. Log + skip.
-        // eslint-disable-next-line no-console
         console.warn('[wipe-migration] scan failed', err)
         finish()
       }

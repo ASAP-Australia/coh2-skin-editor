@@ -42,6 +42,7 @@ import {
   type DecalFaction,
 } from '@/lib/decal-mod-templates'
 import type { Coh2DecalPackProject } from '@/lib/decal-pack-project'
+import { ATLAS_PART_DEFS } from '@/lib/decal-pack-project'
 
 /** Inventory icon dimensions. The .info / GFX template was extracted from a
  *  decal pack whose `<guid>_i1.dds` was 64×64. We render to that exact size
@@ -112,6 +113,14 @@ export interface BuildDecalModInput {
    */
   decalRgba?: Uint8ClampedArray | Uint8Array
   /**
+   * Per-part, per-faction pre-rendered RGBAs for the 6-part atlas bake (v6).
+   * partRgbas[partIndex].shared    = Uint8ClampedArray at part.region.w × part.region.h × 4
+   * partRgbas[partIndex][faction]  = optional override; same dimensions as shared
+   * When absent, the bake falls back to legacy `decalRgba` behaviour (v1–v5 projects).
+   */
+  partRgbas?: Array<Partial<Record<import('@/lib/decal-mod-templates').DecalFaction | 'shared', Uint8ClampedArray>>>
+
+  /**
    * Override the auto-generated GUID. Pass the SAME GUID across rebuilds
    * to let CoH2 treat them as updates to the same mod rather than new
    * subscriptions. Lowercase 32-hex-char only.
@@ -179,23 +188,50 @@ export async function buildDecalMod(input: BuildDecalModInput): Promise<BuildDec
     )
     rgdFiles.push({ path: `attrib/vehicle_decal/${slug}_${faction}.rgd`, bytes: rgd })
 
-    // RGT: generate fresh from the full-resolution decal composite. The engine
-    // paints this texture onto the vehicle's badge UV island at 280×280; using
-    // the 64×64 inventory-icon source produces effectively-blank vehicle markings
-    // because the BC3 block-compression discards the upscale detail. We use
-    // `decalRgba` when provided (280×280 full-res composite from the caller) and
-    // fall back to nearest-neighbour upscale from `iconRgba` for legacy callers.
-    // The TSET internal name mirrors Relic Mod Tools' output format (engine
-    // ignores it, resolves by SGA-relative path instead).
-    const rgtSrcRaw =
-      input.decalRgba ?? upscaleNearest(iconRgba, DECAL_ICON_SIZE, DECAL_TEXTURE_SIZE)
-    // Auto-threshold to a binary white-on-black mask: pixels with luminance
-    // > 0.5 OR alpha > 0.5 become opaque white (255,255,255,255); all others
-    // become transparent black (0,0,0,0). Community decal packs (Welsh Dragon,
-    // German Empire, Stalin, OCF Soviet) use DXT1 binary masks — the renderer
-    // applies faction tint at runtime. Any grey or semi-transparent source art
-    // must be binarised before DXT1 encoding to avoid colour fringing.
-    const rgtSrc = binariseMask(rgtSrcRaw)
+    // RGT: composite a 1024×1024 atlas for this faction.
+    // v6: each part uses faction override layers if provided, else shared layers.
+    // v5 fallback: use the single decalRgba (or upscaled iconRgba).
+    let rgtSrc: Uint8ClampedArray
+
+    if (input.partRgbas) {
+      // v6 path: composite per-part RGBAs onto a blank 1024×1024 canvas.
+      const atlasCanvas = document.createElement('canvas')
+      atlasCanvas.width = atlasCanvas.height = DECAL_TEXTURE_SIZE
+      const atlasCtx = atlasCanvas.getContext('2d')
+      if (atlasCtx) {
+        for (let pi = 0; pi < ATLAS_PART_DEFS.length; pi++) {
+          const def = ATLAS_PART_DEFS[pi]
+          const partEntry = input.partRgbas[pi]
+          // Prefer faction override; fall back to shared.
+          const rgba = partEntry?.[faction] ?? partEntry?.['shared']
+          if (!rgba) continue
+          const partCanvas = document.createElement('canvas')
+          partCanvas.width = def.region.w
+          partCanvas.height = def.region.h
+          const pCtx = partCanvas.getContext('2d')
+          if (!pCtx) continue
+          // Cast to ArrayBuffer-backed view: the ImageData ctor rejects the
+          // generic Uint8ClampedArray<ArrayBufferLike> default (could be
+          // SharedArrayBuffer) under tsc -b. Same idiom as gfx-bitmaps.ts.
+          pCtx.putImageData(
+            new ImageData(rgba as Uint8ClampedArray<ArrayBuffer>, def.region.w, def.region.h),
+            0,
+            0
+          )
+          atlasCtx.drawImage(partCanvas, def.region.x, def.region.y)
+        }
+      }
+      const atlasCtxRead = atlasCanvas.getContext('2d')!
+      rgtSrc = binariseMask(
+        atlasCtxRead.getImageData(0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE).data
+      )
+    } else {
+      // v5 legacy path: single decalRgba (already 1024×1024) or upscaled icon.
+      const rgtSrcRaw =
+        input.decalRgba ?? upscaleNearest(iconRgba, DECAL_ICON_SIZE, DECAL_TEXTURE_SIZE)
+      rgtSrc = binariseMask(rgtSrcRaw)
+    }
+
     const rgtCanvas = makeCanvasFromRgba(rgtSrc, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE)
     const rgtInternalName = `art\\armies\\${faction}\\badges\\${guid}\\default_dif`
     const rgt = canvasToRgt(rgtCanvas, rgtInternalName)

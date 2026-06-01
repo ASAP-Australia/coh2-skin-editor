@@ -56,6 +56,7 @@ interface SnapshotOverrides {
   state?: LiveSyncState
   reason?: string
   enabled?: boolean
+  workshopSync?: { state: 'idle' | 'pushing' | 'synced' | 'error'; reason: string }
   toggle?: () => void
   connectInstall?: () => Promise<void>
 }
@@ -67,6 +68,7 @@ function stageSnapshot(o: SnapshotOverrides = {}) {
     state: o.state ?? 'disabled',
     reason: o.reason ?? 'Live Sync is disabled',
     enabled: o.enabled ?? false,
+    workshopSync: o.workshopSync ?? { state: 'idle', reason: '' },
     actions: {
       toggle,
       syncNow: vi.fn(),

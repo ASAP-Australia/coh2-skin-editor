@@ -139,6 +139,7 @@ const INPUT_STYLE: CSSProperties = {
   padding: '5px 8px',
   outline: 'none',
   fontFamily: 'inherit',
+  transition: 'border-color 0.12s, box-shadow 0.12s',
 }
 
 const SECTION_LABEL_STYLE: CSSProperties = {
@@ -319,10 +320,19 @@ export function PackIdentityPopover({
           <button
             type="button"
             title={iconSlot.currentDataUrl ? 'Click to replace · Right-click to clear' : 'Click to upload icon'}
+            aria-label={iconSlot.currentDataUrl ? `${iconSlot.label}: click to replace, right-click to clear` : `${iconSlot.label}: click to upload`}
             onClick={() => fileInputRef.current?.click()}
             onContextMenu={e => {
               e.preventDefault()
               if (iconSlot.currentDataUrl !== null) iconSlot.onChange(null)
+            }}
+            onFocus={e => {
+              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.36)'
+              e.currentTarget.style.boxShadow = '0 0 0 3px rgba(255,255,255,0.12)'
+            }}
+            onBlur={e => {
+              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.14)'
+              e.currentTarget.style.boxShadow = ''
             }}
             style={{
               width: sizePx,
@@ -376,6 +386,7 @@ export function PackIdentityPopover({
             accept="image/png,image/jpeg,image/webp"
             style={{ display: 'none' }}
             onChange={handleFileChange}
+            aria-label="Choose pack icon"
           />
         </div>
       )}
@@ -395,6 +406,14 @@ export function PackIdentityPopover({
           onKeyDown={e => {
             if (e.key === 'Enter' || e.key === 'Escape') onClose()
           }}
+          onFocus={e => {
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.36)'
+            e.currentTarget.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.08)'
+          }}
+          onBlur={e => {
+            e.currentTarget.style.borderColor = ''
+            e.currentTarget.style.boxShadow = ''
+          }}
           placeholder="Pack name"
           style={INPUT_STYLE}
         />
@@ -412,6 +431,14 @@ export function PackIdentityPopover({
           }}
           onKeyDown={e => {
             if (e.key === 'Escape') onClose()
+          }}
+          onFocus={e => {
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.36)'
+            e.currentTarget.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.08)'
+          }}
+          onBlur={e => {
+            e.currentTarget.style.borderColor = ''
+            e.currentTarget.style.boxShadow = ''
           }}
           placeholder="Short description (optional)"
           rows={3}
@@ -437,6 +464,14 @@ export function PackIdentityPopover({
           onKeyDown={e => {
             if (e.key === 'Enter' || e.key === 'Escape') onClose()
           }}
+          onFocus={e => {
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.36)'
+            e.currentTarget.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.08)'
+          }}
+          onBlur={e => {
+            e.currentTarget.style.borderColor = ''
+            e.currentTarget.style.boxShadow = ''
+          }}
           placeholder="Your name or handle"
           style={INPUT_STYLE}
         />
@@ -446,7 +481,12 @@ export function PackIdentityPopover({
       {extraSection}
 
       {/* ── Publish section (caller-supplied) ────────────────────────────── */}
-      {publishSection}
+      {publishSection && (
+        <>
+          <div style={{ height: '0.5px', background: 'rgba(255,255,255,0.10)', marginInline: -2 }} aria-hidden />
+          {publishSection}
+        </>
+      )}
     </div>
   )
 }

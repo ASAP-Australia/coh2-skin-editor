@@ -701,7 +701,16 @@ function HeightTransition({
         // Skip the transition until we have our first measurement,
         // otherwise the card animates from 0 → real height on mount.
         transition: effectiveHeight === null ? undefined : `height ${IN_MS}ms ${EASE}`,
-        overflow: 'hidden',
+        // `overflow: clip` clips overflowing content without creating a new
+        // scroll container (unlike `overflow: hidden`). This is critical for
+        // the SavedProjectsList custom-scrollbar: `overflow: hidden` on an
+        // ancestor can suppress WebKit's scrollbar rendering even when the
+        // scroll container itself is entirely within the ancestor's bounds,
+        // because WebKit composites the scrollbar on the scroll container's
+        // layer — and `overflow: hidden` creates a stacking context that
+        // clips layer-composited children. `overflow: clip` avoids that
+        // stacking-context side-effect while still preventing layout overflow.
+        overflow: 'clip',
       }}
     >
       <div ref={innerRef}>{children}</div>

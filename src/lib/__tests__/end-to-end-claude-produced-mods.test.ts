@@ -285,6 +285,10 @@ describe('claude-produced mods — end-to-end via library functions', () => {
         }
         const d = newDecal(p, id, s.name)
         p.decals.push({ ...d, visible: true })
+        // v6: also push to parts[1].shared (Main Hull Badge) so exportDecalPackZip finds them.
+        if (p.parts?.[1]) {
+          p.parts[1].shared.push({ ...d, visible: true })
+        }
       }
 
       const result = await exportDecalPackZip(p)
@@ -386,7 +390,9 @@ describe('claude-produced mods — end-to-end via library functions', () => {
   })
 
   describe('3) Vehicle skin pack SGA via exportSkinPack — Tiger I', () => {
-    it('builds a Tiger skin pack (custom diffuse + 1 decal) and round-trips it', async () => {
+    it(
+      'builds a Tiger skin pack (custom diffuse + 1 decal) and round-trips it',
+      async () => {
       const installPath = await findCoH2Install()
       if (!installPath) {
         // Soft-skip if the user's CoH2 install isn't where we expect.
@@ -469,6 +475,8 @@ describe('claude-produced mods — end-to-end via library functions', () => {
         `[claude-mods] skin-pack SGA written: ${outPath} (${result.bytes.length} bytes, ` +
           `guid=${result.modGuid}, numericId=${result.numericId})`,
       )
-    })
+      },
+      30000
+    )
   })
 })

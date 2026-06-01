@@ -90,7 +90,9 @@ export const topbarButtonStyle: CSSProperties = {
   gap: 6,
   padding: '6px 12px',
   background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.08)',
+  /* 0.5px hairline matches the glass system convention (glass-1/2/3 in
+   * index.css) — thicker strokes read as outlines rather than hairlines. */
+  border: '0.5px solid rgba(255,255,255,0.10)',
   borderRadius: 10,
   color: EDITOR_TEXT_1,
   fontSize: 12,

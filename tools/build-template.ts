@@ -32,6 +32,7 @@ import { createCanvas, Image, ImageData as NodeImageData, type Canvas } from 'ca
 import { canvasToRgt } from '../src/lib/rgt-writer'
 import { buildSga, type SgaInputFile } from '../src/lib/sga-writer'
 import { VEHICLES } from '../src/lib/vehicles'
+import { OUTPUT_BASENAME, vehicleFolder } from '../src/lib/mod-export'
 
 // ---------------------------------------------------------------------------
 // Args
@@ -98,33 +99,7 @@ function placeholderRgt(difTset: string): Uint8Array {
   return canvasToRgt(canvas as unknown as HTMLCanvasElement, difTset, { compress: false })
 }
 
-/** Output basename aliases — the filename inside the skin folder must match
- *  the vehicle's actual texture basename in the game archives. */
-const OUTPUT_BASENAME: Record<string, string> = {
-  elefant:               'elefant_hull',
-  ostwind_flak_panzer:   'ostwind',
-  sdkfz_222:             'sdkfz221',
-  panther_ausf_g:        'panther',
-  halftrack:             'halftrack',
-  sdkfz_250:             'sdkfz250',
-  king_tiger_sdkfz_182:  'kingtiger',
-  puma_sdkfz_234:        'puma',
-  jagdtiger:             'jagdtiger',
-  jagdpanzer_iv_sdkfz_162: 'jagdpanzer_iv',
-  panzer_ii_luchs_sdkfz_123: 'luchs',
-  panzer_iv_sdkfz_ausf_i: 'panzeriv',
-  m4a3e8_sherman_easy_8: 'm4a3e8_sherman',
-  m4a3_sherman_76mm:     'm4a3_sherman_76',
-  m4a1_sherman_calliope: 'm4a1_calliope',
-  m10_tank_destroyer:    'm10',
-  m36_tank_destroyer:    'm36',
-  m15a1_aa_halftrack:    'm15_aa_halftrack',
-  sherman_firefly:       'firefly',
-}
-
-function outputBasename(vehicleId: string): string {
-  return OUTPUT_BASENAME[vehicleId] ?? vehicleId
-}
+// OUTPUT_BASENAME and vehicleFolder imported from mod-export (single source of truth)
 
 // ---------------------------------------------------------------------------
 // Main
@@ -162,8 +137,9 @@ const main = async () => {
 
     // Add one uncompressed RGT per vehicle × 2 seasons
     for (const vSpec of VEHICLES) {
-      const baseName = outputBasename(vSpec.id)
-      const difTset = `art\\armies\\${vSpec.faction}\\vehicles\\${vSpec.id}\\${baseName}_dif`
+      const baseName = OUTPUT_BASENAME[vSpec.id] ?? vSpec.id
+      const folder = vehicleFolder(vSpec.id)
+      const difTset = `art\\armies\\${vSpec.faction}\\vehicles\\${folder}\\${baseName}_dif`
       // Generate per-vehicle RGT (same fixed size, different internal name only)
       const rgtBytes = canvasToRgt(
         dummyCanvas as unknown as HTMLCanvasElement,
@@ -171,7 +147,7 @@ const main = async () => {
         { compress: false },
       )
       for (const season of ['summer', 'winter'] as const) {
-        const sgaPath = `art/armies/${vSpec.faction}/vehicles/${vSpec.id}/skins/${guid}_${season}/${baseName}_dif.rgt`
+        const sgaPath = `art/armies/${vSpec.faction}/vehicles/${folder}/skins/${guid}_${season}/${baseName}_dif.rgt`
         sgaFiles.push({ path: sgaPath, bytes: rgtBytes, compress: false })
       }
       process.stdout.write(`  ${vSpec.id}\n`)

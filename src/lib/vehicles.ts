@@ -99,8 +99,36 @@ export const FACTIONS: { id: Faction; label: string }[] = [
   { id: 'british',      label: 'UKF' },
 ]
 
+/**
+ * On-disk folder name alias for vehicles whose `id` does NOT match the real
+ * game folder under `art/armies/<faction>/vehicles/<folder>/`.
+ *
+ * Key   = vehicles.ts id (never changes — ripples through project state / UI)
+ * Value = real game folder name, confirmed from official Relic SGA archives
+ *   centaur   → centaur_aa        (ArtBritish:   vehicles/centaur_aa/…)
+ *   t_34_85   → t34_85            (ArtSovietEF:  vehicles/t34_85/…)
+ *   valentine → valentine_command (ArtBritish:   vehicles/valentine_command/…)
+ *
+ * Lives here (not mod-export) so the mesh loader can use it without a circular
+ * import; mod-export re-exports it for existing callers.
+ */
+export const VEHICLE_FOLDER_ALIAS: Record<string, string> = {
+  centaur:   'centaur_aa',
+  t_34_85:   't34_85',
+  valentine: 'valentine_command',
+}
+
+/** Returns the real on-disk folder name for a vehicle id. */
+export function vehicleFolder(vehicleId: string): string {
+  return VEHICLE_FOLDER_ALIAS[vehicleId] ?? vehicleId
+}
+
 export function rgmPath(v: VehicleSpec): string {
-  return `art/armies/${v.faction}/vehicles/${v.id}/${v.id}.rgm`
+  // CoH2 convention is `<folder>/<folder>.rgm`. Use the real on-disk folder
+  // (alias-corrected) for BOTH the directory and the mesh basename, otherwise
+  // centaur / valentine / t_34_85 fail to load (their folders differ from id).
+  const folder = vehicleFolder(v.id)
+  return `art/armies/${v.faction}/vehicles/${folder}/${folder}.rgm`
 }
 
 /**

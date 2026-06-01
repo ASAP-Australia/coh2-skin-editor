@@ -189,7 +189,8 @@ export default function StartScreen({
           }}
           className="bb-cta relative w-full text-left px-4 py-3 border border-white/[0.08]
                      hover:border-white/15 transition-all duration-150
-                     flex items-center gap-3 cursor-pointer"
+                     flex items-center gap-3 cursor-pointer
+                     focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/60 focus-visible:outline-none"
           style={{
             borderRadius: 16,
             background: 'rgba(255, 255, 255, 0.06)',
@@ -295,24 +296,11 @@ export default function StartScreen({
         accept=".coh2skin,.coh2faceplate,.coh2decalpack,.json"
         onChange={onFile}
         className="hidden"
+        aria-label="Open project file"
       />
 
+      {/* bb-pressable / bb-cta are defined globally in index.css. */}
       <style>{`
-        .bb-pressable {
-          transition: transform 240ms cubic-bezier(.4, 1.6, .5, 1);
-          will-change: transform;
-          transform-origin: center;
-        }
-        .bb-pressable:has(button:not(:disabled):active) {
-          transform: scale(0.95);
-          transition: transform 90ms cubic-bezier(.3, 0, .7, 1);
-        }
-        .bb-cta {
-          transition: background-color 160ms ease-out;
-        }
-        .bb-cta:not(:disabled):hover {
-          background: rgba(255, 255, 255, 0.10) !important;
-        }
         .recent-card:hover {
           transform: scale(1.02);
           background: rgba(255, 255, 255, 0.09) !important;
