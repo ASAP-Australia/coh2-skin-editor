@@ -26,6 +26,8 @@
  * the engine accepts every output without per-decal size assertions.
  */
 
+import type { DecalFaction } from '@/lib/decal-mod-templates'
+
 /** Canonical per-decal canvas dimensions. Matches Relic's decal pack
  *  template — every emitted decal texture is exactly this size. */
 export const DECAL_PACK_SIZE = 128
@@ -207,6 +209,42 @@ export interface Decal {
 export const DECAL_STROKE_DEFAULTS: DecalStroke = { color: '#000000', width: 0 }
 export const DECAL_TINT_DEFAULTS: DecalTint = { color: '#ffffff', strength: 0 }
 
+// ── v6 Atlas Part types ──────────────────────────────────────────────────────
+
+/** Canonical UV region for one atlas part in the 1024×1024 RGT. */
+export interface AtlasPartRegion {
+  x: number; y: number; w: number; h: number
+}
+
+/** One named part of the atlas, with shared art + optional per-faction overrides.
+ *  Layers are Decal[] in the part's local pixel space (region.w × region.h).
+ *  Coordinates in each layer's x/y are part-local (origin = top-left of region). */
+export interface AtlasPart {
+  /** 0-based index, maps to ATLAS_PART_DEFS. */
+  index: number
+  /** Human-readable name, e.g. "Main Hull Badge". */
+  name: string
+  /** Art used by all factions unless overridden. */
+  shared: Decal[]
+  /** Per-faction layer list. When present for a faction, replaces shared entirely
+   *  for that faction's bake. Absent key → use shared. */
+  overrides?: Partial<Record<DecalFaction, Decal[]>>
+  /** Currently-active layer id in the editor. */
+  activeLayerId: string | null
+  /** Part 0 (Weathering Strips) is locked from editing. */
+  locked?: boolean
+}
+
+/** Canonical 6-part definitions for the 1024×1024 decal atlas. */
+export const ATLAS_PART_DEFS: { name: string; region: AtlasPartRegion; locked?: boolean }[] = [
+  { name: 'Weathering Strips', region: { x: 0,   y: 0,   w: 340, h: 1024 }, locked: true },
+  { name: 'Main Hull Badge',   region: { x: 340, y: 0,   w: 684, h: 512  } },
+  { name: 'Turret Mini-Badges',region: { x: 820, y: 0,   w: 204, h: 512  } },
+  { name: 'Unit Banner',       region: { x: 400, y: 400, w: 624, h: 300  } },
+  { name: 'Commander Crest',   region: { x: 600, y: 600, w: 424, h: 200  } },
+  { name: 'Reverse Hull Text', region: { x: 200, y: 800, w: 824, h: 224  } },
+]
+
 export interface Coh2DecalPackProject {
   /** Magic for file sniffing on load. */
   magic: 'coh2-decalpack-project'
@@ -228,7 +266,7 @@ export interface Coh2DecalPackProject {
    *        (data URL, rendered at 64×64) that overrides the auto-generated
    *        icon the engine uses for the decal pack panel thumbnail.
    *        Optional field, no migration needed. */
-  version: 5
+  version: 5 | 6
   /** Stable unique id; generated once in newDecalPackProject(). */
   id: string
   /** Display title for the in-game decal-pack panel and recent list. */
@@ -267,6 +305,13 @@ export interface Coh2DecalPackProject {
   decals: Decal[]
   /** Currently-edited decal id; drives the editor canvas focus. null if none. */
   activeDecalId: string | null
+  // ── v6 atlas-parts fields (absent on v1–v5 projects) ──────────────────────
+  /** 6-part atlas. Supersedes `decals` when present (v6+). */
+  parts?: AtlasPart[]
+  /** 0-based index of the currently-edited part (0..5). */
+  activePartIndex?: number
+  /** Which faction override is being edited. null = shared (default). */
+  activeFaction?: DecalFaction | null
   /** ISO timestamp of the last save — drives the recent-projects ordering. */
   modifiedAt: string
 }
@@ -279,7 +324,7 @@ const RECENT_MAX = 12
 export function newDecalPackProject(packName = 'My Decal Pack'): Coh2DecalPackProject {
   return {
     magic: 'coh2-decalpack-project',
-    version: 5,
+    version: 6,
     id: 'dp_' + Math.random().toString(36).slice(2, 12),
     packName,
     packDescription: 'A custom CoH2 decal pack made with the community modding tool.',
@@ -287,6 +332,15 @@ export function newDecalPackProject(packName = 'My Decal Pack'): Coh2DecalPackPr
     sourceImages: {},
     decals: [],
     activeDecalId: null,
+    parts: ATLAS_PART_DEFS.map((def, i) => ({
+      index: i,
+      name: def.name,
+      shared: [],
+      activeLayerId: null,
+      locked: def.locked ?? false,
+    })),
+    activePartIndex: 1,
+    activeFaction: null,
     modifiedAt: new Date().toISOString(),
     titleAcknowledged: false,
   }
@@ -455,6 +509,22 @@ function migrateDecalPackProject(raw: Coh2DecalPackProject): Coh2DecalPackProjec
     // v4 → v5: packIcon is optional with no identity value — stamp only.
     ;(raw as { version: number }).version = 5
   }
+  if (incoming < 6) {
+    ;(raw as { version: number }).version = 6
+    if (!(raw as { parts?: AtlasPart[] }).parts) {
+      // Migrate: existing decals → part index 1 shared (Main Hull Badge).
+      // raw.decals is kept intact for back-compat external tooling.
+      ;(raw as { parts: AtlasPart[] }).parts = ATLAS_PART_DEFS.map((def, i) => ({
+        index: i,
+        name: def.name,
+        shared: i === 1 ? ((raw.decals ?? []) as Decal[]) : [],
+        activeLayerId: i === 1 ? (raw.activeDecalId ?? null) : null,
+        locked: def.locked ?? false,
+      }))
+      ;(raw as { activePartIndex: number }).activePartIndex = 1
+      ;(raw as { activeFaction: null }).activeFaction = null
+    }
+  }
   return raw
 }
 
@@ -499,7 +569,7 @@ function touchRecent(p: Coh2DecalPackProject): void {
     filtered.unshift({
       id: p.id,
       packName: p.packName,
-      decalCount: p.decals.length,
+      decalCount: decalPackLayerCount(p),
       lastEditedAt: new Date().toISOString(),
       thumbnail: priorThumb,
     })
@@ -522,6 +592,15 @@ export function updateRecentDecalPackThumbnail(id: string, thumbnail: string): v
   } catch {
     /* swallow — best effort */
   }
+}
+
+/** Returns the total layer count across all parts (shared only). Falls back
+ *  to decals.length for v5 projects that haven't migrated yet. */
+export function decalPackLayerCount(p: Coh2DecalPackProject): number {
+  if (p.parts) {
+    return p.parts.reduce((sum, part) => sum + part.shared.length, 0)
+  }
+  return p.decals.length
 }
 
 export function readRecent(): RecentDecalPack[] {
@@ -571,7 +650,7 @@ export function listAllDecalPacks(): RecentDecalPack[] {
       entries.push({
         id,
         packName: project.packName || fromRegistry?.packName || 'Untitled pack',
-        decalCount: project.decals.length,
+        decalCount: decalPackLayerCount(project),
         lastEditedAt: fromRegistry?.lastEditedAt ?? project.modifiedAt ?? '',
         thumbnail: fromRegistry?.thumbnail ?? null,
       })

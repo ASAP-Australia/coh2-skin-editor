@@ -350,3 +350,87 @@ body {
 ::view-transition-new(root) {
   animation: vt-slide-down-in 240ms cubic-bezier(.32, .72, 0, 1) both;
 }
+
+/* ── BorderBeam pressable + CTA utilities ─────────────────────────────────
+ * Extracted from ConnectScreen / StartScreen / NewProjectForm where they
+ * lived as identical inline <style> blocks. Centralised here so a single
+ * source-of-truth drives the spring-bounce press animation and hover
+ * background across every BorderBeam-wrapped primary CTA.
+ *
+ * bb-pressable  — wrapper that scales down on :active (spring easing in,
+ *                 smooth easing out for the release).
+ * bb-cta        — inner <button> with a subtle hover background lift.
+ *
+ * The spinner @keyframes from ConnectScreen (bb-spinner-rotate) and
+ * NewProjectForm (npf-spinner-rotate) each target their own animation-name
+ * strings baked into the component's inline styles — those component-local
+ * keyframes remain where they are. Only the shared structural rules move
+ * here. */
+@utility bb-pressable {
+  transition: transform 240ms cubic-bezier(.4, 1.6, .5, 1);
+  will-change: transform;
+  transform-origin: center;
+  display: block;
+}
+.bb-pressable:has(button:not(:disabled):active) {
+  transform: scale(0.95);
+  transition: transform 90ms cubic-bezier(.3, 0, .7, 1);
+}
+.bb-cta {
+  transition: background-color 160ms ease-out;
+}
+.bb-cta:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.10) !important;
+}
+@keyframes bb-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+@keyframes npf-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+@keyframes liveSyncWsPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
+/* ── Custom scrollbar ─────────────────────────────────────────────────────
+ * Opt-in themed scrollbar for scroll containers that need a *visible* rail
+ * (e.g. the "Load project" list in SavedProjectsList — user feedback: "the
+ * load project has too many projects, they break out of the menu, add a
+ * custom scrollbar to the right").
+ *
+ * Electron ships Chromium, so the WebKit pseudo-elements drive the look:
+ * a 12 px wide rail with a rounded translucent-white thumb that brightens
+ * on hover. `scrollbar-width`/`scrollbar-color` cover the Firefox/Gecko
+ * path used by the jsdom-adjacent test runner and any non-Chromium preview.
+ *
+ * The thumb uses `background-clip: padding-box` with a transparent border
+ * so it reads as a slim pill inset from the rail edge rather than a solid
+ * bar flush to the container edge. */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.22) transparent;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgb(255 255 255 / 0.18);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 160ms ease-out;
+}
+.custom-scrollbar:hover::-webkit-scrollbar-thumb {
+  background-color: rgb(255 255 255 / 0.30);
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(255 255 255 / 0.45);
+}
+.custom-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}

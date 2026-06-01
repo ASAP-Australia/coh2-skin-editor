@@ -69,7 +69,8 @@ import { scheduleLiveSync, useLiveSync } from '@/lib/live-sync'
 import { writeClipboard, readClipboard } from '@/lib/editor-clipboard'
 import { INSIGNIA_LIBRARY, type InsigniaEntry } from '@/lib/insignia-library'
 import HexColorInput from '@/components/editor-primitives/HexColorInput'
-import { StateIcon } from '@/components/LiveSyncBadge'
+import EditorTitlePill from '@/components/editor-primitives/EditorTitlePill'
+// StateIcon is now used by EditorTitlePill — no direct import needed here
 import AtlasViewPanel from '@/components/AtlasViewPanel'
 import DecalPackInGamePreview from '@/components/DecalPackInGamePreview'
 import {
@@ -79,9 +80,13 @@ import {
 } from '@/lib/atlas-view-settings'
 import ImageDropZone, { type ImageDropZoneHandle } from './editor-shared/ImageDropZone'
 import { PackIdentityPopover } from './PackIdentityPopover'
-import { BorderBeam } from '@/components/ui/border-beam'
+// BorderBeam is now used by EditorTitlePill — no direct import needed here
 import { makeDecalPublishTarget } from '@/components/PublishToWorkshopDialog'
 import { PublishSection } from '@/components/PublishSection'
+import FactionRow from '@/components/atlas/FactionRow'
+import PartStepper from '@/components/atlas/PartStepper'
+import FactionPartMatrix from '@/components/atlas/FactionPartMatrix'
+import type { DecalFaction } from '@/lib/decal-mod-templates'
 import {
   BlendModeSelect,
   BottomToolPill,
@@ -159,6 +164,25 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
   /** Active snap guide lines while a decal drag is in progress. */
   const [snapGuides, setSnapGuides] = useState<SnapTarget[]>([])
 
+  // ── Atlas part / faction state (v6) ───────────────────────────────────
+  const [activePartIndex, setActivePartIndex] = useState<number>(
+    initialProject.activePartIndex ?? 1
+  )
+  const [activeFaction, setActiveFaction] = useState<DecalFaction | null>(
+    initialProject.activeFaction ?? null
+  )
+  const [showPartMatrix, setShowPartMatrix] = useState(false)
+
+  // Persist part/faction into project on change
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: atlas nav state is persisted into project for save/reload fidelity; single setState, no cascade
+    setProject(prev => ({
+      ...prev,
+      activePartIndex,
+      activeFaction,
+    }))
+  }, [activePartIndex, activeFaction])
+
   // ── Decal strip context menu ───────────────────────────────────────────
   const [decalCtxMenu, setDecalCtxMenu] = useState<{
     id: string
@@ -229,14 +253,24 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         return
       }
       const decal = newDecal(draft, imageId, name)
-      mutate(p => ({
-        ...p,
-        sourceImages: { ...p.sourceImages, ...draft.sourceImages },
-        decals: [...p.decals, decal],
-        activeDecalId: decal.id,
-      }))
+      mutate(p => {
+        if (p.parts) {
+          // v6: append to active part's shared or faction override layers.
+          const parts = p.parts.map((part, i) => {
+            if (i !== activePartIndex) return part
+            if (activeFaction && part.overrides) {
+              const existing = part.overrides[activeFaction] ?? []
+              return { ...part, overrides: { ...part.overrides, [activeFaction]: [...existing, decal] }, activeLayerId: decal.id }
+            }
+            return { ...part, shared: [...part.shared, decal], activeLayerId: decal.id }
+          })
+          return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, parts, decals: [...p.decals, decal] }
+        }
+        // v5 fallback:
+        return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, decals: [...p.decals, decal], activeDecalId: decal.id }
+      })
     },
-    [project, mutate],
+    [project, mutate, activePartIndex, activeFaction],
   )
 
   const onAddImageFiles = useCallback(
@@ -246,17 +280,27 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         void addDecalSourceImageFromFile(draft, file)
           .then(imageId => {
             const decal = newDecal(draft, imageId, file.name)
-            mutate(p => ({
-              ...p,
-              sourceImages: { ...p.sourceImages, ...draft.sourceImages },
-              decals: [...p.decals, decal],
-              activeDecalId: decal.id,
-            }))
+            mutate(p => {
+              if (p.parts) {
+                // v6: append to active part's shared or faction override layers.
+                const parts = p.parts.map((part, i) => {
+                  if (i !== activePartIndex) return part
+                  if (activeFaction && part.overrides) {
+                    const existing = part.overrides[activeFaction] ?? []
+                    return { ...part, overrides: { ...part.overrides, [activeFaction]: [...existing, decal] }, activeLayerId: decal.id }
+                  }
+                  return { ...part, shared: [...part.shared, decal], activeLayerId: decal.id }
+                })
+                return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, parts, decals: [...p.decals, decal] }
+              }
+              // v5 fallback:
+              return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, decals: [...p.decals, decal], activeDecalId: decal.id }
+            })
           })
           .catch(e => console.warn('decal source import failed', e))
       }
     },
-    [project, mutate],
+    [project, mutate, activePartIndex, activeFaction],
   )
 
   const onAddImageToCanvas = useCallback(
@@ -322,19 +366,29 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
     if (newDecals.length === 0) return
 
     const lastDecal = newDecals[newDecals.length - 1]
-    mutate(p => ({
-      ...p,
-      sourceImages: { ...p.sourceImages, ...draft.sourceImages },
-      decals: [...p.decals, ...newDecals],
-      activeDecalId: lastDecal.id,
-    }))
+    mutate(p => {
+      if (p.parts) {
+        // v6: append to active part's shared layers.
+        const parts = p.parts.map((part, i) => {
+          if (i !== activePartIndex) return part
+          if (activeFaction && part.overrides) {
+            const existing = part.overrides[activeFaction] ?? []
+            return { ...part, overrides: { ...part.overrides, [activeFaction]: [...existing, ...newDecals] }, activeLayerId: lastDecal.id }
+          }
+          return { ...part, shared: [...part.shared, ...newDecals], activeLayerId: lastDecal.id }
+        })
+        return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, parts, decals: [...p.decals, ...newDecals] }
+      }
+      // v5 fallback:
+      return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, decals: [...p.decals, ...newDecals], activeDecalId: lastDecal.id }
+    })
 
     if (capped) {
       setBatchWarning(
         `Only the first ${BATCH_IMPORT_MAX} files were imported. Please import the remaining files separately.`,
       )
     }
-  }, [project, mutate])
+  }, [project, mutate, activePartIndex, activeFaction])
 
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
   const activeDecal = useMemo(
@@ -807,7 +861,10 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
       const iconCanvas = document.createElement('canvas')
       iconCanvas.width = iconCanvas.height = DECAL_ICON_SIZE
       const iconCtx = iconCanvas.getContext('2d')
-      const visibleDecal = project.decals.find(d => d.visible)
+      // v6: icon uses the first visible layer from any part. v5: use decals[].
+      const visibleDecal = project.parts
+        ? project.parts.flatMap(p => p.shared).find(d => d.visible)
+        : project.decals.find(d => d.visible)
       if (visibleDecal && iconCtx) {
         const src = project.sourceImages[visibleDecal.sourceImageId]
         if (src) {
@@ -822,23 +879,29 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         ? iconCtx.getImageData(0, 0, DECAL_ICON_SIZE, DECAL_ICON_SIZE).data
         : new Uint8ClampedArray(DECAL_ICON_SIZE * DECAL_ICON_SIZE * 4)
 
-      // Render decal texture (128×128)
-      const texCanvas = document.createElement('canvas')
-      texCanvas.width = texCanvas.height = DECAL_TEXTURE_SIZE
-      const texCtx = texCanvas.getContext('2d')
-      if (visibleDecal && texCtx) {
-        const src = project.sourceImages[visibleDecal.sourceImageId]
-        if (src) {
-          const img = new Image()
-          img.src = src.dataUrl
-          await new Promise<void>(r => { img.onload = () => r(); img.onerror = () => r() })
-          const rendered = rasteriseDecal(visibleDecal, img)
-          texCtx.drawImage(rendered, 0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE)
+      // v6: per-part per-faction composite via partsForBake. v5: flat decalRgba.
+      const { partsForBake } = await import('@/lib/atlas-parts')
+      const partRgbas = await partsForBake(project)
+      let decalRgba: Uint8ClampedArray | undefined
+      if (!partRgbas) {
+        // v5 fallback: render flat texture.
+        const texCanvas = document.createElement('canvas')
+        texCanvas.width = texCanvas.height = DECAL_TEXTURE_SIZE
+        const texCtx = texCanvas.getContext('2d')
+        if (visibleDecal && texCtx) {
+          const src = project.sourceImages[visibleDecal.sourceImageId]
+          if (src) {
+            const img = new Image()
+            img.src = src.dataUrl
+            await new Promise<void>(r => { img.onload = () => r(); img.onerror = () => r() })
+            const rendered = rasteriseDecal(visibleDecal, img)
+            texCtx.drawImage(rendered, 0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE)
+          }
         }
+        decalRgba = texCtx
+          ? texCtx.getImageData(0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE).data
+          : new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
       }
-      const decalRgba = texCtx
-        ? texCtx.getImageData(0, 0, DECAL_TEXTURE_SIZE, DECAL_TEXTURE_SIZE).data
-        : new Uint8ClampedArray(DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * 4)
 
       // Build a preview canvas from the source image at natural resolution so
       // the Workshop thumbnail is sharp. Pass the raw rasteriseDecal output —
@@ -870,7 +933,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         }
       }
 
-      const result = await buildDecalMod({ project, iconRgba, decalRgba, guid })
+      const result = await buildDecalMod({ project, iconRgba, decalRgba, partRgbas, guid })
       const target = makeDecalPublishTarget(
         project,
         result.sga,
@@ -1142,190 +1205,138 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
       />
 
       {/* ── Centered pack-name title pill — top-centre of viewport ──────────
-          Mirrors FaceplateEditor's centered title pattern so the user
-          always sees which pack they're editing. Click to open the identity
-          popover (name / description / author / icon). These ARE the
-          in-game text fields — name appears above the decal grid and on
-          the equip card; description is the body text on that card.
-          The Live Sync status icon is rendered inline at the end of the
-          title text — hover reveals the reason. */}
-      <div
-        style={
-          {
+          Extracted to EditorTitlePill; mirrors FaceplateEditor and TopBar
+          (vehicle editor) patterns. Click opens PackIdentityPopover with
+          name / description / author / icon and publish controls. */}
+      <EditorTitlePill
+        packName={project.packName}
+        fallbackLabel="Unnamed Decal Pack"
+        syncState={sync.state}
+        liveSyncTitle={liveSyncTitle}
+        liveSyncAriaLabel={liveSyncAriaLabel}
+        titleAcknowledged={project.titleAcknowledged}
+        onAcknowledge={() => mutate(p => ({ ...p, titleAcknowledged: true }), { undoable: false })}
+        onToggle={() => setPackNameEditOpen(v => !v)}
+        popoverOpen={packNameEditOpen}
+        popoverContent={
+          <PackIdentityPopover
+            open={packNameEditOpen}
+            onClose={() => {
+              setPackNameEditOpen(false)
+              setPublishTarget(null)
+            }}
+            name={project.packName}
+            description={project.packDescription}
+            author={project.author}
+            onSave={({ name, description, author }) => {
+              mutate(
+                p => ({
+                  ...p,
+                  packName: name.trim() || p.packName,
+                  packDescription: description,
+                  author: author.trim() || p.author,
+                }),
+                { undoable: false },
+              )
+            }}
+            iconSlot={{
+              label: 'Pack icon',
+              currentDataUrl: project.packIcon ?? null,
+              fallbackHint: 'No icon set — engine uses first decal',
+              onChange: next => {
+                mutate(p => ({ ...p, packIcon: next ?? undefined }), { undoable: false })
+              },
+              sizePx: 64,
+            }}
+            extraSection={
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 10,
+                  color: 'rgba(255,255,255,0.38)',
+                  lineHeight: 1.45,
+                  borderTop: '0.5px solid rgba(255,255,255,0.08)',
+                  paddingTop: 8,
+                }}
+              >
+                Name and Description are the in-game fields — shown above the
+                decal grid and on the equip card in CoH2.
+              </p>
+            }
+            publishSection={
+              <PublishSection
+                target={publishTarget}
+                isBuildingTarget={isBuildingTarget}
+                onRequestBuild={handleRequestBuild}
+                onUploadStart={() => setIsUploading(true)}
+                onUploadEnd={() => setIsUploading(false)}
+              />
+            }
+            locked={isUploading || isBuildingTarget}
+          />
+        }
+      />
+
+      {/* Atlas part + faction controls — shown only for v6 projects */}
+      {project.parts && (
+        <div
+          style={{
             position: 'fixed',
-            top: 'calc(12px + var(--app-top-inset, 0px))',
+            top: 56,           // below title pill (~44px) + 12px margin
             left: '50%',
             transform: 'translateX(-50%)',
-            zIndex: 50,
-            WebkitAppRegion: 'no-drag',
+            zIndex: 45,
             display: 'flex',
-            flexDirection: 'row',
+            flexDirection: 'column',
             alignItems: 'center',
-            gap: 8,
-          } as CSSProperties
-        }
-      >
-        {project.titleAcknowledged === false ? (
-          <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={12} borderWidth={1}>
-            <button
-              type="button"
-              title={liveSyncTitle}
-              aria-label={liveSyncAriaLabel}
-              onClick={() => {
-                if (project.titleAcknowledged === false) {
-                  mutate(p => ({ ...p, titleAcknowledged: true }), { undoable: false })
-                }
-                setPackNameEditOpen(v => !v)
-              }}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                height: 36,
-                paddingLeft: 14,
-                paddingRight: 14,
-                borderRadius: 12,
-                background: 'rgba(15, 17, 22, 0.75)',
-                backgroundImage:
-                  'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
-                backdropFilter: 'blur(40px) saturate(150%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-                border: '0.5px solid rgba(255, 255, 255, 0.08)',
-                boxShadow:
-                  'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-                color: 'rgba(247,247,250,0.88)',
-                cursor: 'pointer',
-                padding: '0 14px',
-                fontSize: 14,
-                fontWeight: 700,
-                letterSpacing: '0.01em',
-                whiteSpace: 'nowrap',
-                maxWidth: 'calc(100vw - 200px)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-              }}
-            >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {project.packName || 'Unnamed Decal Pack'}
-              </span>
-              <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
-                <StateIcon state={sync.state} />
-              </span>
-            </button>
-          </BorderBeam>
-        ) : (
+            gap: 6,
+          }}
+        >
+          <PartStepper
+            activeIndex={activePartIndex}
+            onChange={setActivePartIndex}
+          />
+          <FactionRow
+            activeFaction={activeFaction}
+            onChange={setActiveFaction}
+          />
           <button
-            type="button"
-            title={liveSyncTitle}
-            aria-label={liveSyncAriaLabel}
-            onClick={() => {
-              setPackNameEditOpen(v => !v)
-            }}
+            onClick={() => setShowPartMatrix(v => !v)}
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              height: 36,
-              paddingLeft: 14,
-              paddingRight: 14,
-              borderRadius: 12,
-              background: 'rgba(15, 17, 22, 0.75)',
-              backgroundImage:
-                'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
-              backdropFilter: 'blur(40px) saturate(150%)',
-              WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-              border: '0.5px solid rgba(255, 255, 255, 0.08)',
-              boxShadow:
-                'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-              color: 'rgba(247,247,250,0.88)',
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.5)',
+              background: 'none',
+              border: 'none',
               cursor: 'pointer',
-              padding: '0 14px',
-              fontSize: 14,
-              fontWeight: 700,
-              letterSpacing: '0.01em',
-              whiteSpace: 'nowrap',
-              maxWidth: 'calc(100vw - 200px)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+              textDecoration: 'underline',
             }}
           >
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {project.packName || 'Unnamed Decal Pack'}
-            </span>
-            <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
-              <StateIcon state={sync.state} />
-            </span>
+            {showPartMatrix ? 'Hide matrix' : 'Show parts \u00d7 factions'}
           </button>
-        )}
-
-        {/* Pack identity popover — name / description / author / icon.
-            Name and Description ARE the in-game text fields: name appears
-            above the decal grid in the customise screen and on the equip
-            card; description is the body text on that card.
-            Uses the shared PackIdentityPopover so all identity-edit surfaces
-            stay in sync. Escape / outside-click closes (autosync, no Save). */}
-        <PackIdentityPopover
-          open={packNameEditOpen}
-          onClose={() => {
-            setPackNameEditOpen(false)
-            setPublishTarget(null)
-          }}
-          name={project.packName}
-          description={project.packDescription}
-          author={project.author}
-          onSave={({ name, description, author }) => {
-            // Autosync — fired per-keystroke; do NOT close on each change.
-            // The popover closes on Escape / outside-click via onClose.
-            mutate(
-              p => ({
-                ...p,
-                packName: name.trim() || p.packName,
-                packDescription: description,
-                author: author.trim() || p.author,
-              }),
-              { undoable: false },
-            )
-          }}
-          iconSlot={{
-            label: 'Pack icon',
-            currentDataUrl: project.packIcon ?? null,
-            fallbackHint: 'No icon set — engine uses first decal',
-            onChange: next => {
-              mutate(p => ({ ...p, packIcon: next ?? undefined }), { undoable: false })
-            },
-            sizePx: 64,
-          }}
-          extraSection={
-            <p
+          {showPartMatrix && (
+            <div
               style={{
-                margin: 0,
-                fontSize: 10,
-                color: 'rgba(255,255,255,0.38)',
-                lineHeight: 1.45,
-                borderTop: '0.5px solid rgba(255,255,255,0.08)',
-                paddingTop: 8,
+                background: 'rgba(16,18,24,0.92)',
+                border: '1px solid rgba(255,255,255,0.10)',
+                borderRadius: 12,
+                padding: 12,
+                backdropFilter: 'blur(20px)',
               }}
             >
-              Name and Description are the in-game fields — shown above the
-              decal grid and on the equip card in CoH2.
-            </p>
-          }
-          publishSection={
-            <PublishSection
-              target={publishTarget}
-              isBuildingTarget={isBuildingTarget}
-              onRequestBuild={handleRequestBuild}
-              onUploadStart={() => setIsUploading(true)}
-              onUploadEnd={() => setIsUploading(false)}
-            />
-          }
-          locked={isUploading || isBuildingTarget}
-        />
-      </div>
+              <FactionPartMatrix
+                project={project}
+                activePart={activePartIndex}
+                activeFaction={activeFaction}
+                onSelect={(pi, faction) => {
+                  setActivePartIndex(pi)
+                  setActiveFaction(faction)
+                  setShowPartMatrix(false)
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* LobbyPreviewPanel was removed in v1.0 — the in-editor player-card
           mock didn't accurately match what the player sees in the CoH2
@@ -1758,12 +1769,22 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                     const draft = structuredClone(project)
                     const imageId = await addDecalSourceImageFromBlob(draft, blob, insignia.name)
                     const decal: Decal = newDecal(draft, imageId, insignia.name)
-                    mutate(p => ({
-                      ...p,
-                      sourceImages: { ...p.sourceImages, ...draft.sourceImages },
-                      decals: [...p.decals, decal],
-                      activeDecalId: decal.id,
-                    }))
+                    mutate(p => {
+                      if (p.parts) {
+                        // v6: append to active part's shared or override layers.
+                        const parts = p.parts.map((part, i) => {
+                          if (i !== activePartIndex) return part
+                          if (activeFaction && part.overrides) {
+                            const existing = part.overrides[activeFaction] ?? []
+                            return { ...part, overrides: { ...part.overrides, [activeFaction]: [...existing, decal] }, activeLayerId: decal.id }
+                          }
+                          return { ...part, shared: [...part.shared, decal], activeLayerId: decal.id }
+                        })
+                        return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, parts, decals: [...p.decals, decal] }
+                      }
+                      // v5 fallback:
+                      return { ...p, sourceImages: { ...p.sourceImages, ...draft.sourceImages }, decals: [...p.decals, decal], activeDecalId: decal.id }
+                    })
                     setInsigniaOpen(false)
                   } catch (e) {
                     console.warn('insignia import failed', e)

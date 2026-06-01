@@ -274,7 +274,7 @@ export default function SavedProjectsList({
               type="button"
               onClick={onPickFromDisk}
               className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl text-[12px]
-                         border border-white/[0.06] bg-transparent hover:bg-white/[0.04]
+                         border border-white/10 bg-white/[0.03] hover:bg-white/[0.08]
                          text-muted-foreground hover:text-foreground transition-colors"
             >
               <HardDriveDownload size={13} aria-hidden />

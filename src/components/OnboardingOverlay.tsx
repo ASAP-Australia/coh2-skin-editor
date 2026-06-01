@@ -144,14 +144,16 @@ export default function OnboardingOverlay() {
           {isLast ? (
             <button
               onClick={dismiss}
-              className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[var(--color-accent)] text-black hover:opacity-90"
+              className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[var(--color-accent)] text-black hover:opacity-90
+                         focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/60 focus-visible:outline-none"
             >
               Start designing
             </button>
           ) : (
             <button
               onClick={() => setStep(s => s + 1)}
-              className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[var(--color-accent)] text-black hover:opacity-90"
+              className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[var(--color-accent)] text-black hover:opacity-90
+                         focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/60 focus-visible:outline-none"
             >
               next →
             </button>

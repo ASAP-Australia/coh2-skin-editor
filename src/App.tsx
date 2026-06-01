@@ -27,6 +27,11 @@ import {
 } from '@/lib/decal-pack-project'
 import { loadSavedHandle } from '@/lib/coh2-fs'
 import { isElectron, detectInstallPath, nativePathToHandle } from '@/lib/native-fs'
+import { lazy, Suspense } from 'react'
+
+// Audit runner — only loaded when ?audit=1 is in the URL. Lazy to keep
+// Three.js out of the initial bundle when the normal app boots.
+const AuditRunner = lazy(() => import('@/components/AuditRunner'))
 
 /**
  * App routing — pre-Steam-flow rewire (May 2026).
@@ -101,6 +106,9 @@ function withViewTransition(update: () => void): void {
     update()
   }
 }
+
+// ── Audit gate: check at module load time, before hooks ───────────────────
+const IS_AUDIT_MODE = new URLSearchParams(location.search).get('audit') === '1'
 
 export default function App() {
   const [installRoot, setInstallRoot] = useState<FileSystemDirectoryHandle | null>(null)
@@ -294,6 +302,15 @@ export default function App() {
 
   // ── Render ───────────────────────────────────────────────────────────
 
+  // Audit mode: ?audit=1 → bypass normal app, mount real-pipeline audit runner.
+  if (IS_AUDIT_MODE) {
+    return (
+      <Suspense fallback={<div style={{ color: '#666', fontFamily: 'monospace', padding: 24 }}>Loading audit runner…</div>}>
+        <AuditRunner />
+      </Suspense>
+    )
+  }
+
   // Probing or no install yet → AuthShell-hosted phases (connect /
   // start / saved-projects / editor-loading).
   const inAuthShell =
@@ -392,6 +409,7 @@ export default function App() {
           accept=".coh2skin,.coh2faceplate,.coh2decalpack,.json"
           onChange={onDiskFile}
           className="hidden"
+          aria-label="Open project file from disk"
         />
       </>
     )

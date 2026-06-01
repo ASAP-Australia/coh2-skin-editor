@@ -71,6 +71,12 @@ export function cacheArchive(name: string, archive: SgaArchive): void {
   if (!archiveCache.has(name)) archiveCache.set(name, archive)
 }
 
+/** Store bytes for a file path so subsequent items skip the IPC read. */
+export function cacheBytes(path: string, bytes: Uint8Array): void {
+  const key = path.toLowerCase()
+  if (!bytesCache.has(key)) bytesCache.set(key, bytes)
+}
+
 export interface PreloadProgress {
   /** Phase: opening archives, then reading vehicle bytes. */
   phase: 'archives' | 'vehicles' | 'done'

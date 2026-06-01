@@ -95,7 +95,7 @@ export default function ImageLibrary({ project, setProject, onImageReady, toast 
           <div>or click to browse · or paste from clipboard</div>
         </div>
       </div>
-      <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" aria-label="Add image to library"
         onChange={async e => {
           const f = e.target.files?.[0]; if (!f) return
           await importFile(f); e.target.value = ''

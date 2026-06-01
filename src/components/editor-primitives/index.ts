@@ -68,6 +68,9 @@ export { default as AdjustmentPanel } from './AdjustmentPanel'
 export { default as TransformPanel } from './TransformPanel'
 export type { LayerTransform } from './TransformPanel'
 
+export { default as EditorTitlePill } from './EditorTitlePill'
+export type { EditorTitlePillProps } from './EditorTitlePill'
+
 export { default as BlendModeSelect } from './BlendModeSelect'
 export type { BlendModeSelectProps } from './BlendModeSelect'
 

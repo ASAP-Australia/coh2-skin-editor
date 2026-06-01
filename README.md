@@ -1,5 +1,15 @@
 # CoH2 Skin Editor (community)
 
+![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6?logo=typescript&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
+![tests](https://img.shields.io/badge/tests-1590%20passing-brightgreen)
+![typecheck](https://img.shields.io/badge/typecheck-0%20errors-brightgreen)
+![bundle](https://img.shields.io/badge/bundle-130%20kB-brightgreen)
+![branch coverage](https://img.shields.io/badge/branch%20coverage-79%25-yellow)
+![license](https://img.shields.io/badge/license-MIT-blue)
+
 <!-- Badges. Order: build → quality → security → supply-chain → meta. Each
      badge points at a workflow committed to .github/workflows/. Drafts for
      lighthouse / mutation exist locally but are out of scope for v1.0. -->
@@ -14,6 +24,11 @@
 [![OSV Scanner](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/osv-scanner.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/osv-scanner.yml)
 [![Dependency Review](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/dependency-review.yml)
 [![codecov](https://codecov.io/gh/ASAP-Australia/coh2-skin-editor/branch/main/graph/badge.svg)](https://codecov.io/gh/ASAP-Australia/coh2-skin-editor)
+[![knip](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/knip.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/knip.yml)
+[![lockfile-lint](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/lockfile-lint.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/lockfile-lint.yml)
+[![native-lint](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/native-lint.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/native-lint.yml)
+[![bench](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/bench.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/bench.yml)
+[![electron-release](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/electron-release.yml/badge.svg)](https://github.com/ASAP-Australia/coh2-skin-editor/actions/workflows/electron-release.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A desktop skin / decal / faceplate editor for **Company of Heroes 2** that
@@ -67,7 +82,7 @@ local mods folder under a flag the engine recognizes during development.
 ```sh
 npm install
 npm run electron:dev     # runs Vite + Electron with hot reload
-npm run test             # runs the Vitest suite (~1500 tests)
+npm run test             # runs the Vitest suite (1577 tests)
 npm run electron:build   # produces an AppImage in ./release
 ```
 
@@ -100,17 +115,22 @@ can ship a skin pack without learning the Mod Tools end-to-end.
 
 ## Security & quality gates
 
-CI runs on every PR:
-
-- **CI** — `tsc`, ESLint, Vitest (~1500 unit + component tests), Playwright
-  smoke
-- **CodeQL** — static analysis for JS/TS security issues
-- **OpenSSF Scorecard** — supply-chain & repository-hygiene scoring
-- **Accessibility** — axe-core + pa11y-ci against WCAG 2.1 AA
-- **Dependency Review** — flags new direct deps with known CVEs
-- **OSV Scanner** — Google's vulnerability database lookup
-- **Gitleaks** — secret-scanning on every commit
-- **Size limit** — guards against bundle-size regressions
+| Workflow | Trigger | What it checks | Run locally |
+|---|---|---|---|
+| **CI** (`ci.yml`) | every PR & push | `tsc`, ESLint, Vitest (1577 unit + component tests), Playwright smoke | `npm run typecheck && npm run lint && npm test && npm run e2e` |
+| **size-limit** (`size-limit.yml`) | every PR | bundle size budgets (250 kB main, 150 kB three, brotli) | `npm run size` |
+| **accessibility** (`accessibility.yml`) | every PR | axe-core + pa11y-ci against WCAG 2.1 AA | `npm run a11y && npm run a11y:pa11y` |
+| **html-validate** (`html-validate.yml`) | every PR | static HTML validity of renderer output | _(run via CI)_ |
+| **knip** (`knip.yml`) | every PR | dead exports, unused dependencies | `npm run knip` |
+| **lockfile-lint** (`lockfile-lint.yml`) | every PR | supply-chain: lockfile registry + package-manager hygiene | `npm run lockfile:lint` |
+| **native-lint** (`native-lint.yml`) | push/PR touching `native/` | clang-tidy + cppcheck on the NAPI C++ addon | _(run via CI)_ |
+| **CodeQL** (`codeql.yml`) | every PR | JS/TS static security analysis | _(run via CI)_ |
+| **OpenSSF Scorecard** (`scorecard.yml`) | weekly | supply-chain & repository-hygiene scoring | _(run via CI)_ |
+| **Dependency Review** (`dependency-review.yml`) | every PR | new direct deps with known CVEs | _(run via CI)_ |
+| **OSV Scanner** (`osv-scanner.yml`) | every PR | Google OSV vulnerability database lookup | _(run via CI)_ |
+| **Gitleaks** (`gitleaks.yml`) | every PR | secret-scanning on every commit | _(run via CI)_ |
+| **bench** (`bench.yml`) | weekly + manual | Vitest perf benchmarks: BC3 encode, DDS wrap, full mod build | `npm run bench` |
+| **electron-release** (`electron-release.yml`) | `v*` tag push + manual | builds Linux AppImage + Windows NSIS installer | `npm run electron:build` |
 
 ## License
 

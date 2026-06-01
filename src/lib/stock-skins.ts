@@ -8,7 +8,7 @@
 
 import { VEHICLES } from './vehicles'
 import { FACTION_LABELS } from './factions'
-import { factionSgaCandidates, textureBaseNamesFor } from './mod-export'
+import { factionSgaCandidates, textureBaseNamesFor, vehicleFolder } from './mod-export'
 
 export interface StockSkin {
   /** Stable id: 'german/tiger', 'soviet/t34_76', etc. */
@@ -38,7 +38,7 @@ export function listStockSkins(): StockSkin[] {
       factionId: v.faction,
       vehicleId: v.id,
       sgaName,
-      internalPath: `art/armies/${v.faction}/vehicles/${v.id}/${baseName}_dif.rgt`,
+      internalPath: `art/armies/${v.faction}/vehicles/${vehicleFolder(v.id)}/${baseName}_dif.rgt`,
     })
   }
   out.sort((a, b) => a.name.localeCompare(b.name))

@@ -22,6 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type Coh2DecalPackProject, type Decal } from '@/lib/decal-pack-project'
 import { rasteriseDecal } from '@/lib/decal-pack-export'
 import { renderKingTigerWithDecal } from '@/lib/vehicle-3d-renderer'
+import AtlasPreview3D from '@/components/atlas/AtlasPreview3D'
 
 interface Props {
   project: Coh2DecalPackProject
@@ -171,12 +172,21 @@ export default function DecalPackInGamePreview({ project, installRoot }: Props) 
         gap: 6,
       }}
     >
-      {/* King Tiger 3D preview pane */}
-      <KingTigerPreviewPane
-        installRoot={installRoot}
-        renderDataUrl={currentKingTigerRender}
-        isLoading={kingTigerLoading}
-      />
+      {/* Per-faction 3D preview (v6 projects only) */}
+      {project.parts ? (
+        <AtlasPreview3D
+          project={project}
+          activePartIndex={project.activePartIndex ?? 1}
+          installRoot={installRoot}
+        />
+      ) : (
+        /* v5 fallback: King Tiger static pane */
+        <KingTigerPreviewPane
+          installRoot={installRoot}
+          renderDataUrl={currentKingTigerRender}
+          isLoading={kingTigerLoading}
+        />
+      )}
 
       <div
         style={{
@@ -255,8 +265,11 @@ function DecalTile({
         gap: 4,
         cursor: onSelect ? 'pointer' : undefined,
       }}
+      role={onSelect ? 'button' : undefined}
+      tabIndex={onSelect ? 0 : undefined}
       onClick={() => onSelect?.(decal.id)}
       onMouseEnter={() => onSelect?.(decal.id)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect?.(decal.id) }}
     >
       <div
         style={{

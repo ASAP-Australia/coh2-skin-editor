@@ -42,6 +42,36 @@ export function getCachedImage(img: CustomImage, onReady: () => void): HTMLImage
   return null
 }
 
+/** Pre-decode every image-type decal into the shared cache so a subsequent
+ *  *synchronous* paintDecals() draws them. The editor preview relies on the
+ *  `onReady` repaint retry to fill the cache after an async decode, but
+ *  one-shot export paths (composeVehicleDiffuse, live-sync, headless tools)
+ *  call paintDecals exactly once — without this await, an undecoded image
+ *  decal silently exports as the placeholder rectangle, so the exported
+ *  texture would NOT pixel-match the editor preview. Resolves once every
+ *  referenced image is in `imageCache` (or failed to load). */
+export async function preloadDecalImages(
+  decals: Decal[],
+  images: Record<string, CustomImage>,
+): Promise<void> {
+  const ids = new Set<string>()
+  for (const d of decals) {
+    if (d.type === 'image' && d.imageId && images[d.imageId]) ids.add(d.imageId)
+  }
+  await Promise.all([...ids].map(id => {
+    const cached = imageCache.get(id)
+    if (cached?.complete) return Promise.resolve()
+    return new Promise<void>(resolve => {
+      const el = new Image()
+      el.onload = () => { imageCache.set(id, el); imageDecoding.delete(id); resolve() }
+      // Resolve on error too — paintDecals will fall back to the placeholder,
+      // matching the editor's behaviour for a broken image rather than hanging.
+      el.onerror = () => { imageDecoding.delete(id); resolve() }
+      el.src = images[id].dataUrl
+    })
+  }))
+}
+
 export function paintDecals(rc: RenderContext, decals: Decal[], activeId: number | null) {
   for (const d of decals) {
     rc.ctx.save()
