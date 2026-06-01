@@ -4,7 +4,7 @@
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
-![tests](https://img.shields.io/badge/tests-1590%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-1600%20passing-brightgreen)
 ![typecheck](https://img.shields.io/badge/typecheck-0%20errors-brightgreen)
 ![bundle](https://img.shields.io/badge/bundle-130%20kB-brightgreen)
 ![branch coverage](https://img.shields.io/badge/branch%20coverage-79%25-yellow)
