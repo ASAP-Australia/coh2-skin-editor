@@ -28,13 +28,18 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
       - uses: andresz1/size-limit-action@v1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # `npm ci` runs implicitly. `build_script` matches the script
-          # name in package.json — the action expects `dist/` to be
-          # produced by it.
-          build_script: build
+          # `build:size` runs vite build only (no tsc), so it doesn't need
+          # devDependencies like vite and @types/node to be in dependencies.
+          # Type-checking is already enforced by the separate tsc CI job.
+          build_script: build:size
           skip_step: install
           # Run the same script the local `npm run size` uses.
           script: npx size-limit --json
