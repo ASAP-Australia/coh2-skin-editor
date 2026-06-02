@@ -321,7 +321,6 @@ function parseTrimDataV5(u8: Uint8Array, chunk: Chunk): ParsedMeshData {
   rA.skip(8) // skip marker + reserved u32s
   const numInputA = rA.u32()
   const bodyA = tryParseTrimBody(rA, numInputA, payloadSize)
-  console.log('[TRIM-PROBE] A: numInputA=', numInputA, 'bodyA=', bodyA ? `ok(${bodyA.numVerts}v,${bodyA.indices.length}i)` : 'null')
 
   if (bodyA) {
     return {
@@ -339,7 +338,6 @@ function parseTrimDataV5(u8: Uint8Array, chunk: Chunk): ParsedMeshData {
   const rB = new Reader(u8, chunk.payloadOffset)
   const numInputB = rB.u32()
   const bodyB = tryParseTrimBody(rB, numInputB, payloadSize)
-  console.log('[TRIM-PROBE] B: numInputB=', numInputB, 'bodyB=', bodyB ? `ok(${bodyB.numVerts}v,${bodyB.indices.length}i)` : 'null')
 
   if (bodyB) {
     return {

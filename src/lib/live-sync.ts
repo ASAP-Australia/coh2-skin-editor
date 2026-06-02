@@ -490,8 +490,16 @@ class LiveSyncManager {
       // ── Build contentPath: the subdirectory where the SGA lives ──────────
       // Must match the subdirectory logic in _writeFile().
       let contentPath: string
+      // For skins: also pass the exact SGA path so the Workshop update picks
+      // the correct file even when multiple skin projects share mods/skins/.
+      // findSgaInDir() falls back to alphabetical-first, which is wrong when
+      // more than one project has written an SGA to the same directory.
+      let specificSgaPath: string | undefined
       if (kind === 'skin') {
         contentPath = `${modsPath}/skins`
+        // sgaFilename is already the deterministic `<numericId>.sga` computed
+        // by deriveNumericIdFromProjectId — always defined for skins.
+        if (sgaFilename) specificSgaPath = `${contentPath}/${sgaFilename}`
       } else if (kind === 'decal') {
         contentPath = `${modsPath}/decals/subscriptions`
       } else {
@@ -499,12 +507,6 @@ class LiveSyncManager {
       }
 
       // ── Generate a preview PNG from the project's stored thumbnail ────────
-      // We intentionally avoid re-rendering the editor canvas (no access
-      // to React refs from the singleton). Instead we use the smallest
-      // image data the project already stores:
-      //   • skin: project.thumbnail (data URL, ≤64 px)
-      //   • faceplate: project.inventoryIcon or null
-      //   • decal: rendered via renderDecalIcon (already called during _build)
       // The preview is written to a fresh temp file to satisfy the required
       // previewPath argument of the update API.
       const previewPng = await buildWorkshopPreviewFromProject(kind, project)
@@ -519,8 +521,18 @@ class LiveSyncManager {
         faceplate: ['Faceplate'],
         decal: ['Decal'],
       }
-      const input = {
+      const input: {
+        contentPath: string
+        sgaPath?: string
+        previewPath: string
+        title: string
+        description: string
+        tags: string[]
+        visibility: 3
+        changeNote: string
+      } = {
         contentPath,
+        ...(specificSgaPath ? { sgaPath: specificSgaPath } : {}),
         previewPath,
         title: p.packName ?? 'Untitled',
         description: p.packDescription ?? '',
@@ -537,7 +549,6 @@ class LiveSyncManager {
       // SAFETY: we only ever call .update(), never .publish().
       // isRealWorkshopId() was already verified by the caller.
       await window.electronAPI!.steam.workshop.update(workshopId, input)
-      void sgaFilename // referenced so the param isn't unused
 
       this._setWsState('synced', 'Workshop synced')
     } catch (err: unknown) {
@@ -624,32 +635,25 @@ class LiveSyncManager {
       }
       if (!installHandle) throw new Error('CoH2 install handle not found — reconnect first')
 
-      const { exportSkinPack } = await import('@/lib/mod-export')
-      // Stable IDs so live-sync overwrites the SAME `<numericId>.sga` file
-      // on every save rather than dropping a fresh randomly-named copy
-      // into `mods/skins/` per edit. The engine scans `mods/skins/` for
-      // `%I64u.sga` (u64 decimal) so we CAN'T reuse the 32-hex GUID
-      // filename trick from decals/faceplates — but we CAN derive a
-      // deterministic u64 from the project id, which gives the same
-      // overwrite-in-place behaviour. TopBar's manual export continues
-      // to omit these and gets a fresh ID per click (intentional —
-      // "save a new version" semantics for one-shot publishes).
-      //
-      // Both overrides are derived from `project.id`:
-      //   • numericId → on-disk filename → engine scan match
-      //   • modGuid   → internal RGT / .info / .gfx / .ucs paths
-      // Decoupling them would still load in-game but would needlessly
-      // change every byte of the SGA on save, defeating any future
-      // binary-diff-based change detection.
+      // Stable numeric id so live-sync overwrites the SAME `<numericId>.sga`
+      // on every save. CoH2's engine scans mods/skins/ for `%I64u.sga` only.
       const stableNumericId = deriveNumericIdFromProjectId(skinProject.id)
-      const stableModGuid = deriveGuidFromId(skinProject.id)
-      const result = await exportSkinPack(
+      // Use patchExport (signed template) instead of exportSkinPack (unsigned SGA).
+      // CoH2's engine rejects unsigned SGAs from mods/skins/; patchExport fetches
+      // the pre-signed template SGA, overwrites only RGT data bytes in-place so
+      // the RSA signature (which covers the TOC only) stays valid.
+      const { patchExport, hasKeyPool } = await import('@/lib/mod-export')
+      if (!await hasKeyPool()) {
+        throw new Error(
+          'Signing template not available — publish to Workshop to install in-game, ' +
+          'or run tools/publish-templates.sh to enable local install.'
+        )
+      }
+      const result = await patchExport(
         installHandle,
         skinProject,
         () => {},
-        undefined, // targetSlot — use default (live-sync doesn't choose a slot)
         stableNumericId,
-        stableModGuid,
       )
       // filename from ExportResult already has the extension; numericId is the raw numeric string
       return { bytes: result.bytes, filename: result.filename }
@@ -1235,10 +1239,66 @@ async function buildWorkshopPreviewFromProject(
 
     if (kind === 'skin') {
       const sp = project as Coh2SkinProject
-      // vehicleIcons is a Record<string, string> of data URLs cached on the project.
-      const icons = Object.values(sp.vehicleIcons)
-      const thumb = icons.length > 0 ? icons[0] : null
-      if (thumb) return await dataUrlToPng(thumb)
+
+      // Priority 1: use a slotIcon (user-supplied 256×256 thumbnail) if any
+      // slot has one. Prefer the first summer slot with an icon, then any slot.
+      const slotsWithIcon = (sp.exportSlots ?? []).filter(s => s.slotIcon)
+      const preferredSlot =
+        slotsWithIcon.find(s => s.season === 'summer') ?? slotsWithIcon[0] ?? null
+      if (preferredSlot?.slotIcon) {
+        return await dataUrlToPng(preferredSlot.slotIcon)
+      }
+
+      // Priority 2: composite up to 4 vehicleIcons into a 2×2 grid at
+      // PREVIEW_SIZE resolution. Each cell is PREVIEW_SIZE/2 px so the result
+      // is PREVIEW_SIZE×PREVIEW_SIZE — far sharper than upscaling a single 64px
+      // icon 8× to fill the 512px preview.
+      const iconEntries = Object.values(sp.vehicleIcons).filter(Boolean)
+      if (iconEntries.length > 0) {
+        const canvas = document.createElement('canvas')
+        canvas.width = PREVIEW_SIZE
+        canvas.height = PREVIEW_SIZE
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.fillStyle = '#1e2028'
+          ctx.fillRect(0, 0, PREVIEW_SIZE, PREVIEW_SIZE)
+
+          const count = Math.min(iconEntries.length, 4)
+          // Layout: 1 icon → centred full-size; 2 → side by side;
+          //         3 or 4 → 2×2 grid (empty cells stay dark).
+          const cols = count === 1 ? 1 : 2
+          const rows = count <= 2 ? 1 : 2
+          const cellW = Math.floor(PREVIEW_SIZE / cols)
+          const cellH = Math.floor(PREVIEW_SIZE / rows)
+
+          ctx.imageSmoothingEnabled = true
+          ctx.imageSmoothingQuality = 'high'
+
+          for (let i = 0; i < count; i++) {
+            try {
+              const img = await loadImageFromDataUrl(iconEntries[i])
+              const col = i % cols
+              const row = Math.floor(i / cols)
+              const dx = col * cellW
+              const dy = row * cellH
+              // Center-fit the icon within the cell.
+              const scale = Math.min(cellW / img.naturalWidth, cellH / img.naturalHeight)
+              const dw = Math.round(img.naturalWidth * scale)
+              const dh = Math.round(img.naturalHeight * scale)
+              ctx.drawImage(
+                img,
+                dx + Math.round((cellW - dw) / 2),
+                dy + Math.round((cellH - dh) / 2),
+                dw,
+                dh,
+              )
+            } catch {
+              /* skip icons that fail to decode */
+            }
+          }
+          return await canvasToArrayBuffer(canvas)
+        }
+      }
     }
 
     if (kind === 'decal') {

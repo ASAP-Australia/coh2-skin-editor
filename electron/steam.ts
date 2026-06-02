@@ -300,6 +300,11 @@ export interface PublishWorkshopInput {
   /** Absolute path to the directory containing the .sga + manifest. The
    *  single .sga file in this directory is the Workshop item content. */
   contentPath: string
+  /** Optional: absolute path to the specific .sga file to upload. When
+   *  provided, overrides the `findSgaInDir(contentPath)` scan so the
+   *  correct file is used when multiple projects share the same directory
+   *  (e.g. multiple skin projects all writing to mods/skins/). */
+  sgaPath?: string
   /** Absolute path to a PNG thumbnail. 256×256 minimum, < 1 MB recommended. */
   previewPath: string
   title: string
@@ -554,8 +559,11 @@ export async function updateWorkshopItem(
     console.warn('[workshop:update] step=preview-dimensions-failed', e)
   }
 
-  const sgaPath = findSgaInDir(input.contentPath)
-  console.log('[workshop:update] step=sga-resolved sgaPath=%s', sgaPath)
+  // Prefer the explicitly-passed sgaPath (project-specific SGA) over the
+  // directory scan. The scan is kept as a fallback for legacy callers that
+  // only set contentPath (e.g. first-time publish, decals, faceplates).
+  const sgaPath = input.sgaPath ?? findSgaInDir(input.contentPath)
+  console.log('[workshop:update] step=sga-resolved sgaPath=%s (explicit=%s)', sgaPath, Boolean(input.sgaPath))
 
   const addon = requireNativeAddon()
   console.log('[workshop:update] step=updateExistingItem itemId=%s', workshopId)

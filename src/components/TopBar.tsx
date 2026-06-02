@@ -2370,8 +2370,10 @@ function ExportSkinPackButton({ p }: { p: Props }) {
 
       {keyPoolAvailable === false && !busy && (
         <p className="mt-2 text-[10px] text-yellow-400/70 leading-relaxed">
-          Your mod is ready to use locally. To share it with other players, publish it to the Steam
-          Workshop from inside CoH2.
+          Publish to Workshop to install in-game. Local install via mods/skins/ requires a signing
+          template — run{' '}
+          <span className="font-mono text-white/60">tools/publish-templates.sh</span> once to
+          enable it.
         </p>
       )}
 

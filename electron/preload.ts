@@ -145,6 +145,10 @@ type SteamInitResult =
 
 interface PublishWorkshopInput {
   contentPath: string
+  /** Optional: absolute path to the specific .sga file to upload. When provided,
+   *  overrides the directory scan so the correct file is used when multiple
+   *  projects share the same directory (e.g. multiple skin projects in mods/skins/). */
+  sgaPath?: string
   previewPath: string
   title: string
   description: string
