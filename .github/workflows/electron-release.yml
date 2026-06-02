@@ -8,10 +8,15 @@ name: electron-release
 #
 # Triggers:
 #   - Push of a `v*` tag (e.g. `v1.0.0`) — the canonical release flow.
-#   - Push to `main` with a change to `package.json` — automatic release
-#     when the version field is bumped; the tag is created inline in this
-#     run so GITHUB_TOKEN is sufficient (a tag pushed by GITHUB_TOKEN does
-#     not re-trigger workflows, which is fine — the build happens here).
+#   - Push to `main` — automatic release when the version field in
+#     package.json is bumped; detected by the `detect` job comparing the
+#     new version against the parent commit. NOTE: a `paths` filter is NOT
+#     used here because combining `paths:` with `tags:` in the same `push:`
+#     block is a documented GitHub Actions footgun — the paths filter can
+#     suppress tag-push-triggered runs entirely. Instead the workflow runs on
+#     every push to main and gates on version comparison inside `detect`
+#     (cost: a ~20 s detect job per push that exits with release=false when
+#     the version is unchanged).
 #   - workflow_dispatch — manual rebuilds for tag amendments or for
 #     spot-checks before tagging.
 #
@@ -40,8 +45,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'package.json'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -96,8 +99,18 @@ jobs:
             exit 0
           fi
 
-          PREV_VERSION=$(echo "$PREV_PKG" | node -p "const d=require('fs').readFileSync('/dev/stdin','utf8'); JSON.parse(d).version" 2>/dev/null || true)
-          echo "Previous version: $PREV_VERSION"
+          PREV_VERSION=$(printf '%s' "$PREV_PKG" | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version" 2>/dev/null || echo "")
+          echo "Previous version: ${PREV_VERSION:-<unparseable>}"
+
+          # Fail safe: if we cannot determine the previous version (empty or
+          # the literal string "undefined" from a missing .version field),
+          # do NOT release — treat as unparseable and skip.
+          if [[ -z "$PREV_VERSION" || "$PREV_VERSION" == "undefined" ]]; then
+            echo "Could not parse previous version — skipping release (fail-safe)."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if [[ "$NEW_VERSION" == "$PREV_VERSION" ]]; then
             echo "Version unchanged ($NEW_VERSION). Skipping release."
