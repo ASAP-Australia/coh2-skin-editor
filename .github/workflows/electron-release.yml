@@ -8,10 +8,21 @@ name: electron-release
 #
 # Triggers:
 #   - Push of a `v*` tag (e.g. `v1.0.0`) — the canonical release flow.
+#   - Push to `main` with a change to `package.json` — automatic release
+#     when the version field is bumped; the tag is created inline in this
+#     run so GITHUB_TOKEN is sufficient (a tag pushed by GITHUB_TOKEN does
+#     not re-trigger workflows, which is fine — the build happens here).
 #   - workflow_dispatch — manual rebuilds for tag amendments or for
 #     spot-checks before tagging.
 #
-# Why two jobs?
+# Version-bump detection (branch-push path):
+#   A `detect` job compares the new package.json version against the
+#   version present in the parent commit (github.event.before). If they
+#   are equal, or if the parent SHA is the all-zeros sentinel (initial
+#   push / force-push with no valid parent), the workflow exits early with
+#   release=false and no artifacts are produced.
+#
+# Why two build jobs?
 #   electron-builder produces a Windows NSIS installer most reliably on a
 #   real Windows runner (Wine cross-build works but emits unsigned
 #   binaries with subtle DLL pathing differences). Linux/AppImage builds
@@ -27,16 +38,168 @@ name: electron-release
 
 on:
   push:
+    branches:
+      - main
+    paths:
+      - 'package.json'
     tags:
       - 'v*'
   workflow_dispatch:
 
 permissions:
-  contents: write # required to upload assets to the Release
+  contents: write # required to push tags and upload assets to the Release
 
 jobs:
+  # -----------------------------------------------------------------------
+  # detect — only runs on branch pushes; decides whether a release is needed
+  # -----------------------------------------------------------------------
+  detect:
+    name: Detect version bump
+    # Only run version-bump detection on branch pushes (not tag pushes, not
+    # workflow_dispatch).
+    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare versions and decide
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          echo "New version: $NEW_VERSION"
+
+          BEFORE="${{ github.event.before }}"
+
+          # Guard: all-zeros SHA means no valid parent (e.g. first push to
+          # branch, or a force-push that rewrote all history). Skip release.
+          if [[ "$BEFORE" =~ ^0+$ ]]; then
+            echo "Parent SHA is all-zeros — no valid parent to diff against. Skipping release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Try to read package.json from the parent commit.
+          if ! PREV_PKG=$(git show "${BEFORE}:package.json" 2>/dev/null); then
+            echo "package.json not found in parent commit — treating as no change. Skipping release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PREV_VERSION=$(echo "$PREV_PKG" | node -p "const d=require('fs').readFileSync('/dev/stdin','utf8'); JSON.parse(d).version" 2>/dev/null || true)
+          echo "Previous version: $PREV_VERSION"
+
+          if [[ "$NEW_VERSION" == "$PREV_VERSION" ]]; then
+            echo "Version unchanged ($NEW_VERSION). Skipping release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Check if the tag already exists (e.g. maintainer tagged manually)
+          TAG="v${NEW_VERSION}"
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}"; then
+            echo "Tag ${TAG} already exists on remote. Skipping release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Version bumped: $PREV_VERSION → $NEW_VERSION. Will release."
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+  # -----------------------------------------------------------------------
+  # tag — creates the annotated git tag when triggered via branch-push bump
+  # -----------------------------------------------------------------------
+  tag:
+    name: Create release tag
+    needs: detect
+    if: needs.detect.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push annotated tag
+        shell: bash
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG (auto-tagged by CI)"
+          git push origin "$TAG"
+          echo "Pushed tag $TAG"
+
+  # -----------------------------------------------------------------------
+  # resolve-version — single source of truth for the tag/version string
+  # across all three trigger paths (branch-push bump, tag push, dispatch)
+  # -----------------------------------------------------------------------
+  resolve-version:
+    name: Resolve release version
+    # Run when:
+    #  - branch-push with a detected bump (needs detect job)
+    #  - tag push (detect job didn't run)
+    #  - workflow_dispatch (detect job didn't run)
+    needs: [detect, tag]
+    if: |
+      always() && (
+        (needs.detect.result == 'success' && needs.detect.outputs.release == 'true' && needs.tag.result == 'success') ||
+        (needs.detect.result == 'skipped' && needs.tag.result == 'skipped')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Tag-push path: use the pushed tag
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Dispatch path: read from package.json at HEAD
+            VERSION=$(node -p "require('./package.json').version")
+            TAG="v${VERSION}"
+          else
+            # Branch-push bump path: use what detect resolved
+            VERSION="${{ needs.detect.outputs.version }}"
+            TAG="v${VERSION}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved: tag=$TAG version=$VERSION"
+
+  # -----------------------------------------------------------------------
+  # linux — build Linux AppImage
+  # -----------------------------------------------------------------------
   linux:
     name: Build Linux AppImage
+    needs: resolve-version
+    if: always() && needs.resolve-version.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -61,8 +224,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # -----------------------------------------------------------------------
+  # windows — build Windows NSIS installer
+  # -----------------------------------------------------------------------
   windows:
     name: Build Windows NSIS installer
+    needs: resolve-version
+    if: always() && needs.resolve-version.result == 'success'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -88,10 +256,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # -----------------------------------------------------------------------
+  # publish — attach built artifacts to the GitHub Release
+  # -----------------------------------------------------------------------
   publish:
     name: Attach to Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows]
+    needs: [resolve-version, linux, windows]
+    if: always() && needs.resolve-version.result == 'success' && needs.linux.result == 'success' && needs.windows.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -106,6 +277,7 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve-version.outputs.tag }}
           files: flat/*
           fail_on_unmatched_files: true
           generate_release_notes: true
