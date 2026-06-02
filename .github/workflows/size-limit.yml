@@ -27,7 +27,7 @@ jobs:
     # doesn't gate forked contributions on a permission the repo can't grant.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
