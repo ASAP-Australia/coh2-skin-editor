@@ -337,8 +337,13 @@ interface Manifest {
 export async function hasKeyPool(): Promise<boolean> {
   const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/'
   try {
-    const r = await fetch(`${base}keys/manifest.json`, { method: 'HEAD' })
-    return r.ok
+    // Must verify both the manifest AND the actual template SGA exist.
+    // manifest.json ships in the repo (describes the key layout), but
+    // template_0001.sga is large (~377 MB) and must be generated separately
+    // via tools/publish-templates.sh before a local-install build is possible.
+    const manifestOk = await fetch(`${base}keys/manifest.json`, { method: 'HEAD' }).then(r => r.ok)
+    if (!manifestOk) return false
+    return fetch(`${base}keys/template_0001.sga`, { method: 'HEAD' }).then(r => r.ok)
   } catch {
     return false
   }
@@ -355,6 +360,8 @@ export async function patchExport(
   root: FileSystemDirectoryHandle,
   project: Coh2SkinProject,
   onProgress: (p: ExportProgress) => void,
+  /** Stable numeric id to use as the SGA filename (for overwrite-in-place Live Sync). */
+  stableNumericId?: string,
 ): Promise<ExportResult> {
   const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/'
 
@@ -420,7 +427,7 @@ export async function patchExport(
     textureCount++
   }
 
-  const numericId = freshPackId()
+  const numericId = stableNumericId ?? freshPackId()
   onProgress({ phase: 'done', message: 'Done', current: vehicleIds.length, total: vehicleIds.length })
   return {
     bytes: sgaBytes,
