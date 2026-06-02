@@ -41,7 +41,7 @@ jobs:
     name: Lint (ESLint)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -53,7 +53,7 @@ jobs:
     name: Type-check (tsc)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -65,7 +65,7 @@ jobs:
     name: Unit tests (vitest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -86,7 +86,7 @@ jobs:
     needs: [lint, typecheck, test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -105,7 +105,7 @@ jobs:
     needs: [lint, typecheck, test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
