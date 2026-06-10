@@ -87,6 +87,42 @@ function isRealWorkshopId(id: string | undefined): id is string {
   return Number.isFinite(n) && n > 0 && n <= 5_000_000_000
 }
 
+/**
+ * Pile-up guard (mirrors findMyMatchingWorkshopItem in PublishSection).
+ *
+ * When the per-project `workshopId` link is missing — the user cleared local
+ * storage, re-imported a project file saved before its first publish, or
+ * published the same pack from another machine — a naive publish mints a
+ * brand-new Workshop entry every time, stacking duplicates. Before creating a
+ * new item we look up the current user's existing items and, if exactly ONE
+ * matches this pack by title + kind tag, update THAT item in place instead.
+ *
+ * Returns the workshopId of the single unambiguous match, or null (no match,
+ * or >1 match — in which case we refuse to guess and fall back to a fresh
+ * publish). Best-effort: any Steam/IPC failure yields null so publishing still
+ * proceeds.
+ */
+async function findMyMatchingWorkshopItem(
+  packName: string,
+  tags: string[],
+): Promise<string | null> {
+  try {
+    const api = window.electronAPI
+    if (!api) return null
+    const mine = await api.steam.workshop.getMine()
+    const wantTitle = packName.trim().toLowerCase()
+    const wantTags = tags.map(t => t.toLowerCase())
+    const matches = mine.filter(
+      it =>
+        it.title.trim().toLowerCase() === wantTitle &&
+        wantTags.every(wt => it.tags.some(t => t.toLowerCase() === wt)),
+    )
+    return matches.length === 1 ? matches[0].workshopId : null
+  } catch {
+    return null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Visibility options
 // ---------------------------------------------------------------------------
@@ -172,7 +208,7 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
 
       // 2. Write SGA bytes to temp dir
       const sgaPath = `${tmpDir}/${target.sgaFilename}`
-      await writeFile(sgaPath, target.sgaBytes.buffer as ArrayBuffer)
+      await writeFile(sgaPath, target.sgaBytes)
 
       // 3. Write preview PNG to temp dir
       let previewPath: string
@@ -183,12 +219,12 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
         const bytes = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
         previewPath = `${tmpDir}/preview.png`
-        await writeFile(previewPath, bytes.buffer as ArrayBuffer)
+        await writeFile(previewPath, bytes)
       } else {
         const pngBytes = generatePreviewPng()
         if (!pngBytes) throw new Error('Failed to generate preview image. Make sure the editor canvas is loaded.')
         previewPath = `${tmpDir}/preview.png`
-        await writeFile(previewPath, pngBytes.buffer as ArrayBuffer)
+        await writeFile(previewPath, pngBytes)
       }
 
       // 4. Build publish input
@@ -207,18 +243,36 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
         changeNote: changeNote.trim() || undefined,
       }
 
-      // 5. Publish or update
-      if (isUpdate && target.workshopId) {
+      // 5. Resolve the target item id. Prefer the persisted per-project
+      //    workshopId; if that's missing, fall back to a title+tag lookup of
+      //    the user's existing items so a re-publish updates in place rather
+      //    than creating a duplicate (the pile-up guard).
+      const updateId =
+        isUpdate && target.workshopId
+          ? target.workshopId
+          : await findMyMatchingWorkshopItem(input.title, input.tags)
+
+      // 6. Publish or update
+      if (updateId) {
         const result: UpdateWorkshopResult = await window.electronAPI!.steam.workshop.update(
-          target.workshopId,
+          updateId,
           input,
         )
-        setPhase({ kind: 'success', workshopId: target.workshopId, needsAgreement: result.needsAgreement })
-        target.onPublished(target.workshopId)
+        target.onPublished(updateId)
+        if (result.needsAgreement) {
+          // Show agreement notice before closing.
+          setPhase({ kind: 'success', workshopId: updateId, needsAgreement: result.needsAgreement })
+        } else {
+          handleClose()
+        }
       } else {
         const result: PublishWorkshopResult = await window.electronAPI!.steam.workshop.publish(input)
-        setPhase({ kind: 'success', workshopId: result.workshopId, needsAgreement: result.needsAgreement })
         target.onPublished(result.workshopId)
+        if (result.needsAgreement) {
+          setPhase({ kind: 'success', workshopId: result.workshopId, needsAgreement: result.needsAgreement })
+        } else {
+          handleClose()
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -497,95 +551,42 @@ export default function PublishToWorkshopDialog({ open, onClose, target }: Props
 
 function SuccessView({
   workshopId,
-  needsAgreement,
   onDone,
 }: {
   workshopId: string
   needsAgreement: boolean
   onDone: () => void
 }) {
-  const itemUrl = `https://steamcommunity.com/sharedfiles/filedetails/?id=${workshopId}`
   const agreementUrl = `https://steamcommunity.com/sharedfiles/itemedittext/?id=${workshopId}`
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Workshop agreement notice — only shown when needsAgreement is true
+          (the dialog is only kept open in that case; otherwise it auto-closes). */}
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: '12px 14px',
-          background: 'rgba(34, 197, 94, 0.14)',
-          border: '1px solid rgba(34, 197, 94, 0.35)',
+          padding: '10px 14px',
+          background: 'rgba(234, 179, 8, 0.18)',
+          border: '1px solid rgba(234, 179, 8, 0.4)',
           borderRadius: 10,
+          fontSize: 12,
+          color: '#fde68a',
+          lineHeight: 1.5,
         }}
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
-          <circle cx="12" cy="12" r="11" fill="oklch(0.78 0.18 150)" />
-          <path
-            d="M7 12.5 L10.5 16 L17 9"
-            stroke="#0b1410"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            fill="none"
-          />
-        </svg>
-        <div style={{ fontSize: 14, color: '#86efac', fontWeight: 600 }}>
-          Item published to Steam Workshop
-        </div>
-      </div>
-
-      {/* Subscriber Agreement banner */}
-      {needsAgreement && (
-        <div
-          style={{
-            padding: '10px 14px',
-            background: 'rgba(234, 179, 8, 0.18)',
-            border: '1px solid rgba(234, 179, 8, 0.4)',
-            borderRadius: 10,
-            fontSize: 12,
-            color: '#fde68a',
-            lineHeight: 1.5,
-          }}
-        >
-          You need to accept the Workshop Subscriber Agreement before this item is visible.{' '}
-          <a
-            href={agreementUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: '#fbbf24', textDecoration: 'underline', cursor: 'pointer' }}
-          >
-            Open Agreement page in browser
-          </a>{' '}
-          then come back and it will be live.
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 10 }}>
+        Workshop agreement required.{' '}
         <a
-          href={itemUrl}
+          href={agreementUrl}
           target="_blank"
           rel="noopener noreferrer"
-          style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: 40,
-            borderRadius: 10,
-            background: 'var(--color-accent)',
-            color: '#000',
-            fontWeight: 700,
-            fontSize: 13,
-            textDecoration: 'none',
-            transition: 'opacity 0.12s',
-          }}
-          onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.opacity = '0.88' }}
-          onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.opacity = '' }}
+          style={{ color: '#fbbf24', textDecoration: 'underline', cursor: 'pointer' }}
         >
-          View on Workshop ↗
-        </a>
+          Open agreement page ↗
+        </a>{' '}
+        — accept it, then come back and the item will be live.
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <Button
           variant="ghost"
           onClick={onDone}

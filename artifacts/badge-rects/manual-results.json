@@ -1,0 +1,106 @@
+[
+  {
+    "id": "jagdpanzer_iv_sdkfz_162",
+    "rect": {
+      "x": 990,
+      "y": 530,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (visual ±40px)",
+    "note": "Wikinger OKW skin; two white Balkenkreuz crosses on hull-right panel at ~(1150,614) and (1150,760); badge zone encompasses upper cross",
+    "centerLum": 58.872694824509544
+  },
+  {
+    "id": "stug_iii",
+    "rect": {
+      "x": 1395,
+      "y": 1535,
+      "w": 330,
+      "h": 330
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (visual ±40px)",
+    "note": "Wikinger German skin; white Balkenkreuz at bottom-right of atlas (hull right side)",
+    "centerLum": 62.25322228832056
+  },
+  {
+    "id": "panzerwerfer",
+    "rect": {
+      "x": 215,
+      "y": 925,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (visual ±40px)",
+    "note": "Wikinger OKW skin; white Balkenkreuz at hull-center panel (left one of two)",
+    "centerLum": 44.829863176680554
+  },
+  {
+    "id": "su85",
+    "rect": {
+      "x": 951,
+      "y": 1256,
+      "w": 340,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "high (verify score=30, ±30px)",
+    "note": "Wikinger OKW skin; white Balkenkreuz on SU-85 hull-right; cross center confirmed at (1121,1416)",
+    "centerLum": 89.35435256791571
+  },
+  {
+    "id": "kv2_heavy_tank",
+    "rect": {
+      "x": 1110,
+      "y": 1220,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (visual ±40px)",
+    "note": "Wikinger OKW skin; white Balkenkreuz on KV-2 hull (right side cross at bottom)",
+    "centerLum": 33.32084076938308
+  },
+  {
+    "id": "kv1_heavy_tank",
+    "rect": {
+      "x": 1230,
+      "y": 780,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (visual ±40px)",
+    "note": "Wikinger OKW skin; white Balkenkreuz on KV-1 hull (mid-right panel)",
+    "centerLum": 53.046995835812176
+  },
+  {
+    "id": "t70m_light_tank",
+    "rect": {
+      "x": 720,
+      "y": 987,
+      "w": 280,
+      "h": 280
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (visual ±40px)",
+    "note": "Wikinger OKW skin; white Balkenkreuz on T-70 hull (left of two center-hull crosses)",
+    "centerLum": 66.43287725560184
+  },
+  {
+    "id": "sherman_firefly",
+    "rect": {
+      "x": 40,
+      "y": 295,
+      "w": 280,
+      "h": 280
+    },
+    "key": "hullSideRight",
+    "confidence": "high (bright-spot avg=78, ±30px)",
+    "note": "Wikinger British skin; white Allied star on hull left (there are two stars; left one at upper-left)",
+    "centerLum": 47.409676779694635
+  }
+]

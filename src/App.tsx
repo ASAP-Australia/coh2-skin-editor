@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ConnectScreen from '@/components/ConnectScreen'
 import StartScreen from '@/components/StartScreen'
 import SavedProjectsList from '@/components/SavedProjectsList'
@@ -28,6 +28,12 @@ import {
 import { loadSavedHandle } from '@/lib/coh2-fs'
 import { isElectron, detectInstallPath, nativePathToHandle } from '@/lib/native-fs'
 import { lazy, Suspense } from 'react'
+import { preloadCommonArchives } from '@/lib/preload'
+import { VEHICLES, defaultVehicleForFaction, type VehicleSpec } from '@/lib/vehicles'
+
+// Lazy-loaded so Three.js stays out of the initial JS parse budget.
+// The background warmup Viewport is only mounted after a successful Connect.
+const ViewportBgWarmer = lazy(() => import('@/components/Viewport'))
 
 // Audit runner — only loaded when ?audit=1 is in the URL. Lazy to keep
 // Three.js out of the initial bundle when the normal app boots.
@@ -81,10 +87,18 @@ type Phase =
   | 'decal-pack'
 
 /** Time we hold the editor-loading FLIP before swapping in the real
- *  editor surface. Tuned to overlap AuthShell.IN_MS (520) + the icon
- *  morph (~600 ms) so the user perceives a continuous "logo flies to
- *  centre → world opens behind it" motion rather than a hard cut. */
-const EDITOR_LOADING_MS = 1200
+ *  faceplate / decal-pack editor surface. Tuned to cover the FLIP
+ *  animation duration (AuthShell.IN_MS ≈ 520 ms) plus a small safety
+ *  margin for the icon morph. Reduced from 1200 ms — the animation
+ *  completes in ~520 ms and the extra 680 ms was dead wait.
+ *  The skin editor uses an adaptive ready callback instead (see editorLoadStartRef). */
+const EDITOR_LOADING_MS = 600
+
+/** Minimum delay (ms) before revealing the skin editor after entering
+ *  editor-loading. Covers the full FLIP animation duration so the
+ *  "logo flies to centre → world opens" motion is never cut short even
+ *  when the Viewport renders its first vehicle very quickly. */
+const EDITOR_LOADING_MIN_MS = 620
 
 /**
  * Wraps a synchronous state-update callback in the View Transitions API
@@ -110,6 +124,11 @@ function withViewTransition(update: () => void): void {
 // ── Audit gate: check at module load time, before hooks ───────────────────
 const IS_AUDIT_MODE = new URLSearchParams(location.search).get('audit') === '1'
 
+// ── Archive warmup guard ───────────────────────────────────────────────────
+// Module-level so StrictMode's double-invocation of effects doesn't fire two
+// parallel warmup runs for the same root. Reset to null when root changes.
+let _warmedRoot: FileSystemDirectoryHandle | null = null
+
 export default function App() {
   const [installRoot, setInstallRoot] = useState<FileSystemDirectoryHandle | null>(null)
   const [phase, setPhase] = useState<Phase>(() => {
@@ -131,6 +150,24 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const diskFileInputRef = useRef<HTMLInputElement>(null)
+  /** Records the timestamp when editor-loading begins for the skin editor,
+   *  so the onReady callback can enforce the minimum FLIP animation duration. */
+  const editorLoadStartRef = useRef(0)
+
+  // ── Background vehicle warmer ─────────────────────────────────────────────
+  // After Connect completes, a headless warmupOnly Viewport is kept alive at
+  // App level (outside all phase-conditional renders) to fill pinnedVehicleCache
+  // for every vehicle that ConnectScreen didn't warm. ConnectScreen only warmed
+  // the default 'elefant' before transitioning, so the remaining ~60 vehicles
+  // would show a build delay on first selection without this background fill.
+  //
+  // The handle drives the hidden Viewport JSX below; set to null to unmount and
+  // free the GL context once all vehicles are cached.
+  const [bgWarmupHandle, setBgWarmupHandle] = useState<FileSystemDirectoryHandle | null>(null)
+  // Ref wired to the headless Viewport's buildVehicleIntoCache function.
+  const bgWarmupPreloadRef = useRef<((spec: VehicleSpec, season: 'summer' | 'winter', eager?: boolean, cpuOnly?: boolean) => Promise<void>) | null>(null)
+  // Guard: only start one warmer per install-root.
+  const bgWarmupFiredRef = useRef<FileSystemDirectoryHandle | null>(null)
 
   // Mark body so CSS can shift top-anchored chrome below the WindowControls pill.
   useEffect(() => {
@@ -138,11 +175,103 @@ export default function App() {
     return () => document.body.classList.remove('is-electron')
   }, [])
 
+  // Background archive warmup — once a CoH2 install is connected, open the
+  // common SGAs in the background so the FIRST vehicle load isn't cold (it
+  // would otherwise open ~10 archives serially on first click). Fire-and-
+  // forget; never blocks the UI. `_warmedRoot` (module-level) guards against
+  // StrictMode's double effect invocation for the same root.
+  useEffect(() => {
+    if (!installRoot || _warmedRoot === installRoot) return
+    _warmedRoot = installRoot
+    const root = installRoot
+    const warm = () => { void preloadCommonArchives(root).catch(() => {}) }
+    const ric = (window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+    }).requestIdleCallback
+    if (ric) ric(warm, { timeout: 2000 })
+    else window.setTimeout(warm, 400)
+  }, [installRoot])
+
+  // Background vehicle warmer — idle-paced pump that fills pinnedVehicleCache
+  // for all vehicles after ConnectScreen transitions to 'start'. Runs in a
+  // concurrency-limited (LANES≈3) requestIdleCallback loop so it yields to
+  // any UI interaction happening in parallel.
+  //
+  // Starts once bgWarmupHandle is set (triggered by onConnected) and a
+  // buildVehicleIntoCache function is available via bgWarmupPreloadRef (wired
+  // by the headless Viewport rendered below). The effect waits up to 4 s for
+  // the preloadRef to be populated (Viewport lazy-loads Three.js), then drives
+  // the pump. Tears down the headless Viewport via setBgWarmupHandle(null)
+  // when all vehicles are cached or on abort.
+  useEffect(() => {
+    if (!bgWarmupHandle) return
+    if (bgWarmupFiredRef.current === bgWarmupHandle) return
+    bgWarmupFiredRef.current = bgWarmupHandle
+
+    // The default vehicle warmed by ConnectScreen — skip to avoid redundant build.
+    const defaultId = defaultVehicleForFaction('german', new Set<string>())
+    // Warm in display (VEHICLES array) order, skipping already-cached entries.
+    // The pinnedVehicleCache check inside buildVehicleIntoCache also guards against
+    // double-builds, but filtering here avoids even enqueueing them.
+    const remaining = VEHICLES.filter(v => v.id !== defaultId)
+
+    let aborted = false
+    const LANES = 3
+
+    const pump = async (): Promise<void> => {
+      // Wait up to 4 s for the headless Viewport to mount and wire the preloadRef.
+      const deadline = Date.now() + 4000
+      while (!bgWarmupPreloadRef.current && Date.now() < deadline) {
+        await new Promise<void>(r => setTimeout(r, 50))
+      }
+      const buildFn = bgWarmupPreloadRef.current
+      if (!buildFn || aborted) { setBgWarmupHandle(null); return }
+
+      // Idle-paced concurrency-limited warm: dispatch LANES builds at a time,
+      // each wrapped in a requestIdleCallback so they yield to user interaction.
+      // cpuOnly=true (last arg): background builds skip GPU compile, which
+      // cannot transfer across GL contexts anyway — the editor's own Viewport
+      // will GPU-compile on first actual display.
+      const warmOne = (spec: VehicleSpec): Promise<void> =>
+        new Promise<void>(resolve => {
+          const ric = (window as unknown as {
+            requestIdleCallback?: (cb: IdleRequestCallback, opts?: IdleRequestOptions) => number
+          }).requestIdleCallback
+          const run = () => {
+            if (aborted) { resolve(); return }
+            buildFn(spec, 'summer', false, true)
+              .catch(() => {/* non-fatal */})
+              .finally(resolve)
+          }
+          if (ric) ric(run, { timeout: 2000 })
+          else window.setTimeout(run, 100)
+        })
+
+      for (let i = 0; i < remaining.length && !aborted; i += LANES) {
+        const batch = remaining.slice(i, i + LANES)
+        await Promise.all(batch.map(warmOne))
+      }
+
+      // All warmed (or aborted). Tear down the headless Viewport to free GL context.
+      if (!aborted) setBgWarmupHandle(null)
+    }
+
+    void pump()
+    return () => { aborted = true }
+  }, [bgWarmupHandle])
+
   // Boot: probe for a saved handle / Electron auto-detect / screenshot
   // harness flags, then settle on the appropriate first phase.
   // Note: synchronous phase initialization (screenshot/Electron) is handled
   // in the useState lazy initializer above; this effect only handles async probing.
   useEffect(() => {
+    // Tell Electron the React tree has painted so it can reveal the window
+    // immediately (otherwise main.ts waits out a 6s safety timeout). Two rAFs
+    // ensures we're past the first committed paint.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try { window.electronAPI?.signalRendererReady?.() } catch { /* non-electron */ }
+    }))
+
     const sParams = new URLSearchParams(location.search)
     if (sParams.get('screenshot') === '1') {
       // Already set to 'connect' via lazy useState initializer — nothing async to do.
@@ -191,8 +320,10 @@ export default function App() {
 
   const openSkin = (project: Coh2SkinProject) => {
     persistActive(project)
+    editorLoadStartRef.current = Date.now()
     setPhase('editor-loading')
-    window.setTimeout(() => setPhase('editor'), EDITOR_LOADING_MS)
+    // No fixed timeout here — the Editor's onReady callback drives the
+    // transition to 'editor' with a minimum-duration guard instead.
   }
 
   const openFaceplate = (project: Coh2FaceplateProject) => {
@@ -300,6 +431,14 @@ export default function App() {
 
   const triggerDiskPicker = () => diskFileInputRef.current?.click()
 
+  /** Fired by the skin Editor on its first onModelLoaded. Flips to the
+   *  'editor' phase after the minimum FLIP animation duration has elapsed
+   *  (clamped so we never wait longer than necessary). */
+  const onEditorReady = useCallback(() => {
+    const elapsed = Date.now() - editorLoadStartRef.current
+    window.setTimeout(() => setPhase('editor'), Math.max(0, EDITOR_LOADING_MIN_MS - elapsed))
+  }, [])
+
   // ── Render ───────────────────────────────────────────────────────────
 
   // Audit mode: ?audit=1 → bypass normal app, mount real-pipeline audit runner.
@@ -310,6 +449,36 @@ export default function App() {
       </Suspense>
     )
   }
+
+  // ── Background warmer Viewport ───────────────────────────────────────────
+  // Rendered whenever bgWarmupHandle is set (Connect→onwards). Identical in
+  // setup to ConnectScreen's headless warm Viewport: 1×1 px, opacity 0,
+  // warmupOnly=true, wired via bgWarmupPreloadRef. Survives all phase
+  // transitions because it lives at App level, outside phase-conditional renders.
+  // Torn down (bgWarmupHandle→null) once the pump finishes or unmounts.
+  const bgWarmerNode = bgWarmupHandle ? (
+    <div style={{
+      position: 'fixed', left: 0, top: 0,
+      width: 1, height: 1,
+      opacity: 0, pointerEvents: 'none',
+      overflow: 'hidden', zIndex: -1,
+    }}>
+      <Suspense fallback={null}>
+        <ViewportBgWarmer
+          root={bgWarmupHandle}
+          vehicle={null}
+          selectedPart={null}
+          explodeAll={false}
+          season="summer"
+          envArchive={null}
+          envName=""
+          controlsEnabled={false}
+          warmupOnly={true}
+          preloadRef={bgWarmupPreloadRef}
+        />
+      </Suspense>
+    </div>
+  ) : null
 
   // Probing or no install yet → AuthShell-hosted phases (connect /
   // start / saved-projects / editor-loading).
@@ -328,6 +497,10 @@ export default function App() {
         <ConnectScreen
           onConnected={h => {
             setInstallRoot(h)
+            // Kick off the background vehicle warmer. The headless Viewport
+            // below renders whenever bgWarmupHandle is non-null and fills
+            // pinnedVehicleCache for all vehicles that ConnectScreen skipped.
+            setBgWarmupHandle(h)
             setPhase('start')
           }}
         />
@@ -347,8 +520,9 @@ export default function App() {
             } catch {
               /* ignore */
             }
+            editorLoadStartRef.current = Date.now()
             setPhase('editor-loading')
-            window.setTimeout(() => setPhase('editor'), EDITOR_LOADING_MS)
+            // No fixed timeout — onEditorReady drives the transition.
           }}
           onNewFaceplate={() => openFaceplate(newFaceplateProject())}
           onNewDecalPack={() => openDecalPack(newDecalPackProject())}
@@ -403,6 +577,19 @@ export default function App() {
           </div>
         )}
         <AuthShell phase={phase}>{panel}</AuthShell>
+        {/* Mount the skin Editor hidden during editor-loading so the Viewport
+            starts building the first vehicle immediately behind the FLIP
+            animation. onReady fires when the first vehicle is rendered and
+            flips us to the 'editor' phase with a minimum-duration guard. */}
+        {phase === 'editor-loading' && installRoot && (
+          <Editor
+            root={installRoot}
+            onDisconnect={() => withViewTransition(() => setPhase('start'))}
+            onClosePack={() => withViewTransition(() => setPhase('start'))}
+            visible={false}
+            onReady={onEditorReady}
+          />
+        )}
         <input
           ref={diskFileInputRef}
           type="file"
@@ -411,6 +598,7 @@ export default function App() {
           className="hidden"
           aria-label="Open project file from disk"
         />
+        {bgWarmerNode}
       </>
     )
   }
@@ -423,7 +611,9 @@ export default function App() {
         <Editor
           root={installRoot}
           onDisconnect={() => withViewTransition(() => setPhase('start'))}
+          onClosePack={() => withViewTransition(() => setPhase('start'))}
         />
+        {bgWarmerNode}
       </>
     )
   }
@@ -440,6 +630,7 @@ export default function App() {
             })
           }
         />
+        {bgWarmerNode}
       </>
     )
   }
@@ -457,6 +648,7 @@ export default function App() {
           }
           installRoot={installRoot}
         />
+        {bgWarmerNode}
       </>
     )
   }
@@ -470,10 +662,12 @@ export default function App() {
         <ConnectScreen
           onConnected={h => {
             setInstallRoot(h)
+            setBgWarmupHandle(h)
             setPhase('start')
           }}
         />
       </AuthShell>
+      {bgWarmerNode}
     </>
   )
 }

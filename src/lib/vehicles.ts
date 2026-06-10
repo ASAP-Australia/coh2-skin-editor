@@ -13,6 +13,18 @@
 export type Faction = 'german' | 'west_german' | 'soviet' | 'aef' | 'british'
 export type VehicleClass = 'heavy' | 'medium' | 'light' | 'utility' | 'super_heavy'
 
+/**
+ * Toughness rank for sorting vehicles heaviest → lightest (lower = tougher).
+ * Used by vehiclesForFaction to produce a stable heavy-first ordering.
+ */
+export const WEIGHT_RANK: Record<VehicleClass, number> = {
+  super_heavy: 0,
+  heavy:       1,
+  medium:      2,
+  light:       3,
+  utility:     4,
+}
+
 export interface VehicleSpec {
   /** Filesystem id — matches `art/armies/<faction>/vehicles/<id>/<id>.rgm` */
   id: string
@@ -40,6 +52,7 @@ export const VEHICLES: VehicleSpec[] = [
   V('halftrack',            'german', 'Sd.Kfz. 251',      'utility',     '151'),
   V('sdkfz_250',            'german', 'Sd.Kfz. 250',      'utility',     '152'),
   V('sdkfz_222',            'german', 'Sd.Kfz. 222',      'light',       '162'),
+  V('opel_blitz',           'german', 'Opel Blitz',        'utility',     '191'),
 
   // OKW (Oberkommando West, Western Front)
   V('king_tiger_sdkfz_182',     'west_german', 'King Tiger',      'super_heavy', '311'),
@@ -52,6 +65,9 @@ export const VEHICLES: VehicleSpec[] = [
   V('puma_sdkfz_234',           'west_german', 'Puma',            'light',       '161'),
   V('panzer_ii_luchs_sdkfz_123','west_german', 'Luchs',           'light',       '163'),
   V('kubelwagen',               'west_german', 'Kübelwagen',      'utility',     '164'),
+  V('halftrack_sdkfz_251',           'west_german', 'Sd.Kfz. 251',        'utility', '165'),
+  V('halftrack_sdkfz_251_flak',      'west_german', 'Sd.Kfz. 251 Flak',   'utility', '166'),
+  V('halftrack_sdkfz_251_infrared',  'west_german', 'Sd.Kfz. 251 IR',     'utility', '167'),
 
   // Soviet
   V('is2m_heavy_tank',     'soviet', 'IS-2',             'heavy',  'A11'),
@@ -66,7 +82,8 @@ export const VEHICLES: VehicleSpec[] = [
   V('m3a1_scout_car',      'soviet', 'M3A1 Scout',       'light',  'D11'),
   // Soviet Lend-Lease halftrack — shares the 'halftrack' id with the
   // German Sd.Kfz. 251. findVehicleSpec uses faction hints to disambiguate.
-  V('halftrack',           'soviet', 'Lend-Lease Truck', 'utility', 'D12'),
+  V('halftrack',                 'soviet', 'Lend-Lease Truck',    'utility', 'D12'),
+  V('us6_truck',                 'soviet', 'US6 Studebaker',      'utility', 'D13'),
 
   // USF (Allied Expeditionary Force / US Forces)
   V('m26_pershing',           'aef', 'Pershing',         'heavy',       'A11'),
@@ -80,6 +97,12 @@ export const VEHICLES: VehicleSpec[] = [
   V('m7b1_priest',            'aef', 'Priest',           'medium',      'B31'),
   V('m3_halftrack',           'aef', 'M3 Halftrack',     'utility',     'D11'),
   V('m15a1_aa_halftrack',     'aef', 'AA Halftrack',     'utility',     'D12'),
+  V('m8a1_hmc',               'aef', 'M8 Scott',         'medium',      'B32'),
+  V('m20_utility_car',        'aef', 'M20',              'light',       'C13'),
+  V('m21_mortar_halftrack',   'aef', 'M21 Mortar HT',    'utility',     'D13'),
+  V('dodge_wc51',             'aef', 'Dodge WC51',       'utility',     'D14'),
+  V('dodge_wc54_ambulance',   'aef', 'WC54 Ambulance',   'utility',     'D15'),
+  V('sherman_m4a3',           'aef', 'M4A3 Sherman',     'medium',      'B33'),
 
   // UKF (British Forces)
   V('churchill',        'british', 'Churchill',       'heavy',  'A11'),
@@ -89,6 +112,8 @@ export const VEHICLES: VehicleSpec[] = [
   V('sherman_firefly',  'british', 'Firefly',         'medium', 'B12'),
   V('valentine',        'british', 'Valentine',       'light',  'C11'),
   V('sexton',           'british', 'Sexton SPG',      'medium', 'D11'),
+  V('aec_armoured_car', 'british', 'AEC Armoured Car', 'light', 'C12'),
+  V('bren_carrier',     'british', 'Universal Carrier', 'utility', 'D12'),
 ]
 
 export const FACTIONS: { id: Faction; label: string }[] = [
@@ -159,6 +184,39 @@ export function findVehicleSpec(id: string, factionHints?: Faction[]): VehicleSp
   }
   // Fall back to first-match (catalogue ordering).
   return matches[0]
+}
+
+/**
+ * Returns the vehicles for a given faction sorted toughest→weakest
+ * (super_heavy first, utility last). Relative order within the same class
+ * is preserved from the canonical VEHICLES array (stable sort).
+ *
+ * Use this everywhere a per-faction vehicle list is needed so the
+ * heavy-first ordering is applied consistently.
+ */
+export function vehiclesForFaction(faction: Faction): VehicleSpec[] {
+  return VEHICLES
+    .filter(v => v.faction === faction)
+    .sort((a, b) => WEIGHT_RANK[a.class] - WEIGHT_RANK[b.class])
+}
+
+/**
+ * Safe starting vehicle per faction — the toughest renderable vehicle
+ * (first entry of vehiclesForFaction not in BROKEN_MODELS, exported from
+ * Editor.tsx). Computed here so Editor.tsx, TopBar.tsx and any future
+ * consumer stay in sync with the sort order automatically.
+ *
+ * BROKEN_MODELS (vehicles whose RGM parses to 0 submeshes → empty viewport)
+ * is threaded in as a parameter so this pure library file doesn't depend on
+ * Editor.tsx or any runtime state. Pass the set at import time if you need
+ * the default to skip broken models; pass an empty set to get the raw
+ * toughest vehicle.
+ */
+export function defaultVehicleForFaction(faction: Faction, brokenModels: Set<string>): string {
+  const sorted = vehiclesForFaction(faction)
+  const first = sorted.find(v => !brokenModels.has(v.id))
+  // fallback: if every vehicle were somehow broken, return the first in list
+  return (first ?? sorted[0]).id
 }
 
 /**

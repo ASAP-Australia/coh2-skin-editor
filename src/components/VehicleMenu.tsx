@@ -1,8 +1,10 @@
 /**
- * VehicleMenu — Horizontally scrollable list of vehicle pills.
+ * VehicleMenu — Wrapping grid of vehicle pills (all labels visible at once).
  *
  * Mounted bottom-center of the viewport. Shows only vehicles for the
- * currently selected faction (parent filters before passing). Active vehicle
+ * currently selected faction (parent filters before passing). Pills wrap onto
+ * multiple rows so every label is visible without horizontal scrolling. Active
+ * vehicle
  * is highlighted with a bright ring. Dirty indicators (orange dots) mark
  * vehicles with placed decals.
  *
@@ -21,7 +23,7 @@
  * vehicle silhouette at a glance.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import type { VehicleClass, VehicleSpec } from '@/lib/vehicles'
 import LoadingBorder from './ui/loading-border'
 
@@ -75,47 +77,44 @@ export default function VehicleMenu({
     return null
   }
 
+  // Flat, ordered list: heaviest → lightest (CLASS_ORDER), with any vehicle
+  // whose class isn't enumerated appended at the end so nothing is dropped.
+  // Rendered into a single wrapping flex container so ALL labels show at once.
+  const orderedVehicles = [
+    ...CLASS_ORDER.flatMap(cls => vehicles.filter(v => v.class === cls)),
+    ...vehicles.filter(v => !CLASS_ORDER.includes(v.class)),
+  ]
+
   return (
     <div className="flex flex-col items-center gap-1.5">
       <LoadingBorder
         active={loading}
         radius={16}
-        className="relative max-w-[min(85vw,800px)] rounded-2xl shadow-[var(--shadow-glass)] px-2 py-1.5"
-        style={{
-          background: 'rgba(20, 22, 28, 0.62)',
-          backdropFilter: 'blur(28px) saturate(180%)',
-          border: '0.5px solid rgba(255,255,255,0.10)',
-          boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
-        }}
+        className="glass-hud relative max-w-[94vw] overflow-hidden rounded-2xl px-2 py-1.5"
       >
+        {/* Single horizontal row — every vehicle stays on ONE line and never
+            wraps to a second row. Overflowing vehicles scroll horizontally
+            (the active pill is kept in view via scrollIntoView). Ordered
+            heaviest → lightest via CLASS_ORDER; any class not in that list is
+            appended at the end so no vehicle is ever hidden. */}
         <div
           ref={scrollContainerRef}
-          className="flex items-center gap-0 overflow-x-auto [&::-webkit-scrollbar]:h-0"
-          style={{
-            maskImage:
-              'linear-gradient(to right, transparent 0, black 12px, black calc(100% - 12px), transparent 100%)',
-          }}
+          className="flex flex-nowrap items-center gap-0.5 overflow-x-auto"
         >
-          {CLASS_ORDER.map(cls => ({ cls, group: vehicles.filter(v => v.class === cls) }))
-            .filter(({ group }) => group.length > 0)
-            .map(({ cls, group }) => (
-              <div key={cls} className="flex items-center gap-0 shrink-0">
-                {group.map(vehicle => {
-                  const isActive = selected?.id === vehicle.id
-                  const isDirty = dirtyVehicles.has(vehicle.id)
-                  return (
-                    <VehiclePill
-                      key={vehicle.id}
-                      vehicle={vehicle}
-                      isActive={isActive}
-                      isDirty={isDirty}
-                      onSelect={onSelect}
-                      iconResolver={iconResolver}
-                    />
-                  )
-                })}
-              </div>
-            ))}
+          {orderedVehicles.map(vehicle => {
+            const isActive = selected?.id === vehicle.id
+            const isDirty = dirtyVehicles.has(vehicle.id)
+            return (
+              <VehiclePill
+                key={vehicle.id}
+                vehicle={vehicle}
+                isActive={isActive}
+                isDirty={isDirty}
+                onSelect={onSelect}
+                iconResolver={iconResolver}
+              />
+            )
+          })}
         </div>
       </LoadingBorder>
     </div>
@@ -146,30 +145,9 @@ function VehiclePill({
   onSelect: (v: VehicleSpec) => void
   iconResolver?: VehicleIconResolver
 }) {
-  const [iconUrl, setIconUrl] = useState<string | null>(null)
-
-  // Resolve the icon when the pill mounts (or the resolver/vehicle id
-  // changes). Cancellation is via an `alive` flag — common React idiom
-  // for "ignore late async results after unmount/dep change". Skipping
-  // entirely when no resolver is provided keeps the legacy text-only
-  // branch zero-cost.
-  useEffect(() => {
-    if (!iconResolver) return
-    let alive = true
-    iconResolver(vehicle)
-      .then(url => {
-        if (alive) setIconUrl(url)
-      })
-      .catch(() => {
-        /* swallow — resolver is best-effort; fallback UI handles null */
-      })
-    return () => {
-      alive = false
-    }
-  }, [iconResolver, vehicle])
-
   // Two visual layouts:
-  //   - With iconResolver: 56x56 icon-dominant pill with caption strip.
+  //   - With iconResolver: landscape (104px-wide) icon pill with a name
+  //     caption below — wide cell suits the left-facing side-profile icons.
   //   - Without: legacy text-only pill (backward compat with tests
   //     and any future surface that doesn't pass an icon resolver).
   if (!iconResolver) {
@@ -177,7 +155,7 @@ function VehiclePill({
       <button
         data-id={vehicle.id}
         onClick={() => onSelect(vehicle)}
-        className={`relative px-3 py-1.5 rounded-pill text-[11px] font-medium whitespace-nowrap transition-all duration-150 ${
+        className={`relative px-3 py-1.5 rounded-pill text-[11px] font-medium whitespace-nowrap transition-all duration-150 cursor-pointer ${
           isActive
             ? 'bg-white/95 text-black shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_2px_8px_rgba(0,0,0,0.25)]'
             : 'text-[var(--color-text-2)] hover:bg-white/10 hover:text-white'
@@ -198,54 +176,24 @@ function VehiclePill({
       title={vehicle.displayName}
       aria-label={vehicle.displayName}
       aria-pressed={isActive}
-      className={`relative shrink-0 mx-0.5 rounded-xl transition-all duration-150 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${
+      className={`relative shrink-0 mx-0.5 rounded-xl transition-all duration-150 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-white/70 flex flex-col items-center ${
         isActive
           ? 'bg-white/15 shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.85),0_4px_12px_rgba(0,0,0,0.4)]'
           : 'hover:bg-white/10'
       }`}
-      style={{ width: 64, height: 64, padding: 0 }}
+      style={{ width: 'auto', padding: '4px 10px 5px' }}
     >
-      <div
-        className="w-full h-full rounded-md overflow-hidden flex flex-col items-center justify-center"
-        style={{
-          background: iconUrl
-            ? 'transparent'
-            : 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.18))',
-        }}
+      {/* Icon strip removed — name-only layout */}
+      {/* Name caption */}
+      <span
+        className={`whitespace-nowrap text-[11px] leading-tight font-medium select-none ${
+          isActive ? 'text-white' : 'text-white/70'
+        }`}
       >
-        {iconUrl ? (
-          // The icon resolver cascade always returns *something* once it
-          // settles (procedural placeholder is the floor), so `iconUrl`
-          // becoming non-null is the steady state. The pill is sized at
-          // 64x64 with zero padding so bundled CoH2 sprite-atlas icons
-          // (also 64x64) render at *native 1:1* — no resampling, pixel-
-          // perfect to the source. `object-contain` keeps the larger
-          // 256x256 Three.js fallback renders aspect-correct as they
-          // downscale into the same 64x64 slot, and the 64x64 SVG
-          // procedural placeholder slots in unchanged.
-          <img
-            src={iconUrl}
-            alt=""
-            draggable={false}
-            className="w-full h-full object-contain select-none pointer-events-none"
-            style={{
-              // Mild filter so non-painted source icons read against the
-              // dark glass chrome — only applied when inactive so the
-              // selected pill shows the asset at full fidelity.
-              filter: isActive ? 'none' : 'brightness(0.95) contrast(1.05)',
-            }}
-          />
-        ) : (
-          // Pre-resolve placeholder — first letter of the displayName,
-          // matches the procedural fallback's style so the visual stays
-          // calm when the resolve completes a frame or two later.
-          <span className="text-white/65 text-base font-semibold select-none">
-            {vehicle.displayName.trim()[0]?.toUpperCase() ?? '?'}
-          </span>
-        )}
-      </div>
-      {/* Dirty indicator — sits above the icon, anchored to the pill's
-       *  outer corner so it's visible against any icon content. */}
+        {vehicle.displayName}
+      </span>
+      {/* Dirty indicator — anchored to the pill's outer corner so it's
+       *  visible against any icon content. */}
       {isDirty && (
         <span
           aria-hidden

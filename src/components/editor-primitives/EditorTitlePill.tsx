@@ -46,6 +46,11 @@ export interface EditorTitlePillProps {
    * to the pill). Rendered as-is — parent owns open/close state.
    */
   popoverContent: ReactNode
+  /**
+   * When set, the StateIcon is replaced with an error icon and this message
+   * is shown as the pill tooltip. Auto-cleared by the parent after a timeout.
+   */
+  publishError?: string | null
 }
 
 export default function EditorTitlePill({
@@ -58,6 +63,7 @@ export default function EditorTitlePill({
   onToggle,
   onAcknowledge,
   popoverContent,
+  publishError,
 }: EditorTitlePillProps) {
   const handleClick = () => {
     if (titleAcknowledged === false && onAcknowledge) {
@@ -99,8 +105,8 @@ export default function EditorTitlePill({
   const pillButton = (
     <button
       type="button"
-      title={liveSyncTitle}
-      aria-label={liveSyncAriaLabel}
+      title={publishError ?? liveSyncTitle}
+      aria-label={publishError ? `Publish error: ${publishError}` : liveSyncAriaLabel}
       onClick={handleClick}
       style={pillStyle}
     >
@@ -108,7 +114,7 @@ export default function EditorTitlePill({
         {packName || fallbackLabel}
       </span>
       <span style={{ display: 'inline-flex', flex: 'none', transform: 'scale(0.85)' }}>
-        <StateIcon state={syncState} />
+        <StateIcon state={publishError ? 'error' : syncState} />
       </span>
     </button>
   )

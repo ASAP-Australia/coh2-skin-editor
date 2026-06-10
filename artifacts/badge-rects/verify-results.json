@@ -1,0 +1,98 @@
+[
+  {
+    "id": "jagdpanzer_iv_sdkfz_162",
+    "rect": {
+      "x": 1383,
+      "y": 307,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (bright-spot avg=76, ±30px)",
+    "note": "Wikinger OKW skin; white Balkenkreuz; bright spot at (1543,467)"
+  },
+  {
+    "id": "stug_iii",
+    "rect": {
+      "x": 1279,
+      "y": 1755,
+      "w": 320,
+      "h": 293
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (bright-spot avg=96, ±30px)",
+    "note": "Wikinger German skin; white Balkenkreuz at bottom-right panel; spot=(1439,1915)"
+  },
+  {
+    "id": "panzerwerfer",
+    "rect": {
+      "x": 659,
+      "y": 741,
+      "w": 300,
+      "h": 300
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (bright-spot avg=105, ±30px)",
+    "note": "Wikinger OKW skin; white Balkenkreuz at center hull panel; spot=(809,891)"
+  },
+  {
+    "id": "su85",
+    "rect": {
+      "x": 1382,
+      "y": 1278,
+      "w": 340,
+      "h": 340
+    },
+    "key": "hullSideRight",
+    "confidence": "high (bright-spot avg=110, ±30px)",
+    "note": "Wikinger OKW skin; Balkenkreuz on hull panel; spot=(1552,1448)"
+  },
+  {
+    "id": "kv2_heavy_tank",
+    "rect": {
+      "x": 823,
+      "y": 899,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (bright-spot avg=84, ±30px)",
+    "note": "Wikinger OKW skin; Balkenkreuz on KV-2 hull; spot=(983,1059)"
+  },
+  {
+    "id": "kv1_heavy_tank",
+    "rect": {
+      "x": 1479,
+      "y": 711,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (bright-spot avg=81, ±30px)",
+    "note": "Wikinger OKW skin; Balkenkreuz on KV-1 hull; spot=(1639,871)"
+  },
+  {
+    "id": "t70m_light_tank",
+    "rect": {
+      "x": 1410,
+      "y": 1370,
+      "w": 280,
+      "h": 280
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (bright-spot avg=90, ±30px)",
+    "note": "Wikinger OKW skin; Balkenkreuz on T-70 hull; spot=(1550,1510)"
+  },
+  {
+    "id": "sherman_firefly",
+    "rect": {
+      "x": 40,
+      "y": 432,
+      "w": 280,
+      "h": 280
+    },
+    "key": "hullSideRight",
+    "confidence": "high (bright-spot avg=78, ±30px)",
+    "note": "Wikinger British skin; white Allied star on hull panel; spot=(180,572)"
+  }
+]

@@ -11,8 +11,8 @@
  *   idle (has target)  → shows full form (visibility, change note)
  *   building           → SGA build in progress; selector disabled with spinner
  *   uploading          → inputs locked, spinner in submit button; calls onUploadStart
- *   success            → SuccessView; calls onUploadEnd
- *   error              → red banner above form; calls onUploadEnd
+ *   idle (on success)  → returns directly to idle (silent); calls onUploadEnd
+ *   (on error)         → stays idle; calls onPublishError + onUploadEnd; error shown in title pill
  *
  * The component owns form draft state and the phase state machine.
  * The parent owns the build step (isBuildingTarget / onRequestBuild).
@@ -22,8 +22,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { AnimatedSwap } from '@/components/ui/animated-swap'
 import { GlassSegmented } from '@/components/ui/glass-segmented'
 import { isElectron, makeTmpPublishDir, writeFile } from '@/lib/native-fs'
 import type {
@@ -49,6 +47,8 @@ export interface PublishSectionProps {
   onUploadStart?: () => void
   /** Emitted when upload settles (success or error) */
   onUploadEnd?: () => void
+  /** Emitted on publish error so the title pill can show an error state */
+  onPublishError?: (message: string) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -59,8 +59,6 @@ type Phase =
   | { kind: 'idle' }
   | { kind: 'building'; pendingVisibility: 0 | 1 | 2 | 3; pendingIndex: number }
   | { kind: 'uploading' }
-  | { kind: 'success'; workshopId: string; needsAgreement: boolean }
-  | { kind: 'error'; message: string }
 
 // ---------------------------------------------------------------------------
 // Real Workshop ID guard
@@ -73,6 +71,44 @@ function isRealWorkshopId(id: string | undefined): id is string {
   if (!id) return false
   const n = Number(id)
   return Number.isFinite(n) && n > 0 && n <= 5_000_000_000
+}
+
+/**
+ * Find the current user's existing Workshop item that matches a pack by its
+ * title + kind tag, so a re-publish can update THAT item in place rather than
+ * creating a duplicate.
+ *
+ * This is the pile-up guard: the per-project `workshopId` link normally routes
+ * republishes to an update, but that link is lost when the user clears local
+ * storage, re-imports a `.coh2faceplate` file, or publishes the same pack from
+ * another machine. Without this lookup each such publish mints a brand-new
+ * Workshop entry, leaving the user with a stack of identical items.
+ *
+ * Returns the workshopId of the SINGLE unambiguous match, or null when there
+ * is no match — or more than one, in which case we refuse to guess which item
+ * to overwrite and fall back to a normal publish. Best-effort: any Steam/IPC
+ * failure yields null so publishing still proceeds (creating a new item is
+ * preferable to blocking the user on a flaky lookup).
+ */
+async function findMyMatchingWorkshopItem(
+  packName: string,
+  tags: string[],
+): Promise<string | null> {
+  try {
+    const api = window.electronAPI
+    if (!api) return null
+    const mine = await api.steam.workshop.getMine()
+    const wantTitle = packName.trim().toLowerCase()
+    const wantTags = tags.map(t => t.toLowerCase())
+    const matches = mine.filter(
+      it =>
+        it.title.trim().toLowerCase() === wantTitle &&
+        wantTags.every(wt => it.tags.some(t => t.toLowerCase() === wt)),
+    )
+    return matches.length === 1 ? matches[0].workshopId : null
+  } catch {
+    return null
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -88,13 +124,6 @@ const VISIBILITY_OPTIONS: { value: 0 | 1 | 2 | 3; label: string }[] = [
   { value: 1, label: 'Friends only' },
   { value: 0, label: 'Public' },
 ]
-
-const VISIBILITY_DESCRIPTIONS: Record<0 | 1 | 2 | 3, string> = {
-  0: 'Anyone can find and subscribe via Workshop browse and search.',
-  1: 'Only your Steam friends can see and subscribe.',
-  2: 'Only you can see this item. No one else can download it.',
-  3: 'Hidden from Workshop browse and search. Anyone with the direct link can subscribe.',
-}
 
 // ---------------------------------------------------------------------------
 // Inline style helpers (shared with PublishToWorkshopDialog)
@@ -123,10 +152,10 @@ function FieldGroup({ label, children }: { label: string; children: React.ReactN
     <div>
       <div
         style={{
-          fontSize: 9,
+          fontSize: 10,
           textTransform: 'uppercase' as const,
-          letterSpacing: '1.5px',
-          color: 'rgba(247,247,250,0.4)',
+          letterSpacing: '0.08em',
+          color: 'rgba(255,255,255,0.5)',
           fontWeight: 600,
           marginBottom: 4,
         }}
@@ -134,110 +163,6 @@ function FieldGroup({ label, children }: { label: string; children: React.ReactN
         {label}
       </div>
       {children}
-    </div>
-  )
-}
-
-function SuccessView({
-  workshopId,
-  needsAgreement,
-  onDone,
-}: {
-  workshopId: string
-  needsAgreement: boolean
-  onDone: () => void
-}) {
-  const itemUrl = `https://steamcommunity.com/sharedfiles/filedetails/?id=${workshopId}`
-  const agreementUrl = `https://steamcommunity.com/sharedfiles/itemedittext/?id=${workshopId}`
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: '12px 14px',
-          background: 'rgba(34, 197, 94, 0.14)',
-          border: '1px solid rgba(34, 197, 94, 0.35)',
-          borderRadius: 10,
-        }}
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
-          <circle cx="12" cy="12" r="11" fill="oklch(0.78 0.18 150)" />
-          <path
-            d="M7 12.5 L10.5 16 L17 9"
-            stroke="#0b1410"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            fill="none"
-          />
-        </svg>
-        <div style={{ fontSize: 14, color: '#86efac', fontWeight: 600 }}>
-          Item published to Steam Workshop
-        </div>
-      </div>
-
-      {/* Subscriber Agreement banner */}
-      {needsAgreement && (
-        <div
-          style={{
-            padding: '10px 14px',
-            background: 'rgba(234, 179, 8, 0.18)',
-            border: '1px solid rgba(234, 179, 8, 0.4)',
-            borderRadius: 10,
-            fontSize: 12,
-            color: '#fde68a',
-            lineHeight: 1.5,
-          }}
-        >
-          You need to accept the Workshop Subscriber Agreement before this item is visible.{' '}
-          <a
-            href={agreementUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: '#fbbf24', textDecoration: 'underline', cursor: 'pointer' }}
-          >
-            Open Agreement page in browser
-          </a>{' '}
-          then come back and it will be live.
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 10 }}>
-        <a
-          href={itemUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="bb-pressable"
-          style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: 40,
-            borderRadius: 10,
-            background: 'var(--color-accent)',
-            color: '#000',
-            fontWeight: 700,
-            fontSize: 13,
-            textDecoration: 'none',
-            transition: 'opacity 0.12s',
-          }}
-          onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.opacity = '0.88' }}
-          onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.opacity = '' }}
-        >
-          View on Workshop ↗
-        </a>
-        <Button
-          variant="ghost"
-          onClick={onDone}
-          style={{ height: 40, color: 'rgba(247,247,250,0.55)', fontSize: 13 }}
-        >
-          Done
-        </Button>
-      </div>
     </div>
   )
 }
@@ -252,18 +177,29 @@ export function PublishSection({
   onRequestBuild,
   onUploadStart,
   onUploadEnd,
+  onPublishError,
 }: PublishSectionProps) {
   const isUpdate = isRealWorkshopId(target?.workshopId)
 
   // selectedIndex = position in VISIBILITY_OPTIONS array (0 = Unlisted, 3 = Public)
   const [selectedIndex, setSelectedIndex] = useState<number>(0)
-  const visibility = VISIBILITY_OPTIONS[selectedIndex]!.value
   const [changeNote, setChangeNote] = useState('')
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
+  // needsAgreementUrl: set when the first-publish response requires a Workshop
+  // agreement acceptance before the item is visible. Cleared on popover reset.
+  const [needsAgreementUrl, setNeedsAgreementUrl] = useState<string | null>(null)
 
   // pendingPublishRef holds the visibility/index selected while target === null.
   // When target transitions null→non-null (build completed), we fire the publish.
   const pendingPublishRef = useRef<{ visibility: 0 | 1 | 2 | 3; index: number } | null>(null)
+
+  // workshopIdRef always holds the LATEST workshopId, updated every render.
+  // handlePublish reads from this ref instead of closing over target?.workshopId,
+  // which avoids a stale-closure bug: when the useEffect fires handlePublish after
+  // a null→non-null target transition, the callback captured during the null render
+  // would compute isUpdate=false and call publish instead of update.
+  const workshopIdRef = useRef<string | undefined>(target?.workshopId)
+  workshopIdRef.current = target?.workshopId
 
   // Generate a 1024×1024 high-quality preview PNG from the preview canvas.
   // Uses OffscreenCanvas with step-down rendering on a transparent background
@@ -293,7 +229,7 @@ export function PublishSection({
     }
 
     if (!isElectron()) {
-      setPhase({ kind: 'error', message: 'Publishing is only available in the desktop app.' })
+      onPublishError?.('Publishing is only available in the desktop app.')
       onUploadEnd?.()
       return
     }
@@ -349,21 +285,58 @@ export function PublishSection({
       }
 
       // 5. Publish or update
+      // Read workshopId from the ref (always current) to avoid the stale-closure
+      // bug where isUpdate would be false in the callback captured when target was null.
+      const isUpdate = isRealWorkshopId(workshopIdRef.current)
       if (isUpdate && target.workshopId) {
         const result: UpdateWorkshopResult = await window.electronAPI!.steam.workshop.update(
           target.workshopId,
           input,
         )
-        setPhase({ kind: 'success', workshopId: target.workshopId, needsAgreement: result.needsAgreement })
         target.onPublished(target.workshopId)
+        // If agreement is needed, show a compact inline notice instead of
+        // replacing the selector with a full success view.
+        if (result.needsAgreement) {
+          const agreementUrl = `https://steamcommunity.com/sharedfiles/itemedittext/?id=${target.workshopId}`
+          setNeedsAgreementUrl(agreementUrl)
+        }
+        // Always return to the idle visibility selector (silent success).
+        setPhase({ kind: 'idle' })
+        setSelectedIndex(clickedIndex)
       } else {
-        const result: PublishWorkshopResult = await window.electronAPI!.steam.workshop.publish(input)
-        setPhase({ kind: 'success', workshopId: result.workshopId, needsAgreement: result.needsAgreement })
-        target.onPublished(result.workshopId)
+        // No persisted Workshop link for this pack. Before minting a NEW
+        // Workshop entry, check whether the user already has an item for this
+        // same pack (same title + kind tag) — if so, update it in place so we
+        // don't pile up duplicates when the local link was lost (storage
+        // cleared, project re-imported, or published from another machine).
+        const existingId = await findMyMatchingWorkshopItem(target.packName, input.tags)
+        if (existingId) {
+          const result: UpdateWorkshopResult = await window.electronAPI!.steam.workshop.update(
+            existingId,
+            input,
+          )
+          target.onPublished(existingId)
+          if (result.needsAgreement) {
+            const agreementUrl = `https://steamcommunity.com/sharedfiles/itemedittext/?id=${existingId}`
+            setNeedsAgreementUrl(agreementUrl)
+          }
+          setPhase({ kind: 'idle' })
+          setSelectedIndex(clickedIndex)
+        } else {
+          const result: PublishWorkshopResult = await window.electronAPI!.steam.workshop.publish(input)
+          target.onPublished(result.workshopId)
+          if (result.needsAgreement) {
+            const agreementUrl = `https://steamcommunity.com/sharedfiles/itemedittext/?id=${result.workshopId}`
+            setNeedsAgreementUrl(agreementUrl)
+          }
+          setPhase({ kind: 'idle' })
+          setSelectedIndex(clickedIndex)
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      setPhase({ kind: 'error', message: msg })
+      onPublishError?.(msg)
+      setPhase({ kind: 'idle' })
     } finally {
       onUploadEnd?.()
     }
@@ -371,10 +344,10 @@ export function PublishSection({
     target,
     changeNote,
     buildPreviewPng,
-    isUpdate,
     onRequestBuild,
     onUploadStart,
     onUploadEnd,
+    onPublishError,
   ])
 
   // Sync form state when target changes.
@@ -392,6 +365,7 @@ export function PublishSection({
       // the selector stays disabled while isBuildingTarget is true.
       setPhase(prev => prev.kind === 'building' ? prev : { kind: 'idle' })
       setChangeNote('')
+      setNeedsAgreementUrl(null)
       if (!pendingPublishRef.current) setSelectedIndex(0)
     } else {
       // target just became non-null (build completed).
@@ -413,75 +387,63 @@ export function PublishSection({
 
   // Detect build failure: isBuildingTarget went false while target is still null.
   // In that case the parent's handleRequestBuild caught an error and didn't set
-  // a publishTarget — reset our phase to error so the selector re-enables.
+  // a publishTarget — reset our phase to idle and surface error via the title pill.
   useEffect(() => {
     if (!isBuildingTarget && target === null && pendingPublishRef.current) {
       // Build finished without producing a target → treat as build error.
       pendingPublishRef.current = null
-      setPhase({ kind: 'error', message: 'SGA build failed. Check the console for details and try again.' })
+      onPublishError?.('SGA build failed. Check the console for details and try again.')
+      setPhase({ kind: 'idle' })
       onUploadEnd?.()
     }
-  }, [isBuildingTarget, target, onUploadEnd])
+  }, [isBuildingTarget, target, onUploadEnd, onPublishError])
 
   // busy = uploading OR building (SGA build in progress before upload)
   const building = phase.kind === 'building' || isBuildingTarget
   const busy = phase.kind === 'uploading' || building
-  const success = phase.kind === 'success'
 
-  // ── Success state ────────────────────────────────────────────────────────
-  if (success && phase.kind === 'success') {
-    return (
-      <div style={{ marginTop: 4 }}>
-        <SuccessView
-          workshopId={phase.workshopId}
-          needsAgreement={phase.needsAgreement}
-          onDone={() => setPhase({ kind: 'idle' })}
-        />
-      </div>
-    )
-  }
-
-  // ── Form state (idle with target / uploading / error) ───────────────────
+  // ── Form state (idle / uploading / building) ────────────────────────────
   return (
     <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* Error banner */}
-      {phase.kind === 'error' && (
+      {/* Workshop agreement notice — shown after first publish when Steam
+          requires the user to accept the Subscriber Agreement before the
+          item becomes visible. Errors are surfaced in the title pill instead
+          of here. */}
+      {needsAgreementUrl && (
         <div
           style={{
             padding: '10px 14px',
-            background: 'rgba(220, 38, 38, 0.18)',
-            border: '1px solid rgba(220, 38, 38, 0.4)',
+            background: 'rgba(234, 179, 8, 0.18)',
+            border: '1px solid rgba(234, 179, 8, 0.4)',
             borderRadius: 10,
-            color: '#fca5a5',
-            fontSize: 13,
-            lineHeight: 1.4,
+            fontSize: 12,
+            color: '#fde68a',
+            lineHeight: 1.5,
           }}
         >
-          {phase.message}
+          Workshop agreement required.{' '}
+          <a
+            href={needsAgreementUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: '#fbbf24', textDecoration: 'underline', cursor: 'pointer' }}
+          >
+            Open agreement page ↗
+          </a>
         </div>
       )}
 
       {/* Glass segmented visibility selector — single click = build (if needed) + publish at that visibility */}
       <FieldGroup label={
-        building
-          ? 'Building…'
-          : phase.kind === 'uploading'
-            ? (isUpdate ? 'Updating at visibility…' : 'Publishing at visibility…')
-            : (isUpdate ? 'Update at visibility' : 'Publish at visibility')
+        building ? 'Building…'
+        : phase.kind === 'uploading' ? 'Uploading…'
+        : 'Visibility'
       }>
         <GlassSegmented
           options={VISIBILITY_OPTIONS}
           selectedIndex={selectedIndex}
           disabled={busy}
           onClick={(value, index) => handlePublish(value as 0 | 1 | 2 | 3, index)}
-          footer={
-            /* Visibility description — fades between options with AnimatedSwap */
-            <AnimatedSwap swapKey={visibility} block>
-              <p style={{ fontSize: 12, color: 'rgba(247,247,250,0.50)', margin: 0, marginTop: 7, lineHeight: 1.45 }}>
-                {VISIBILITY_DESCRIPTIONS[visibility]}
-              </p>
-            </AnimatedSwap>
-          }
         />
       </FieldGroup>
 

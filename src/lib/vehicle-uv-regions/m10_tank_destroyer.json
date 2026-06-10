@@ -1,0 +1,23 @@
+{
+  "_note": "M10 Tank Destroyer (m10_tank_destroyer) UV regions in 2048×2048 pixel units. Derived from Wikinger US (AEF) skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger_aef",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 50,
+      "y": 900,
+      "w": 260,
+      "h": 260,
+      "_source": "wikinger_aef",
+      "_confidence": "medium (±50px)",
+      "note": "Hull right side — Wikinger US skin (5a3d5e4e9f854eb39e8edc7e15c4dc25) shows white US Army stars prominently on hull side panels. Left-hull crop (0-500, 800-1400) shows two stars: upper at ~(175,985) and lower at ~(175,1260) in atlas coordinates. This rect captures the upper hull-right star (the primary visible badge position). The star faces the viewer from the right side panel. Annotated PNG at artifacts/badge-rects/m10_tank_destroyer.png.",
+      "uvCore": {
+        "minU": 0.0244,
+        "maxU": 0.1514,
+        "minV": 0.4395,
+        "maxV": 0.5664
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

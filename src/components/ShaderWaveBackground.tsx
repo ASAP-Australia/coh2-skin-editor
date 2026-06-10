@@ -17,11 +17,19 @@ import {
  * of 2D simplex noise; clicking anywhere drops a ripple at that world-space
  * point. The Australia SVG overlay is intentionally omitted (app-specific).
  *
+ * Rendering runs inside a Web Worker on an OffscreenCanvas when the browser
+ * supports it, keeping the animation immune to main-thread long tasks (e.g.
+ * the 100–165 ms vehicle-warmup work on the Connect screen). Falls back to
+ * main-thread rendering transparently when OffscreenCanvas is unavailable or
+ * the worker's WebGL context creation fails.
+ *
  * Drop into any route as a fixed-position absolute backdrop:
  *   <ShaderWaveBackground />
  */
 const MAX_RIPPLES = 5
 
+// GLSL source — kept here for the main-thread fallback path.  The worker
+// has its own copy (shader-wave.worker.ts) which is the live rendering path.
 const VERTEX_SHADER = /* glsl */ `
   uniform float uTime;
   uniform vec2 uRippleOrigins[${MAX_RIPPLES}];
@@ -108,201 +116,312 @@ export default function ShaderWaveBackground({ noRipples = false }: Props) {
     const container = containerRef.current
     if (!container) return
 
-    const canvas = document.createElement('canvas')
-    canvas.style.position = 'absolute'
-    canvas.style.inset = '0'
-    canvas.style.width = '100%'
-    canvas.style.height = '100%'
-    canvas.style.display = 'block'
-    container.appendChild(canvas)
+    // Helper: create a styled canvas and append it to the container.
+    const createCanvas = (): HTMLCanvasElement => {
+      const c = document.createElement('canvas')
+      c.style.position = 'absolute'
+      c.style.inset = '0'
+      c.style.width = '100%'
+      c.style.height = '100%'
+      c.style.display = 'block'
+      container.appendChild(c)
+      return c
+    }
 
-    // Renderer init — tuned for a Lighthouse 100 Performance score on this
-    // component:
-    //   • antialias: false           — the wave has soft, low-frequency
-    //                                   spatial content; MSAA on a
-    //                                   subdivided plane is mostly
-    //                                   wasted GPU bandwidth, and FXAA
-    //                                   would re-introduce a post-pass.
-    //                                   We rely on devicePixelRatio
-    //                                   resolution + the soft gradient
-    //                                   fragment to avoid visible aliasing.
-    //   • powerPreference: 'low-power' — Chrome routes this to the
-    //                                   integrated GPU on Optimus/Mac
-    //                                   systems, halving the power draw
-    //                                   the user perceives as "fan spin"
-    //                                   and removing the discrete-GPU
-    //                                   long task seen at session start.
-    //   • alpha: false               — opaque clear avoids a per-frame
-    //                                   blend with the page behind us
-    //                                   (the CssGradientBackground sits
-    //                                   below but the shader covers
-    //                                   it fully, so the blend is wasted).
-    //   • depth/stencil: false       — single full-screen mesh, no
-    //                                   depth sorting, no stencil mask.
-    //                                   Saves the per-pixel depth write
-    //                                   and the depth-buffer allocation.
-    //   • preserveDrawingBuffer: false — default, but explicit here so
-    //                                   Chrome doesn't allocate a back
-    //                                   buffer copy for screenshot APIs.
-    let renderer: WebGLRenderer
-    try {
-      renderer = new WebGLRenderer({
-        canvas,
-        antialias: false,
-        alpha: false,
-        depth: false,
-        stencil: false,
-        powerPreference: 'low-power',
-        preserveDrawingBuffer: false,
+    // -----------------------------------------------------------------------
+    // Main-thread fallback path (original implementation).
+    // Used when: OffscreenCanvas is unavailable, transferControlToOffscreen is
+    // missing, or the worker's WebGL context creation fails.
+    // -----------------------------------------------------------------------
+    const runMainThread = (canvas: HTMLCanvasElement): (() => void) => {
+      // Renderer init — tuned for a Lighthouse 100 Performance score on this
+      // component:
+      //   • antialias: false           — the wave has soft, low-frequency
+      //                                   spatial content; MSAA on a
+      //                                   subdivided plane is mostly
+      //                                   wasted GPU bandwidth, and FXAA
+      //                                   would re-introduce a post-pass.
+      //                                   We rely on devicePixelRatio
+      //                                   resolution + the soft gradient
+      //                                   fragment to avoid visible aliasing.
+      //   • powerPreference: 'low-power' — Chrome routes this to the
+      //                                   integrated GPU on Optimus/Mac
+      //                                   systems, halving the power draw
+      //                                   the user perceives as "fan spin"
+      //                                   and removing the discrete-GPU
+      //                                   long task seen at session start.
+      //   • alpha: false               — opaque clear avoids a per-frame
+      //                                   blend with the page behind us
+      //                                   (the CssGradientBackground sits
+      //                                   below but the shader covers
+      //                                   it fully, so the blend is wasted).
+      //   • depth/stencil: false       — single full-screen mesh, no
+      //                                   depth sorting, no stencil mask.
+      //                                   Saves the per-pixel depth write
+      //                                   and the depth-buffer allocation.
+      //   • preserveDrawingBuffer: false — default, but explicit here so
+      //                                   Chrome doesn't allocate a back
+      //                                   buffer copy for screenshot APIs.
+      let renderer: WebGLRenderer
+      try {
+        renderer = new WebGLRenderer({
+          canvas,
+          antialias: false,
+          alpha: false,
+          depth: false,
+          stencil: false,
+          powerPreference: 'low-power',
+          preserveDrawingBuffer: false,
+        })
+      } catch {
+        canvas.remove()
+        return () => { /* nothing to clean up */ }
+      }
+      renderer.setClearColor(0x212121)
+      // Cap to 1.25 (was 1.5) — on 4K Retina displays the difference is
+      // imperceptible for soft gradient fragments and saves ~30% of fragment
+      // shader invocations. This is the same trick game engines use when
+      // they ship a "Performance" vs "Quality" preset; here we don't need a
+      // toggle because the wave doesn't carry high-frequency detail.
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25))
+
+      const scene = new Scene()
+      const camera = new PerspectiveCamera(45, 1, 0.1, 100)
+      camera.position.set(0, 0, 5)
+      camera.lookAt(0, 0, 0)
+
+      // 48×48 subdivisions (down from 64×64). At 40 fps targeting Lighthouse,
+      // the vertex shader was the dominant cost — 2-octave simplex + up to
+      // 5 ripples runs PER VERTEX every frame. Halving the vertex count from
+      // 4225 to 2401 cuts that cost by ~43% while staying well above the
+      // spatial-frequency Nyquist limit of the two noise octaves at scale
+      // 0.35/0.8 (the highest fundamental is ~1.6 cycles/unit, sampled at
+      // 4 vertices/unit gives a comfortable 2.5× oversample). Visually
+      // indistinguishable; benchmarked locally as the change that moved
+      // Lighthouse from a 95 to a 100 on a mid-tier laptop.
+      const geometry = new PlaneGeometry(12, 12, 48, 48)
+      geometry.rotateZ(Math.PI)
+
+      const uniforms = {
+        uTime: { value: 0 },
+        uRippleOrigins: { value: Array.from({ length: MAX_RIPPLES }, () => new Vector2(0, 0)) },
+        uRippleTimes: { value: new Float32Array(MAX_RIPPLES).fill(-10) },
+        uRippleCount: { value: 0 },
+      }
+
+      const material = new ShaderMaterial({
+        vertexShader: VERTEX_SHADER,
+        fragmentShader: FRAGMENT_SHADER,
+        uniforms,
       })
-    } catch {
-      canvas.remove()
-      return
-    }
-    renderer.setClearColor(0x212121)
-    // Cap to 1.25 (was 1.5) — on 4K Retina displays the difference is
-    // imperceptible for soft gradient fragments and saves ~30% of fragment
-    // shader invocations. This is the same trick game engines use when
-    // they ship a "Performance" vs "Quality" preset; here we don't need a
-    // toggle because the wave doesn't carry high-frequency detail.
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25))
+      const mesh = new Mesh(geometry, material)
+      scene.add(mesh)
 
-    const scene = new Scene()
-    const camera = new PerspectiveCamera(45, 1, 0.1, 100)
-    camera.position.set(0, 0, 5)
-    camera.lookAt(0, 0, 0)
+      // Click-to-ripple
+      let rippleIndex = 0
+      const raycaster = new Raycaster()
+      const pointer = new Vector2()
+      const addRipple = (clientX: number, clientY: number) => {
+        const rect = canvas.getBoundingClientRect()
+        pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1
+        pointer.y = ((clientY - rect.top) / rect.height) * -2 + 1
+        raycaster.setFromCamera(pointer, camera)
+        const hits = raycaster.intersectObject(mesh)
+        if (hits.length > 0) {
+          const p = hits[0].point
+          const idx = rippleIndex % MAX_RIPPLES
+          uniforms.uRippleOrigins.value[idx].set(p.x, p.y)
+          uniforms.uRippleTimes.value[idx] = uniforms.uTime.value
+          rippleIndex++
+          uniforms.uRippleCount.value = Math.min(rippleIndex, MAX_RIPPLES)
+        }
+      }
+      const onPointerDown = (ev: PointerEvent) => addRipple(ev.clientX, ev.clientY)
+      if (!noRipples) document.addEventListener('pointerdown', onPointerDown)
 
-    // 48×48 subdivisions (down from 64×64). At 40 fps targeting Lighthouse,
-    // the vertex shader was the dominant cost — 2-octave simplex + up to
-    // 5 ripples runs PER VERTEX every frame. Halving the vertex count from
-    // 4225 to 2401 cuts that cost by ~43% while staying well above the
-    // spatial-frequency Nyquist limit of the two noise octaves at scale
-    // 0.35/0.8 (the highest fundamental is ~1.6 cycles/unit, sampled at
-    // 4 vertices/unit gives a comfortable 2.5× oversample). Visually
-    // indistinguishable; benchmarked locally as the change that moved
-    // Lighthouse from a 95 to a 100 on a mid-tier laptop.
-    const geometry = new PlaneGeometry(12, 12, 48, 48)
-    geometry.rotateZ(Math.PI)
+      const resize = () => {
+        const w = container.clientWidth
+        const h = container.clientHeight
+        if (w === 0 || h === 0) return
+        renderer.setSize(w, h)
+        camera.aspect = w / h
+        camera.updateProjectionMatrix()
+      }
+      resize()
+      window.addEventListener('resize', resize)
 
-    const uniforms = {
-      uTime: { value: 0 },
-      uRippleOrigins: { value: Array.from({ length: MAX_RIPPLES }, () => new Vector2(0, 0)) },
-      uRippleTimes: { value: new Float32Array(MAX_RIPPLES).fill(-10) },
-      uRippleCount: { value: 0 },
-    }
+      // Three.js r170 deprecated `Clock` in favour of `Timer`. Same idea —
+      // a monotonic time accumulator — but `Timer` is the path forward and
+      // silences the console warning we were getting on every page load.
+      const timer = new Timer()
+      const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      let raf = 0
+      // Cap render rate to ~40 fps — the wave's spatial frequencies are slow
+      // enough that 40 fps is visually indistinguishable from 60 fps to the
+      // human eye, but it cuts the number of long-running WebGL frames the
+      // main thread has to push by a third. Under throttled CPU (Lighthouse
+      // 4×) that's the difference between TBT measured in seconds and TBT
+      // measured in hundreds of ms. The cap is enforced by tracking last
+      // frame timestamp and bailing out of `render()` until the budget has
+      // elapsed.
+      const FRAME_BUDGET_MS = 1000 / 40
+      let lastFrameTs = 0
+      // Page-visibility gate. When the user switches tabs / minimises the
+      // window, requestAnimationFrame on Chrome already throttles to 1 Hz,
+      // but we additionally SKIP `renderer.render()` so the WebGL command
+      // queue stays empty while the page is hidden. Side benefit: any
+      // ripple animation timestamps are paused, so coming back from a
+      // long background doesn't replay a flurry of expired ripples in
+      // the first visible frame. Re-evaluated cheaply per tick via the
+      // document.hidden boolean; no event listener overhead.
+      const tick = (ts: number = performance.now()) => {
+        // Always continue the rAF chain so resize/ripple events still propagate;
+        // but skip the actual GPU render when we're inside the frame budget.
+        if (prefersReduced) {
+          // Reduced-motion: render exactly one static frame and stop.
+          timer.update()
+          uniforms.uTime.value = 0
+          renderer.render(scene, camera)
+          return
+        }
+        if (document.hidden) {
+          // Page hidden — skip GPU work entirely. The rAF chain stays alive
+          // so we resume painting immediately on visibilitychange. No
+          // need to call timer.update(); we want uTime to freeze, not
+          // accumulate background time the user can't see.
+          raf = requestAnimationFrame(tick)
+          return
+        }
+        if (ts - lastFrameTs >= FRAME_BUDGET_MS) {
+          lastFrameTs = ts
+          timer.update()
+          uniforms.uTime.value = timer.getElapsed()
+          renderer.render(scene, camera)
+        }
+        raf = requestAnimationFrame(tick)
+      }
+      tick()
+      // One-shot re-render on resize so the static reduced-motion frame
+      // keeps the correct aspect ratio without a continuous loop.
+      const origResize = resize
+      if (prefersReduced) {
+        window.removeEventListener('resize', resize)
+        const resizeAndRender = () => {
+          origResize()
+          renderer.render(scene, camera)
+        }
+        window.addEventListener('resize', resizeAndRender)
+      }
 
-    const material = new ShaderMaterial({
-      vertexShader: VERTEX_SHADER,
-      fragmentShader: FRAGMENT_SHADER,
-      uniforms,
-    })
-    const mesh = new Mesh(geometry, material)
-    scene.add(mesh)
-
-    // Click-to-ripple
-    let rippleIndex = 0
-    const raycaster = new Raycaster()
-    const pointer = new Vector2()
-    const addRipple = (clientX: number, clientY: number) => {
-      const rect = canvas.getBoundingClientRect()
-      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1
-      pointer.y = ((clientY - rect.top) / rect.height) * -2 + 1
-      raycaster.setFromCamera(pointer, camera)
-      const hits = raycaster.intersectObject(mesh)
-      if (hits.length > 0) {
-        const p = hits[0].point
-        const idx = rippleIndex % MAX_RIPPLES
-        uniforms.uRippleOrigins.value[idx].set(p.x, p.y)
-        uniforms.uRippleTimes.value[idx] = uniforms.uTime.value
-        rippleIndex++
-        uniforms.uRippleCount.value = Math.min(rippleIndex, MAX_RIPPLES)
+      return () => {
+        cancelAnimationFrame(raf)
+        window.removeEventListener('resize', resize)
+        if (!noRipples) document.removeEventListener('pointerdown', onPointerDown)
+        geometry.dispose()
+        material.dispose()
+        renderer.dispose()
+        canvas.remove()
       }
     }
-    const onPointerDown = (e: PointerEvent) => addRipple(e.clientX, e.clientY)
+
+    // -----------------------------------------------------------------------
+    // Worker path via OffscreenCanvas
+    // -----------------------------------------------------------------------
+    const supportsOffscreen =
+      typeof OffscreenCanvas !== 'undefined' &&
+      typeof (HTMLCanvasElement.prototype as { transferControlToOffscreen?: unknown })
+        .transferControlToOffscreen === 'function'
+
+    if (!supportsOffscreen) {
+      // No OffscreenCanvas support — fall back immediately.
+      const canvas = createCanvas()
+      const cleanup = runMainThread(canvas)
+      return cleanup
+    }
+
+    // Worker path
+    const canvas = createCanvas()
+    const offscreen = canvas.transferControlToOffscreen()
+    const worker = new Worker(new URL('./shader-wave.worker.ts', import.meta.url), { type: 'module' })
+
+    // Read prefers-reduced-motion on the main thread (unavailable in worker).
+    const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+
+    const width = container.clientWidth
+    const height = container.clientHeight
+
+    worker.postMessage(
+      {
+        type: 'init',
+        canvas: offscreen,
+        width: width || 1,
+        height: height || 1,
+        dpr: window.devicePixelRatio,
+        prefersReduced,
+        noRipples,
+      },
+      [offscreen],
+    )
+
+    // Track whether the worker fell back (it sends {type:'fallback'}).
+    // If so, we tear down and revert to the main-thread path on a fresh canvas.
+    let workerCleanup: (() => void) | null = null
+    let didFallback = false
+
+    worker.onmessage = (e: MessageEvent<{ type: string }>) => {
+      if (e.data.type === 'fallback' && !didFallback) {
+        didFallback = true
+        // Worker canvas was transferred and is consumed; remove the original
+        // canvas element and create a fresh one for the main-thread renderer.
+        worker.terminate()
+        canvas.remove()
+        const freshCanvas = createCanvas()
+        workerCleanup = runMainThread(freshCanvas)
+      }
+    }
+
+    // Resize: post updated dimensions to the worker.
+    const onResize = () => {
+      if (didFallback) return
+      worker.postMessage({
+        type: 'resize',
+        width: container.clientWidth || 1,
+        height: container.clientHeight || 1,
+        dpr: window.devicePixelRatio,
+      })
+    }
+    window.addEventListener('resize', onResize)
+
+    // Visibility: post hidden flag to the worker.
+    const onVisibility = () => {
+      if (didFallback) return
+      worker.postMessage({ type: 'visibility', hidden: document.hidden })
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    // Ripple: compute NDC on main thread, post to worker.
+    const onPointerDown = (ev: PointerEvent) => {
+      if (didFallback) return
+      const rect = canvas.getBoundingClientRect()
+      const ndcX = ((ev.clientX - rect.left) / rect.width) * 2 - 1
+      const ndcY = ((ev.clientY - rect.top) / rect.height) * -2 + 1
+      worker.postMessage({ type: 'ripple', ndcX, ndcY })
+    }
     if (!noRipples) document.addEventListener('pointerdown', onPointerDown)
 
-    const resize = () => {
-      const w = container.clientWidth
-      const h = container.clientHeight
-      if (w === 0 || h === 0) return
-      renderer.setSize(w, h)
-      camera.aspect = w / h
-      camera.updateProjectionMatrix()
-    }
-    resize()
-    window.addEventListener('resize', resize)
-
-    // Three.js r170 deprecated `Clock` in favour of `Timer`. Same idea —
-    // a monotonic time accumulator — but `Timer` is the path forward and
-    // silences the console warning we were getting on every page load.
-    const timer = new Timer()
-    const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    let raf = 0
-    // Cap render rate to ~40 fps — the wave's spatial frequencies are slow
-    // enough that 40 fps is visually indistinguishable from 60 fps to the
-    // human eye, but it cuts the number of long-running WebGL frames the
-    // main thread has to push by a third. Under throttled CPU (Lighthouse
-    // 4×) that's the difference between TBT measured in seconds and TBT
-    // measured in hundreds of ms. The cap is enforced by tracking last
-    // frame timestamp and bailing out of `render()` until the budget has
-    // elapsed.
-    const FRAME_BUDGET_MS = 1000 / 40
-    let lastFrameTs = 0
-    // Page-visibility gate. When the user switches tabs / minimises the
-    // window, requestAnimationFrame on Chrome already throttles to 1 Hz,
-    // but we additionally SKIP `renderer.render()` so the WebGL command
-    // queue stays empty while the page is hidden. Side benefit: any
-    // ripple animation timestamps are paused, so coming back from a
-    // long background doesn't replay a flurry of expired ripples in
-    // the first visible frame. Re-evaluated cheaply per tick via the
-    // document.hidden boolean; no event listener overhead.
-    const tick = (ts: number = performance.now()) => {
-      // Always continue the rAF chain so resize/ripple events still propagate;
-      // but skip the actual GPU render when we're inside the frame budget.
-      if (prefersReduced) {
-        // Reduced-motion: render exactly one static frame and stop.
-        timer.update()
-        uniforms.uTime.value = 0
-        renderer.render(scene, camera)
-        return
-      }
-      if (document.hidden) {
-        // Page hidden — skip GPU work entirely. The rAF chain stays alive
-        // so we resume painting immediately on visibilitychange. No
-        // need to call timer.update(); we want uTime to freeze, not
-        // accumulate background time the user can't see.
-        raf = requestAnimationFrame(tick)
-        return
-      }
-      if (ts - lastFrameTs >= FRAME_BUDGET_MS) {
-        lastFrameTs = ts
-        timer.update()
-        uniforms.uTime.value = timer.getElapsed()
-        renderer.render(scene, camera)
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    tick()
-    // One-shot re-render on resize so the static reduced-motion frame
-    // keeps the correct aspect ratio without a continuous loop.
-    const origResize = resize
-    if (prefersReduced) {
-      window.removeEventListener('resize', resize)
-      const resizeAndRender = () => {
-        origResize()
-        renderer.render(scene, camera)
-      }
-      window.addEventListener('resize', resizeAndRender)
-    }
-
     return () => {
-      cancelAnimationFrame(raf)
-      window.removeEventListener('resize', resize)
+      window.removeEventListener('resize', onResize)
+      document.removeEventListener('visibilitychange', onVisibility)
       if (!noRipples) document.removeEventListener('pointerdown', onPointerDown)
-      geometry.dispose()
-      material.dispose()
-      renderer.dispose()
-      canvas.remove()
+
+      if (didFallback) {
+        // Fallback cleanup already handled by runMainThread's return value.
+        workerCleanup?.()
+      } else {
+        worker.postMessage({ type: 'dispose' })
+        worker.terminate()
+        canvas.remove()
+      }
     }
   }, [noRipples])
 

@@ -89,5 +89,6 @@ export const ATLAS_VIEW_MODE_LABEL: Record<AtlasViewMode, { label: string; descr
     },
   }
 
-/** Canonical render order for the AtlasViewPanel (mirrors ScenePanel). */
-export const ATLAS_VIEW_MODE_ORDER: AtlasViewMode[] = ['template', 'checkerboard', 'in_game']
+/** Canonical render order for the AtlasViewPanel (mirrors ScenePanel).
+ *  `in_game` is intentionally excluded — the overlay was removed. */
+export const ATLAS_VIEW_MODE_ORDER: AtlasViewMode[] = ['template', 'checkerboard']

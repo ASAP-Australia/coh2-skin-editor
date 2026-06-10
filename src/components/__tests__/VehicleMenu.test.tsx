@@ -276,38 +276,39 @@ describe('VehicleMenu — icon resolver variant', () => {
     expect(pillFor('tiger')!.getAttribute('aria-pressed')).toBe('false')
   })
 
-  it('placeholder shows first-letter while iconResolver is pending', () => {
+  it('renders the vehicle name and never an icon image while resolver is pending', () => {
     const resolver: VehicleIconResolver = () => new Promise(() => {}) // never resolves
     render({ vehicles: FIVE_MIXED, iconResolver: resolver })
-    // Placeholder span — first letter of displayName, uppercase.
+    // Name-only tiles: the caption is the full displayName (== aria-label),
+    // and no <img> is ever rendered.
     const pill = pillFor('tiger')!
-    expect(pill.textContent?.trim()).toBe('T')
+    expect(pill.textContent?.trim()).toBe(pill.getAttribute('aria-label'))
+    expect(pill.querySelector('img')).toBeNull()
   })
 
-  it('null resolver result keeps the first-letter placeholder (cascade floor)', async () => {
+  it('null resolver result still shows the name and no <img>', async () => {
     const resolver: VehicleIconResolver = async () => null
     render({ vehicles: FIVE_MIXED, iconResolver: resolver })
-    // Let microtasks flush so the resolved null reaches setIconUrl(null).
+    // Let microtasks flush so any resolver side effects settle.
     await act(async () => {
       await Promise.resolve()
     })
     const pill = pillFor('stug')!
-    expect(pill.textContent?.trim()).toBe('S')
-    // No <img> appears.
+    expect(pill.textContent?.trim()).toBe(pill.getAttribute('aria-label'))
     expect(pill.querySelector('img')).toBeNull()
   })
 
-  it('successful resolver result renders an <img> with the resolved url', async () => {
+  it('successful resolver result is ignored — pills stay name-only (no <img>)', async () => {
     const resolver: VehicleIconResolver = async v => `/icons/${v.id}.png`
     render({ vehicles: FIVE_MIXED, iconResolver: resolver })
     await act(async () => {
-      // Two microtask yields — once for the resolver, once for setState.
+      // Two microtask yields — once for the resolver, once for any setState.
       await Promise.resolve()
       await Promise.resolve()
     })
-    const img = pillFor('tiger')!.querySelector('img')
-    expect(img).not.toBeNull()
-    expect(img!.getAttribute('src')).toBe('/icons/tiger.png')
+    const pill = pillFor('tiger')!
+    expect(pill.querySelector('img')).toBeNull()
+    expect(pill.textContent?.trim()).toBe(pill.getAttribute('aria-label'))
   })
 
   it('clicking an icon-variant pill still fires onSelect(vehicle)', () => {

@@ -13,6 +13,14 @@ typedef bool                 (*fp_GetResult)(ISteamUtils*, SteamAPICall_t, void*
 
 typedef bool            (*fp_FileWrite)(ISteamRemoteStorage*, const char*, const void*, int32_t);
 typedef bool            (*fp_FileDelete)(ISteamRemoteStorage*, const char*);
+typedef bool            (*fp_FileExists)(ISteamRemoteStorage*, const char*);
+typedef int32_t         (*fp_GetFileSize)(ISteamRemoteStorage*, const char*);
+typedef bool            (*fp_FilePersisted)(ISteamRemoteStorage*, const char*);
+typedef bool            (*fp_IsCloudApp)(ISteamRemoteStorage*);
+typedef bool            (*fp_IsCloudAcct)(ISteamRemoteStorage*);
+typedef void            (*fp_SetCloudApp)(ISteamRemoteStorage*, bool);
+typedef bool            (*fp_GetQuota)(ISteamRemoteStorage*, uint64_t*, uint64_t*);
+typedef bool            (*fp_SetSyncPlatforms)(ISteamRemoteStorage*, const char*, int32_t);
 typedef SteamAPICall_t  (*fp_FileShare)(ISteamRemoteStorage*, const char*);
 typedef SteamAPICall_t  (*fp_Publish)(ISteamRemoteStorage*, const char*, const char*,
                                        uint32_t, const char*, const char*,
@@ -26,6 +34,7 @@ typedef bool (*fp_UpdateVis)(ISteamRemoteStorage*, PublishedFileUpdateHandle_t, 
 typedef bool (*fp_UpdateTags)(ISteamRemoteStorage*, PublishedFileUpdateHandle_t, SteamParamStringArray_t*);
 typedef bool (*fp_UpdateChangeDesc)(ISteamRemoteStorage*, PublishedFileUpdateHandle_t, const char*);
 typedef SteamAPICall_t (*fp_Commit)(ISteamRemoteStorage*, PublishedFileUpdateHandle_t, const char*);
+// fp_DeletePublished is declared in callback_bridge.h (included above)
 
 // ── Static globals ─────────────────────────────────────────────────────────
 
@@ -36,6 +45,14 @@ static fp_IsCompleted     g_is_completed = nullptr;
 static fp_GetResult       g_get_result   = nullptr;
 static fp_FileWrite       g_file_write   = nullptr;
 static fp_FileDelete      g_file_delete  = nullptr;
+static fp_FileExists      g_file_exists  = nullptr;
+static fp_GetFileSize     g_get_file_size = nullptr;
+static fp_FilePersisted   g_file_persisted = nullptr;
+static fp_IsCloudApp      g_is_cloud_app  = nullptr;
+static fp_IsCloudAcct     g_is_cloud_acct = nullptr;
+static fp_SetCloudApp     g_set_cloud_app = nullptr;
+static fp_GetQuota        g_get_quota     = nullptr;
+static fp_SetSyncPlatforms g_set_sync_platforms = nullptr;
 static fp_FileShare       g_file_share   = nullptr;
 static fp_Publish         g_publish      = nullptr;
 static fp_CreateUpdate    g_create_upd   = nullptr;
@@ -46,7 +63,8 @@ static fp_UpdateDesc      g_upd_desc     = nullptr;
 static fp_UpdateVis       g_upd_vis      = nullptr;
 static fp_UpdateTags      g_upd_tags     = nullptr;
 static fp_UpdateChangeDesc g_upd_changedesc = nullptr;
-static fp_Commit          g_commit       = nullptr;
+static fp_Commit          g_commit           = nullptr;
+static fp_DeletePublished g_delete_published = nullptr;
 
 static bool g_initialised = false;
 
@@ -85,6 +103,14 @@ bool steam_bridge_init() {
     g_get_result   = (fp_GetResult)   resolve(lib, "SteamAPI_ISteamUtils_GetAPICallResult",   true);
     g_file_write   = (fp_FileWrite)   resolve(lib, "SteamAPI_ISteamRemoteStorage_FileWrite",  true);
     g_file_delete  = (fp_FileDelete)  resolve(lib, "SteamAPI_ISteamRemoteStorage_FileDelete", false);
+    g_file_exists  = (fp_FileExists)  resolve(lib, "SteamAPI_ISteamRemoteStorage_FileExists", false);
+    g_get_file_size = (fp_GetFileSize)resolve(lib, "SteamAPI_ISteamRemoteStorage_GetFileSize", false);
+    g_file_persisted = (fp_FilePersisted)resolve(lib, "SteamAPI_ISteamRemoteStorage_FilePersisted", false);
+    g_is_cloud_app  = (fp_IsCloudApp) resolve(lib, "SteamAPI_ISteamRemoteStorage_IsCloudEnabledForApp",     false);
+    g_is_cloud_acct = (fp_IsCloudAcct)resolve(lib, "SteamAPI_ISteamRemoteStorage_IsCloudEnabledForAccount", false);
+    g_set_cloud_app = (fp_SetCloudApp)resolve(lib, "SteamAPI_ISteamRemoteStorage_SetCloudEnabledForApp",    false);
+    g_get_quota     = (fp_GetQuota)   resolve(lib, "SteamAPI_ISteamRemoteStorage_GetQuota",                 false);
+    g_set_sync_platforms = (fp_SetSyncPlatforms)resolve(lib, "SteamAPI_ISteamRemoteStorage_SetSyncPlatforms", false);
     g_file_share   = (fp_FileShare)   resolve(lib, "SteamAPI_ISteamRemoteStorage_FileShare",  true);
     g_publish      = (fp_Publish)     resolve(lib, "SteamAPI_ISteamRemoteStorage_PublishWorkshopFile", true);
     g_create_upd   = (fp_CreateUpdate)resolve(lib, "SteamAPI_ISteamRemoteStorage_CreatePublishedFileUpdateRequest", true);
@@ -95,11 +121,12 @@ bool steam_bridge_init() {
     g_upd_vis      = (fp_UpdateVis)   resolve(lib, "SteamAPI_ISteamRemoteStorage_UpdatePublishedFileVisibility",    false);
     g_upd_tags     = (fp_UpdateTags)  resolve(lib, "SteamAPI_ISteamRemoteStorage_UpdatePublishedFileTags",         false);
     g_upd_changedesc=(fp_UpdateChangeDesc)resolve(lib,"SteamAPI_ISteamRemoteStorage_UpdatePublishedFileSetChangeDescription", false);
-    g_commit       = (fp_Commit)      resolve(lib, "SteamAPI_ISteamRemoteStorage_CommitPublishedFileUpdate",        true);
+    g_commit       = (fp_Commit)         resolve(lib, "SteamAPI_ISteamRemoteStorage_CommitPublishedFileUpdate",  true);
+    g_delete_published = (fp_DeletePublished)resolve(lib, "SteamAPI_ISteamRemoteStorage_DeletePublishedFile",    true);
 
     bool ok = g_get_rs && g_get_utils && g_run_cbs && g_is_completed && g_get_result &&
               g_file_write && g_file_share && g_publish && g_create_upd &&
-              g_upd_file && g_commit;
+              g_upd_file && g_commit && g_delete_published;
 
     if (ok) {
         g_initialised = true;
@@ -129,6 +156,42 @@ bool rs_FileWrite(ISteamRemoteStorage* rs, const char* file, const void* data, i
 
 bool rs_FileDelete(ISteamRemoteStorage* rs, const char* file) {
     return g_file_delete ? g_file_delete(rs, file) : false;
+}
+
+bool rs_FileExists(ISteamRemoteStorage* rs, const char* file) {
+    // Assume present if the probe symbol is unavailable.
+    return g_file_exists ? g_file_exists(rs, file) : true;
+}
+
+int32_t rs_GetFileSize(ISteamRemoteStorage* rs, const char* file) {
+    return g_get_file_size ? g_get_file_size(rs, file) : -1;
+}
+
+bool rs_FilePersisted(ISteamRemoteStorage* rs, const char* file) {
+    // Assume persisted if the probe symbol is unavailable (degrade to the
+    // previous "share immediately" behaviour).
+    return g_file_persisted ? g_file_persisted(rs, file) : true;
+}
+
+bool rs_IsCloudEnabledForApp(ISteamRemoteStorage* rs) {
+    return g_is_cloud_app ? g_is_cloud_app(rs) : true;
+}
+
+bool rs_IsCloudEnabledForAccount(ISteamRemoteStorage* rs) {
+    return g_is_cloud_acct ? g_is_cloud_acct(rs) : true;
+}
+
+void rs_SetCloudEnabledForApp(ISteamRemoteStorage* rs, bool enabled) {
+    if (g_set_cloud_app) g_set_cloud_app(rs, enabled);
+}
+
+bool rs_GetQuota(ISteamRemoteStorage* rs, uint64_t* total, uint64_t* avail) {
+    if (!g_get_quota) { if (total) *total = 0; if (avail) *avail = 0; return false; }
+    return g_get_quota(rs, total, avail);
+}
+
+bool rs_SetSyncPlatforms(ISteamRemoteStorage* rs, const char* file, int32_t platforms) {
+    return g_set_sync_platforms ? g_set_sync_platforms(rs, file, platforms) : false;
 }
 
 SteamAPICall_t rs_FileShare(ISteamRemoteStorage* rs, const char* file) {
@@ -189,6 +252,10 @@ SteamAPICall_t rs_CommitPublishedFileUpdate(ISteamRemoteStorage* rs,
                                             PublishedFileUpdateHandle_t h,
                                             const char* changeDesc) {
     return g_commit ? g_commit(rs, h, changeDesc) : 0;
+}
+
+SteamAPICall_t rs_DeletePublishedFile(ISteamRemoteStorage* rs, PublishedFileId_t id) {
+    return g_delete_published ? g_delete_published(rs, id) : 0;
 }
 
 bool utils_IsAPICallCompleted(ISteamUtils* utils, SteamAPICall_t call, bool* failed) {

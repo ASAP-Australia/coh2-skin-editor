@@ -153,18 +153,16 @@ export default function TemplatePicker({
   }, [open])
 
   // Group options by section so we can render headers in a single pass.
-  // 'workshop' is intentionally excluded — the on-submit handler is not
-  // yet wired (see TODO in file header) so we hide it to avoid a broken
-  // affordance. The 'workshop' TemplateKind type member is retained for
-  // future use; options with kind:'workshop' are silently dropped here.
-  const grouped: Record<Exclude<TemplateKind, 'workshop'>, TemplateOption[]> = {
+  // 'workshop' entries are the user's subscribed in-game camos (inventory):
+  // selecting one opens the target vehicle via the same clone path as 'stock'
+  // (see TopBar onChange / cloneSkinProjectFromTemplate).
+  const grouped: Record<TemplateKind, TemplateOption[]> = {
     blank: [],
     saved: [],
     stock: [],
+    workshop: [],
   }
-  for (const o of options) {
-    if (o.kind !== 'workshop') grouped[o.kind].push(o)
-  }
+  for (const o of options) grouped[o.kind].push(o)
 
   const hoveredOption = hovered ? options.find(o => o.id === hovered) : null
 
@@ -211,7 +209,7 @@ export default function TemplatePicker({
           data-testid="template-picker-panel"
           style={panelStyle}
         >
-          {(['blank', 'saved', 'stock'] as Exclude<TemplateKind, 'workshop'>[]).map(kind => {
+          {(['blank', 'saved', 'stock', 'workshop'] as TemplateKind[]).map(kind => {
             const items = grouped[kind]
             // 'blank' always shown; others suppressed when empty so the
             // panel doesn't show empty section headers.

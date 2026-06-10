@@ -1,0 +1,26 @@
+[
+  {
+    "id": "su85",
+    "rect": {
+      "x": 951,
+      "y": 1256,
+      "w": 340,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "high (score=30, ±20px)",
+    "note": "Wikinger OKW skin; white Balkenkreuz centroid=(1121,1416)"
+  },
+  {
+    "id": "kv2_heavy_tank",
+    "rect": {
+      "x": 1209,
+      "y": 990,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (score=22, ±20px)",
+    "note": "Wikinger OKW skin (German cross on Soviet KV-2 hull); centroid=(1369,1150)"
+  }
+]

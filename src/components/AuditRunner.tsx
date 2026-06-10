@@ -33,20 +33,29 @@ const Viewport = React.lazy(() => import('@/components/Viewport'))
 // Keep this set SMALL so a run finishes quickly. Edit here to add/remove.
 // Vanilla: 4 vehicles × 2 seasons = 8 frames.
 // Decal:   2-3 vehicles × summer only.
-const VANILLA_IDS = [
+// `?only=<id>` (optional) renders a SINGLE vehicle — used to eyeball one
+// vehicle per launch (the batch pipeline can stall after the first switch in
+// the hidden audit window, so single-vehicle runs are the reliable path).
+// `?onlySeason=summer|winter` optionally restricts the season.
+const _auditParams = new URLSearchParams(location.search)
+const _only = _auditParams.get('only')
+const _onlySeason = _auditParams.get('onlySeason') as 'summer' | 'winter' | null
+
+const VANILLA_IDS = _only ? [_only] : [
   'king_tiger_sdkfz_182',
   'panther_ausf_g',
   'cromwell',
   't34_76',
 ]
 
-const DECAL_IDS = [
+const DECAL_IDS = _only ? [] : [
   'king_tiger_sdkfz_182',
   'panther_ausf_g',
   'cromwell',
 ]
 
-const SEASONS: Array<'summer' | 'winter'> = ['summer', 'winter']
+const SEASONS: Array<'summer' | 'winter'> =
+  _onlySeason ? [_onlySeason] : ['summer', 'winter']
 
 // Badge rect in the 2048² overlay canvas (King Tiger hullSideRight, used as
 // an approximation for all vehicles — same rect as AtlasPreview3D).

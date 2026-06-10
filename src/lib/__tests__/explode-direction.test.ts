@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Vector3 } from 'three'
-import { computeExplodeDirection } from '../explode-direction'
+import { computeExplodeDirection, computeExplodeOffset } from '../explode-direction'
 
 const ZERO = new Vector3(0, 0, 0)
 const SIZE = new Vector3(5, 3, 8) // a typical King Tiger bounding box
@@ -149,5 +149,35 @@ describe('computeExplodeDirection – UV-region centroid3d override', () => {
     const d = computeExplodeDirection('GEO_chassis_extra', ZERO, SIZE, 'king_tiger_sdkfz_182', ZERO)
     // Falls through to heuristic: chassis → anchor
     expect(d.lengthSq()).toBeCloseTo(0)
+  })
+})
+
+describe('computeExplodeOffset – radial unwrap (B6)', () => {
+  it('pushes an off-centre part outward from the model centre', () => {
+    // A right-side wheel: radial = RIGHT - centre. Offset must point the same
+    // way (rightward) and be a meaningful fraction of the radial distance.
+    const off = computeExplodeOffset('GEO_road_wheel_r', RIGHT, SIZE, null, ZERO)
+    expect(off.x).toBeGreaterThan(0)
+    expect(off.length()).toBeGreaterThan(0.5)
+  })
+
+  it('mirrors left/right parts to opposite sides', () => {
+    const r = computeExplodeOffset('GEO_road_wheel_r', RIGHT, SIZE, null, ZERO)
+    const l = computeExplodeOffset('GEO_road_wheel_l', LEFT, SIZE, null, ZERO)
+    expect(Math.sign(r.x)).toBe(1)
+    expect(Math.sign(l.x)).toBe(-1)
+  })
+
+  it('a centre-buried part (hull) still gets a non-zero nudge so it separates', () => {
+    // radial ≈ 0 → must fall back to the name-aware nudge rather than staying
+    // welded at the origin (the old "hull never moves" bug).
+    const off = computeExplodeOffset('GEO_hull_mesh', ZERO, SIZE, null, ZERO)
+    expect(off.length()).toBeGreaterThan(0)
+  })
+
+  it('scales outward more for a larger model', () => {
+    const small = computeExplodeOffset('GEO_x', new Vector3(1, 0, 0), new Vector3(2, 2, 2), null, ZERO)
+    const big = computeExplodeOffset('GEO_x', new Vector3(4, 0, 0), new Vector3(8, 8, 8), null, ZERO)
+    expect(big.length()).toBeGreaterThan(small.length())
   })
 })

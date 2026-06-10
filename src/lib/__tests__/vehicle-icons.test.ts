@@ -129,7 +129,7 @@ describe('resolveVehicleIcon — bundled PNG at /icons/vehicles/<id>.png', () =>
       'fetch',
       vi.fn(async (url: string) => {
         // Serve the fake PNG only for the tiger portrait path; reject all others
-        if (url === '/icons/vehicles/tiger.png') {
+        if (url.endsWith('/icons/vehicles/tiger.png')) {
           return new Response(pngBytes, {
             status: 200,
             headers: { 'content-type': 'image/png' },

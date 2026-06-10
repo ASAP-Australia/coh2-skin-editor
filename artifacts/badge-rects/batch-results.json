@@ -1,0 +1,187 @@
+[
+  {
+    "id": "panther_ausf_g",
+    "rect": {
+      "x": 0,
+      "y": 0,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (scan score=28, ±40px)",
+    "note": "Wikinger skin; balkenkreuz pattern scan; centroid=(30,30)",
+    "centroid": {
+      "cx": 30,
+      "cy": 30,
+      "score": 28
+    }
+  },
+  {
+    "id": "jagdtiger",
+    "rect": null,
+    "key": "hullSideRight",
+    "confidence": "SKIP",
+    "note": "no matching RGT"
+  },
+  {
+    "id": "panzer_iv_sdkfz_ausf_i",
+    "rect": {
+      "x": 0,
+      "y": 0,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (scan score=28, ±40px)",
+    "note": "Wikinger skin; balkenkreuz pattern scan; centroid=(30,30)",
+    "centroid": {
+      "cx": 30,
+      "cy": 30,
+      "score": 28
+    }
+  },
+  {
+    "id": "jagdpanzer_iv_sdkfz_162",
+    "rect": {
+      "x": 0,
+      "y": 0,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (scan score=28, ±40px)",
+    "note": "Wikinger skin; balkenkreuz pattern scan; centroid=(78,30)",
+    "centroid": {
+      "cx": 78,
+      "cy": 30,
+      "score": 28
+    }
+  },
+  {
+    "id": "stug_iii",
+    "rect": {
+      "x": 222,
+      "y": 0,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (scan score=28, ±40px)",
+    "note": "Wikinger skin; balkenkreuz pattern scan; centroid=(382,30)",
+    "centroid": {
+      "cx": 382,
+      "cy": 30,
+      "score": 28
+    }
+  },
+  {
+    "id": "panzerwerfer",
+    "rect": {
+      "x": 0,
+      "y": 0,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (scan score=28, ±40px)",
+    "note": "Wikinger skin; balkenkreuz pattern scan; centroid=(30,30)",
+    "centroid": {
+      "cx": 30,
+      "cy": 30,
+      "score": 28
+    }
+  },
+  {
+    "id": "is2m_heavy_tank",
+    "rect": {
+      "x": 1600,
+      "y": 384,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (scan score=19, ±40px)",
+    "note": "Wikinger skin; soviet_star pattern scan; centroid=(1760,544)",
+    "centroid": {
+      "cx": 1760,
+      "cy": 544,
+      "score": 19
+    }
+  },
+  {
+    "id": "kv1_heavy_tank",
+    "rect": null,
+    "key": "hullSideRight",
+    "confidence": "SKIP",
+    "note": "no emblem detected by scan"
+  },
+  {
+    "id": "kv2_heavy_tank",
+    "rect": {
+      "x": 0,
+      "y": 368,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (scan score=15, ±40px)",
+    "note": "Wikinger skin; soviet_star pattern scan; centroid=(40,528)",
+    "centroid": {
+      "cx": 40,
+      "cy": 528,
+      "score": 15
+    }
+  },
+  {
+    "id": "t70m_light_tank",
+    "rect": null,
+    "key": "hullSideRight",
+    "confidence": "SKIP",
+    "note": "no emblem detected by scan"
+  },
+  {
+    "id": "su85",
+    "rect": null,
+    "key": "hullSideRight",
+    "confidence": "SKIP",
+    "note": "no emblem detected by scan"
+  },
+  {
+    "id": "cromwell",
+    "rect": {
+      "x": 1360,
+      "y": 0,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (scan score=310, ±40px)",
+    "note": "Wikinger skin; british_star pattern scan; centroid=(1520,112)",
+    "centroid": {
+      "cx": 1520,
+      "cy": 112,
+      "score": 310
+    }
+  },
+  {
+    "id": "churchill",
+    "rect": null,
+    "key": "hullSideRight",
+    "confidence": "SKIP",
+    "note": "no emblem detected by scan"
+  },
+  {
+    "id": "comet",
+    "rect": null,
+    "key": "hullSideRight",
+    "confidence": "SKIP",
+    "note": "no emblem detected by scan"
+  },
+  {
+    "id": "sherman_firefly",
+    "rect": null,
+    "key": "hullSideRight",
+    "confidence": "SKIP",
+    "note": "no emblem detected by scan"
+  }
+]

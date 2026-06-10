@@ -26,10 +26,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
+  AlignCenter,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignStartHorizontal,
+  AlignStartVertical,
   Brush,
   CaseSensitive,
   ChevronDown,
   ChevronUp,
+  Circle,
   Contrast,
   CornerDownLeft,
   Copy,
@@ -38,6 +45,7 @@ import {
   Eraser,
   FlipHorizontal2,
   FlipVertical2,
+  HelpCircle,
   Image as ImageIcon,
   Library,
   Lock,
@@ -46,12 +54,16 @@ import {
   MousePointer2,
   Palette,
   Pencil,
+  Pipette,
   RotateCcw,
+  RotateCw,
   Sliders,
   Sun,
   Trash2,
 } from 'lucide-react'
+import KeyboardShortcutsOverlay from './editor-primitives/KeyboardShortcutsOverlay'
 import { applySnap, type SnapTarget } from '@/lib/snap-guides'
+import { samplePixel } from '@/lib/brush'
 import {
   DECAL_PACK_SIZE,
   DECAL_TINT_DEFAULTS,
@@ -72,7 +84,6 @@ import HexColorInput from '@/components/editor-primitives/HexColorInput'
 import EditorTitlePill from '@/components/editor-primitives/EditorTitlePill'
 // StateIcon is now used by EditorTitlePill — no direct import needed here
 import AtlasViewPanel from '@/components/AtlasViewPanel'
-import DecalPackInGamePreview from '@/components/DecalPackInGamePreview'
 import {
   type AtlasViewMode,
   loadDecalViewMode,
@@ -121,12 +132,13 @@ const BATCH_IMPORT_MAX = 32
 const BLANK_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 
-export default function DecalPackEditor({ project: initialProject, onBack, installRoot }: Props) {
+export default function DecalPackEditor({ project: initialProject, onBack, installRoot: _installRoot }: Props) {
   const [project, setProject] = useState<Coh2DecalPackProject>(initialProject)
   const [activeTool, setActiveTool] = useState<DecalToolId>('select')
   /** Non-null when the batch-import picker hit the 32-file cap. */
   const [batchWarning, setBatchWarning] = useState<string | null>(null)
   const undoStack = useRef<Coh2DecalPackProject[]>([])
+  const redoStack = useRef<Coh2DecalPackProject[]>([])
   const dropZoneRef = useRef<ImageDropZoneHandle>(null)
 
   // ── Draw tool state ────────────────────────────────────────────────────
@@ -139,12 +151,38 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
   const [mirrorY, setMirrorY] = useState(false)
   /** Erase mode: destination-out compositing instead of painting. */
   const [brushErase, setBrushErase] = useState(false)
+  /** Eyedropper mode: one-shot — next click samples the composited decal
+   *  canvas and sets it as the brush colour, then snaps back to paint. */
+  const [eyedropperActive, setEyedropperActive] = useState(false)
   const liveStrokeCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const isDrawingRef = useRef(false)
 
   // ── Multi-select state ────────────────────────────────────────────────
   /** Additional selected decal ids for multi-select (Cmd/Ctrl-click). */
   const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set())
+
+  // ── G8: Configurable nudge step ───────────────────────────────────────
+  /** How many px each arrow-key nudge moves the selected decal. */
+  const [nudgeStep, setNudgeStep] = useState<1 | 2 | 4 | 8>(1)
+
+  // ── G11: Snap-to-grid state ───────────────────────────────────────────
+  const [snapGrid, setSnapGrid] = useState(false)
+  const [snapGridStep, setSnapGridStep] = useState<4 | 8 | 16 | 32>(8)
+
+  // ── G6: Inline layer rename state ─────────────────────────────────────
+  /** The decal id currently being renamed (null = not renaming). */
+  const [renamingDecalId, setRenamingDecalId] = useState<string | null>(null)
+
+  // ── Keyboard shortcuts overlay (G2) ──────────────────────────────────
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+
+  // ── Drag-to-reorder state (G3) ───────────────────────────────────────
+  const [dragDecalId, setDragDecalId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+
+  // ── Brush hardness state (G1) ────────────────────────────────────────
+  /** 1 = hard edge, 0 = fully soft/feathered. Component-local, not persisted. */
+  const [brushHardness, setBrushHardness] = useState(1)
 
   // ── Insignia library modal state ──────────────────────────────────────
   const [insigniaOpen, setInsigniaOpen] = useState(false)
@@ -210,6 +248,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
   const [publishTarget, setPublishTarget] = useState<import('@/components/PublishToWorkshopDialog').WorkshopPublishTarget | null>(null)
   const [isBuildingTarget, setIsBuildingTarget] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
 
   // ── Project mutation ─────────────────────────────────────────────────────
   const mutate = useCallback(
@@ -221,6 +260,8 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         if (undoable) {
           undoStack.current.push(prev)
           if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift()
+          // New undoable action invalidates the redo future.
+          redoStack.current = []
         }
         const next = { ...fn(prev), modifiedAt: new Date().toISOString() }
         saveDecalPackToLocal(next)
@@ -236,10 +277,110 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
   const undo = useCallback(() => {
     const prev = undoStack.current.pop()
     if (!prev) return
-    setProject(prev)
-    saveDecalPackToLocal(prev)
-    scheduleLiveSync('decal', prev)
+    // Push current project onto redo stack before restoring.
+    setProject(current => {
+      redoStack.current.push(current)
+      if (redoStack.current.length > UNDO_LIMIT) redoStack.current.shift()
+      saveDecalPackToLocal(prev)
+      scheduleLiveSync('decal', prev)
+      return prev
+    })
   }, [])
+
+  /** Re-apply the most recently undone action. Bound to Cmd/Ctrl-Shift-Z and Ctrl+Y. */
+  const redo = useCallback(() => {
+    const next = redoStack.current.pop()
+    if (!next) return
+    setProject(current => {
+      undoStack.current.push(current)
+      if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift()
+      saveDecalPackToLocal(next)
+      scheduleLiveSync('decal', next)
+      return next
+    })
+  }, [])
+
+  // ── Active-cell helpers (v6) ─────────────────────────────────────────────
+  // `cellDecals`: the read-only list visible in the current (part,faction)
+  // cell. For v5 flat projects, falls back to project.decals.
+  // For v6: if activeFaction is set, reads overrides[faction] (with fallback
+  // to shared for display-only); otherwise reads shared.
+  // The `activeLayerId` for the active cell comes from parts[activePartIndex].activeLayerId.
+
+  // Returns the decal list that should be DISPLAYED for the current cell.
+  // Faction cells that have no override yet fall back to shared (inheritance).
+  const cellDecals: readonly Decal[] = useMemo(() => {
+    if (!project.parts) return project.decals // v5 fallback
+    const part = project.parts[activePartIndex]
+    if (!part) return []
+    if (activeFaction !== null) {
+      return part.overrides?.[activeFaction] ?? part.shared
+    }
+    return part.shared
+  }, [project.parts, project.decals, activePartIndex, activeFaction])
+
+  // Returns the activeLayerId for the current cell.
+  const cellActiveLayerId: string | null = useMemo(() => {
+    if (!project.parts) return project.activeDecalId // v5 fallback
+    const part = project.parts[activePartIndex]
+    if (!part) return null
+    return part.activeLayerId
+  }, [project.parts, project.activeDecalId, activePartIndex])
+
+  /**
+   * mutateActiveCell — immutably applies `updater` to the current cell's
+   * decal list, returning an updated project.
+   *
+   * Fork-on-write semantics for faction cells: when activeFaction is set and
+   * no override array exists yet, we COPY the shared list into overrides[faction]
+   * before applying the updater. This ensures editing a faction "forks" from
+   * shared rather than mutating it. The fork only happens on the FIRST edit for
+   * that faction cell.
+   *
+   * For v5 flat projects (no parts), falls back to mutating project.decals.
+   */
+  const mutateActiveCell = useCallback(
+    (
+      p: Coh2DecalPackProject,
+      updater: (list: Decal[]) => Decal[],
+    ): Coh2DecalPackProject => {
+      if (!p.parts) {
+        // v5 fallback: mutate project.decals directly
+        return { ...p, decals: updater(p.decals) }
+      }
+      const parts = p.parts.map((part, i) => {
+        if (i !== activePartIndex) return part
+        if (activeFaction !== null) {
+          // Fork-on-write: if no override exists yet, fork from shared.
+          const existing = part.overrides?.[activeFaction] ?? [...part.shared]
+          const updated = updater(existing)
+          return {
+            ...part,
+            overrides: { ...part.overrides, [activeFaction]: updated },
+          }
+        }
+        return { ...part, shared: updater(part.shared) }
+      })
+      return { ...p, parts }
+    },
+    [activePartIndex, activeFaction],
+  )
+
+  /**
+   * setActiveCellLayerId — sets the activeLayerId on the current part.
+   * This is separate from mutateActiveCell so callers that only need to
+   * change selection don't trigger fork-on-write.
+   */
+  const setActiveCellLayerId = useCallback(
+    (p: Coh2DecalPackProject, id: string | null): Coh2DecalPackProject => {
+      if (!p.parts) return { ...p, activeDecalId: id } // v5 fallback
+      const parts = p.parts.map((part, i) =>
+        i === activePartIndex ? { ...part, activeLayerId: id } : part,
+      )
+      return { ...p, parts, activeDecalId: id }
+    },
+    [activePartIndex],
+  )
 
   // ── Image library import ─────────────────────────────────────────────────
   const onImport = useCallback(
@@ -307,10 +448,16 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
     (imageId: string) => {
       mutate(p => {
         const decal = newDecal(p, imageId)
+        if (p.parts) {
+          // v6: append to the active cell and activate it.
+          const withAdded = mutateActiveCell(p, list => [...list, decal])
+          return setActiveCellLayerId(withAdded, decal.id)
+        }
+        // v5 fallback:
         return { ...p, decals: [...p.decals, decal], activeDecalId: decal.id }
       })
     },
-    [mutate],
+    [mutate, mutateActiveCell, setActiveCellLayerId],
   )
 
   const onBatchImport = useCallback(async () => {
@@ -390,10 +537,19 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
     }
   }, [project, mutate, activePartIndex, activeFaction])
 
+  // ── Component-level wrapper for updateDecal capturing active cell ────────
+  // Defined before any effects that use it to avoid temporal dead zone issues.
+  const updateCellDecal = useCallback(
+    (p: Coh2DecalPackProject, id: string, fn: (d: Decal) => Decal) =>
+      updateDecal(p, id, fn, activePartIndex, activeFaction),
+    [activePartIndex, activeFaction],
+  )
+
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
+  // activeDecal: resolved from the ACTIVE CELL's layer list (v6) or project.decals (v5).
   const activeDecal = useMemo(
-    () => project.decals.find(d => d.id === project.activeDecalId) ?? null,
-    [project.decals, project.activeDecalId],
+    () => cellDecals.find(d => d.id === cellActiveLayerId) ?? null,
+    [cellDecals, cellActiveLayerId],
   )
 
   // (Removed in v1.0: live LobbyPreviewPanel composition. The in-editor
@@ -457,26 +613,39 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
       if (inForm) return
 
+      if (ev.key === 'F1') {
+        ev.preventDefault()
+        setShortcutsOpen(v => !v)
+        return
+      }
       if (meta && ev.key.toLowerCase() === 'z' && !ev.shiftKey) {
         ev.preventDefault()
         undo()
         return
       }
+      // Redo: Cmd/Ctrl+Shift+Z or Ctrl+Y
+      if ((meta && ev.shiftKey && ev.key.toLowerCase() === 'z') || (ev.ctrlKey && ev.key.toLowerCase() === 'y')) {
+        ev.preventDefault()
+        redo()
+        return
+      }
+      // G7: brush size [ / ] shortcuts when in draw mode
+      if (activeTool === 'draw') {
+        if (ev.key === '[') {
+          ev.preventDefault()
+          setBrushSize(s => Math.max(1, s - 2))
+          return
+        }
+        if (ev.key === ']') {
+          ev.preventDefault()
+          setBrushSize(s => Math.min(40, s + 2))
+          return
+        }
+      }
       if (!activeDecal) return
       if (ev.key === 'Delete' || ev.key === 'Backspace') {
         ev.preventDefault()
-        const targetId = activeDecal.id
-        mutate(p => {
-          const idx = p.decals.findIndex(d => d.id === targetId)
-          if (idx < 0) return p
-          const next = p.decals.filter(d => d.id !== targetId)
-          let newActiveId: string | null = p.activeDecalId
-          if (p.activeDecalId === targetId) {
-            const neighbour = next[idx] ?? next[idx - 1] ?? null
-            newActiveId = neighbour ? neighbour.id : null
-          }
-          return { ...p, decals: next, activeDecalId: newActiveId }
-        })
+        deleteDecal(activeDecal.id)
       } else if (
         ev.key === 'ArrowUp' ||
         ev.key === 'ArrowDown' ||
@@ -486,9 +655,10 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         ev.preventDefault()
         const dx = ev.key === 'ArrowLeft' ? -1 : ev.key === 'ArrowRight' ? 1 : 0
         const dy = ev.key === 'ArrowUp' ? -1 : ev.key === 'ArrowDown' ? 1 : 0
-        const step = ev.shiftKey ? 10 : 1
+        // G8: use configurable nudge step; Shift = 10× the step
+        const step = ev.shiftKey ? nudgeStep * 10 : nudgeStep
         mutate(p =>
-          updateDecal(p, activeDecal.id, d => ({
+          updateCellDecal(p, activeDecal.id, d => ({
             ...d,
             x: d.x + dx * step,
             y: d.y + dy * step,
@@ -499,7 +669,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeDecal?.id, mutate, undo])
+  }, [activeDecal?.id, activeTool, nudgeStep, mutate, undo, redo, updateCellDecal])
 
   // ── Copy / paste (Cmd-C / Cmd-V) ─────────────────────────────────────────
   useEffect(() => {
@@ -531,16 +701,26 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           x: d.x + 16,
           y: d.y + 16,
         }))
-        mutate(p => ({
-          ...p,
-          decals: [...p.decals, ...copies],
-          activeDecalId: copies[copies.length - 1].id,
-        }))
+        const lastId = copies[copies.length - 1].id
+        mutate(p => {
+          const withPasted = mutateActiveCell(p, list => [...list, ...copies])
+          return setActiveCellLayerId(withPasted, lastId)
+        })
       }
     }
     window.addEventListener('keydown', onCopyPaste)
     return () => window.removeEventListener('keydown', onCopyPaste)
-  }, [activeDecal, mutate])
+  }, [activeDecal, mutate, mutateActiveCell, setActiveCellLayerId])
+
+  // ── Zoom state ──────────────────────────────────────────────────────────
+  // Persisted per-project so reopening preserves the user's zoom level.
+  const [zoom, setZoom] = useState(initialProject.editorZoom ?? 4)
+
+  // Persist zoom into project (non-undoable so it doesn't spam undo history).
+  useEffect(() => {
+    mutate(p => ({ ...p, editorZoom: zoom }), { undoable: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only runs when zoom changes
+  }, [zoom])
 
   // ── Canvas measurement (for drag math) ───────────────────────────────────
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -559,65 +739,125 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
     }
   }, [])
 
+  // Scroll-to-zoom: non-passive so we can preventDefault (avoids Chrome warning).
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      setZoom(z => Math.max(0.5, Math.min(8, +(z + (e.deltaY < 0 ? 0.15 : -0.15)).toFixed(2))))
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [])
+
   const viewScale = canvasRect ? canvasRect.width / DECAL_PACK_SIZE : 1
 
   // ── Decal manipulation ───────────────────────────────────────────────────
   const setActive = useCallback(
-    (id: string) => mutate(p => ({ ...p, activeDecalId: id }), { undoable: false }),
-    [mutate],
+    (id: string) => mutate(p => setActiveCellLayerId(p, id), { undoable: false }),
+    [mutate, setActiveCellLayerId],
   )
 
   const deleteDecal = useCallback(
     (id: string) => {
       mutate(p => {
-        const idx = p.decals.findIndex(d => d.id === id)
+        // Determine the current cell list for neighbour calculation.
+        const curCell: Decal[] = (() => {
+          if (!p.parts) return p.decals
+          const part = p.parts[activePartIndex]
+          if (!part) return []
+          if (activeFaction !== null) return part.overrides?.[activeFaction] ?? part.shared
+          return part.shared
+        })()
+        const idx = curCell.findIndex(d => d.id === id)
         if (idx < 0) return p
-        const next = p.decals.filter(d => d.id !== id)
-        let newActiveId: string | null = p.activeDecalId
-        if (p.activeDecalId === id) {
-          const neighbour = next[idx] ?? next[idx - 1] ?? null
+        const remaining = curCell.filter(d => d.id !== id)
+        const curActiveId = p.parts ? p.parts[activePartIndex]?.activeLayerId : p.activeDecalId
+        let newActiveId: string | null = curActiveId ?? null
+        if (curActiveId === id) {
+          const neighbour = remaining[idx] ?? remaining[idx - 1] ?? null
           newActiveId = neighbour ? neighbour.id : null
         }
-        return { ...p, decals: next, activeDecalId: newActiveId }
+        const withDeleted = mutateActiveCell(p, () => remaining)
+        return setActiveCellLayerId(withDeleted, newActiveId)
       })
     },
-    [mutate],
+    [mutate, mutateActiveCell, setActiveCellLayerId, activePartIndex, activeFaction],
   )
 
   const moveDecal = useCallback(
     (id: string, dir: -1 | 1) =>
-      mutate(p => {
-        const idx = p.decals.findIndex(d => d.id === id)
-        if (idx < 0) return p
-        const j = idx + dir
-        if (j < 0 || j >= p.decals.length) return p
-        const next = p.decals.slice()
-        ;[next[idx], next[j]] = [next[j], next[idx]]
-        return { ...p, decals: next }
-      }),
-    [mutate],
+      mutate(p =>
+        mutateActiveCell(p, list => {
+          const idx = list.findIndex(d => d.id === id)
+          if (idx < 0) return list
+          const j = idx + dir
+          if (j < 0 || j >= list.length) return list
+          const next = list.slice()
+          ;[next[idx], next[j]] = [next[j], next[idx]]
+          return next
+        }),
+      ),
+    [mutate, mutateActiveCell],
   )
 
   const duplicateDecal = useCallback(
     (id: string) =>
       mutate(p => {
-        const orig = p.decals.find(d => d.id === id)
-        if (!orig) return p
-        const copy: Decal = { ...orig, id: freshDecalId(), name: orig.name + ' (copy)' }
-        const idx = p.decals.findIndex(d => d.id === id)
-        const next = p.decals.slice()
-        next.splice(idx + 1, 0, copy)
-        return { ...p, decals: next, activeDecalId: copy.id }
+        let copy: Decal | null = null
+        const withDup = mutateActiveCell(p, list => {
+          const orig = list.find(d => d.id === id)
+          if (!orig) return list
+          copy = { ...orig, id: freshDecalId(), name: orig.name + ' (copy)' }
+          const idx = list.findIndex(d => d.id === id)
+          const next = list.slice()
+          next.splice(idx + 1, 0, copy)
+          return next
+        })
+        if (!copy) return withDup
+        return setActiveCellLayerId(withDup, (copy as Decal).id)
       }),
-    [mutate],
+    [mutate, mutateActiveCell, setActiveCellLayerId],
   )
+
+  // ── Drag-to-reorder handlers (G3) ───────────────────────────────────────
+  const onDecalDragStart = useCallback((id: string) => setDragDecalId(id), [])
+  const onDecalDragOver = useCallback((id: string) => setDragOverId(id), [])
+  const onDecalDrop = useCallback(
+    (targetId: string) => {
+      if (!dragDecalId || dragDecalId === targetId) {
+        setDragDecalId(null)
+        setDragOverId(null)
+        return
+      }
+      mutate(p =>
+        mutateActiveCell(p, list => {
+          const from = list.findIndex(d => d.id === dragDecalId)
+          const to = list.findIndex(d => d.id === targetId)
+          if (from < 0 || to < 0) return list
+          const next = list.slice()
+          const [item] = next.splice(from, 1)
+          next.splice(to, 0, item)
+          return next
+        }),
+      )
+      setDragDecalId(null)
+      setDragOverId(null)
+    },
+    [dragDecalId, mutate, mutateActiveCell],
+  )
+  const onDecalDragEnd = useCallback(() => {
+    setDragDecalId(null)
+    setDragOverId(null)
+  }, [])
 
   const updateActive = useCallback(
     (fn: (d: Decal) => Decal) => {
       if (!activeDecal) return
-      mutate(p => updateDecal(p, activeDecal.id, fn))
+      mutate(p => updateCellDecal(p, activeDecal.id, fn))
     },
-    [activeDecal, mutate],
+    [activeDecal, mutate, updateCellDecal],
   )
 
   // ── Canvas drag → translate the active decal (only in select/transform mode) ──
@@ -637,7 +877,19 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         /* setPointerCapture can throw in headless contexts */
       }
 
+      // G9: capture start positions of all multi-selected decals (if any).
+      // We snapshot from cellDecals so the captured positions are correct.
+      const multiStarts: Map<string, { x: number; y: number }> = new Map()
+      if (multiSelectedIds.size > 0) {
+        for (const d of cellDecals) {
+          if (d.id === activeDecal.id || multiSelectedIds.has(d.id)) {
+            multiStarts.set(d.id, { x: d.x, y: d.y })
+          }
+        }
+      }
+
       // Build snap targets: canvas edges, canvas centre.
+      // G11: also add grid-line targets when snap-to-grid is enabled.
       // Decal x/y is the decal centre position (translate(-50%,-50%)).
       const snapTargets: SnapTarget[] = [
         { kind: 'x', value: DECAL_PACK_SIZE / 2, label: 'canvas center X' },
@@ -647,6 +899,12 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         { kind: 'y', value: 0, label: 'canvas top edge' },
         { kind: 'y', value: DECAL_PACK_SIZE, label: 'canvas bottom edge' },
       ]
+      if (snapGrid) {
+        for (let v = snapGridStep; v < DECAL_PACK_SIZE; v += snapGridStep) {
+          snapTargets.push({ kind: 'x', value: v, label: `grid x ${v}` })
+          snapTargets.push({ kind: 'y', value: v, label: `grid y ${v}` })
+        }
+      }
 
       const onMove = (e: PointerEvent) => {
         const dx = (e.clientX - startClientX) / viewScale
@@ -655,15 +913,35 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         const candidateY = startY + dy
         const { snappedX, snappedY, firedTargets } = applySnap(candidateX, candidateY, snapTargets)
         setSnapGuides(firedTargets)
-        mutate(
-          p =>
-            updateDecal(p, activeDecal.id, d => ({
-              ...d,
-              x: snappedX,
-              y: snappedY,
-            })),
-          { undoable: false },
-        )
+        if (multiStarts.size > 1) {
+          // G9: move ALL selected decals by the same snapped delta.
+          const snapDx = snappedX - startX
+          const snapDy = snappedY - startY
+          mutate(
+            p => {
+              let next = p
+              for (const [id, start] of multiStarts) {
+                next = updateCellDecal(next, id, d => ({
+                  ...d,
+                  x: start.x + snapDx,
+                  y: start.y + snapDy,
+                }))
+              }
+              return next
+            },
+            { undoable: false },
+          )
+        } else {
+          mutate(
+            p =>
+              updateCellDecal(p, activeDecal.id, d => ({
+                ...d,
+                x: snappedX,
+                y: snappedY,
+              })),
+            { undoable: false },
+          )
+        }
       }
       const onUp = () => {
         setSnapGuides([])
@@ -673,7 +951,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
       window.addEventListener('pointermove', onMove)
       window.addEventListener('pointerup', onUp)
     },
-    [activeDecal, activeTool, viewScale, mutate, setSnapGuides],
+    [activeDecal, activeTool, viewScale, mutate, setSnapGuides, updateCellDecal, multiSelectedIds, cellDecals, snapGrid, snapGridStep],
   )
 
   // ── Draw tool: paint onto the active decal's source image ────────────────
@@ -686,6 +964,25 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
       const rect = canvasRef.current!.getBoundingClientRect()
       const x = (ev.clientX - rect.left) / viewScale
       const y = (ev.clientY - rect.top) / viewScale
+
+      // ── Eyedropper: one-shot colour sample from the composited decal canvas ──
+      if (eyedropperActive) {
+        const src = project.sourceImages[activeDecal.sourceImageId]
+        if (src) {
+          void loadImageForPreview(src.dataUrl).then(img => {
+            const canvas = rasteriseDecal(activeDecal, img)
+            const ctx = (canvas as HTMLCanvasElement).getContext
+              ? (canvas as HTMLCanvasElement).getContext('2d')
+              : null
+            if (ctx) {
+              const sampled = samplePixel(ctx, Math.round(x), Math.round(y))
+              setBrushColor(sampled)
+            }
+          })
+        }
+        setEyedropperActive(false)
+        return
+      }
 
       // Capture mirror flags at stroke start.
       const snapMirrorX = mirrorX
@@ -718,6 +1015,10 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
       lctx.lineWidth = brushSize
       lctx.lineCap = 'round'
       lctx.lineJoin = 'round'
+      // G1: brush softness — shadowBlur feather proportional to (1−hardness)
+      const feather = (1 - brushHardness) * brushSize * 0.6
+      lctx.shadowBlur = feather
+      lctx.shadowColor = brushErase ? 'rgba(0,0,0,1)' : brushColor
 
       const startPts = mirrorPoints(x, y)
       for (const pt of startPts) {
@@ -763,8 +1064,16 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         const octx = offscreen.getContext('2d')!
 
         // Read the current source dataUrl from project state, then composite.
+        // Look up the decal from the active cell (v6) or flat list (v5).
         setProject(prev => {
-          const decal = prev.decals.find(d => d.id === decalId)
+          const getCellList = (p: Coh2DecalPackProject): Decal[] => {
+            if (!p.parts) return p.decals
+            const part = p.parts[activePartIndex]
+            if (!part) return []
+            if (activeFaction !== null) return part.overrides?.[activeFaction] ?? part.shared
+            return part.shared
+          }
+          const decal = getCellList(prev).find(d => d.id === decalId)
           const src = decal ? prev.sourceImages[decal.sourceImageId] : null
           const existingDataUrl = src?.dataUrl ?? ''
 
@@ -777,7 +1086,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                 const newDataUrl = offscreen.toDataURL('image/png')
                 // Update the source image dataUrl in the project.
                 mutate(p => {
-                  const d = p.decals.find(x => x.id === decalId)
+                  const d = getCellList(p).find(x => x.id === decalId)
                   if (!d) return p
                   const srcId = d.sourceImageId
                   const srcImg = p.sourceImages[srcId]
@@ -799,7 +1108,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
               octx.drawImage(lc, 0, 0)
               const newDataUrl = offscreen.toDataURL('image/png')
               mutate(p => {
-                const d = p.decals.find(x => x.id === decalId)
+                const d = getCellList(p).find(x => x.id === decalId)
                 if (!d) return p
                 const srcId = d.sourceImageId
                 const srcImg = p.sourceImages[srcId]
@@ -835,6 +1144,8 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
       mirrorX,
       mirrorY,
       mutate,
+      activePartIndex,
+      activeFaction,
     ],
   )
 
@@ -979,10 +1290,24 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           {
             position: 'absolute',
             inset: 0,
-            display: 'grid',
-            placeItems: 'center',
-            padding: '120px 80px 160px 80px',
+            // overflow:hidden clips the OOB red zone to the work area so it
+            // never bleeds onto toolbars/sidebars.
+            overflow: 'hidden',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            // Symmetric vertical padding so the canvas stays centred both axes
+            // while clearing the bottom floating toolbar (~150px).
+            paddingTop: 150,
+            paddingBottom: 150,
+            paddingLeft: 80,
+            paddingRight: 80,
             WebkitAppRegion: 'no-drag',
+            // No explicit backdrop — the editor's normal background shows in the
+            // outside-bounds (OOB) region. The red OOB shade is a filtered
+            // DUPLICATE of the decal image (see the ghost overlay below) whose
+            // transparent areas contribute nothing, so empty margins keep the
+            // normal background and only spilled decal pixels read red.
           } as CSSProperties
         }
       >
@@ -1018,8 +1343,8 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           ref={canvasRef}
           onPointerDown={activeTool === 'draw' ? beginDraw : beginCanvasDrag}
           style={{
-            width: 'min(384px, calc(100vh - 200px))',
-            height: 'min(384px, calc(100vh - 200px))',
+            width: DECAL_PACK_SIZE * zoom,
+            height: DECAL_PACK_SIZE * zoom,
             position: 'relative',
             background: previewTransparent ? '#ffffff' : checkerBackground(),
             backgroundImage: previewTransparent ? lightCheckerBackground() : undefined,
@@ -1057,9 +1382,10 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
               const brightness = activeDecal.brightness ?? 100
               const contrast = activeDecal.contrast ?? 100
               const saturation = activeDecal.saturation ?? 100
-              const hasAdj = brightness !== 100 || contrast !== 100 || saturation !== 100
+              const hueRotate = activeDecal.hueRotate ?? 0
+              const hasAdj = brightness !== 100 || contrast !== 100 || saturation !== 100 || hueRotate !== 0
               const filterCss = hasAdj
-                ? `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`
+                ? `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%) hue-rotate(${hueRotate}deg)`
                 : undefined
               return (
                 <img
@@ -1081,6 +1407,87 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                     zIndex: 1,
                   }}
                 />
+              )
+            })()}
+
+          {/* Out-of-bounds red shade (deterministic — no blend modes).
+              A non-interactive, red-tinted DUPLICATE of the decal image,
+              clipped to the region OUTSIDE the canvas bins. CSS `filter`
+              respects source alpha, so transparent/empty areas contribute
+              nothing: the black work-area backdrop shows through (NO red when
+              nothing spills out of bounds). Only opaque decal pixels that
+              extend past the canvas edge receive the red shade.
+
+              NOTE: geometry mirrors the interactive decal render above — keep
+              the two in sync if the decal positioning changes. */}
+          {activeDecal &&
+            (() => {
+              const src = project.sourceImages[activeDecal.sourceImageId]
+              if (!src) return null
+              const baseW = src.width * activeDecal.scale * viewScale
+              const baseH = src.height * activeDecal.scale * viewScale
+              const cx = activeDecal.x * viewScale
+              const cy = activeDecal.y * viewScale
+              const sx = activeDecal.flipH ? -1 : 1
+              const sy = activeDecal.flipV ? -1 : 1
+              const brightness = activeDecal.brightness ?? 100
+              const contrast = activeDecal.contrast ?? 100
+              const saturation = activeDecal.saturation ?? 100
+              const hueRotate = activeDecal.hueRotate ?? 0
+              const hasAdj = brightness !== 100 || contrast !== 100 || saturation !== 100 || hueRotate !== 0
+              const innerFilter = hasAdj
+                ? `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%) hue-rotate(${hueRotate}deg)`
+                : undefined
+              return (
+                <>
+                {/* Red-tint colour matrix (preserves alpha; maps content to a
+                    luminance-shaded RED — CSS sepia+hue-rotate drifted orange). */}
+                <svg width={0} height={0} style={{ position: 'absolute' }} aria-hidden focusable={false}>
+                  <filter id="oob-red-tint" colorInterpolationFilters="sRGB">
+                    <feColorMatrix
+                      type="matrix"
+                      values="0.45 0.45 0.45 0 0.28
+                              0.05 0.05 0.05 0 0
+                              0.05 0.05 0.05 0 0
+                              0    0    0    1 0"
+                    />
+                  </filter>
+                </svg>
+                <div
+                  aria-hidden
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    overflow: 'visible',
+                    pointerEvents: 'none',
+                    opacity: 1,
+                    // Recolour spilled decal pixels to a red shade; a no-op on
+                    // transparent pixels, keeping empty margins on the normal bg.
+                    filter: 'url(#oob-red-tint)',
+                    // Donut clip: reveal OUTSIDE the bins, hide inside. Coords
+                    // are in this overlay's box space; the box is inset:0 so it
+                    // coincides with the canvas bins (0,0)–(S,S).
+                    clipPath: `polygon(evenodd, -9999px -9999px, 9999px -9999px, 9999px 9999px, -9999px 9999px, -9999px -9999px, 0px 0px, ${DECAL_PACK_SIZE * zoom}px 0px, ${DECAL_PACK_SIZE * zoom}px ${DECAL_PACK_SIZE * zoom}px, 0px ${DECAL_PACK_SIZE * zoom}px, 0px 0px)`,
+                  }}
+                >
+                  <img
+                    src={src.dataUrl}
+                    alt=""
+                    draggable={false}
+                    style={{
+                      position: 'absolute',
+                      left: cx,
+                      top: cy,
+                      width: baseW,
+                      height: baseH,
+                      transform: `translate(-50%, -50%) rotate(${activeDecal.rotation}deg) scale(${sx}, ${sy})`,
+                      transformOrigin: '50% 50%',
+                      opacity: activeDecal.opacity,
+                      filter: innerFilter,
+                    }}
+                  />
+                </div>
+                </>
               )
             })()}
 
@@ -1194,15 +1601,112 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           5. BottomToolPill + ToolOptionsPeel — bottom-centre.
           ───────────────────────────────────────────────────────────── */}
 
-      <EditorHomeButton
-        onClick={onBack}
+      {/* ── Home + Undo/Redo cluster — top-left ──────────────────────── */}
+      <div
         style={{
           position: 'fixed',
           top: 'calc(12px + var(--app-top-inset, 0px))',
           left: 12,
           zIndex: 50,
-        }}
-      />
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+        } as CSSProperties}
+      >
+        <EditorHomeButton onClick={onBack} />
+        {/* Undo button */}
+        <button
+          type="button"
+          title="Undo (Ctrl+Z)"
+          aria-label="Undo (Ctrl+Z)"
+          disabled={undoStack.current.length === 0}
+          onClick={undo}
+          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-35 disabled:pointer-events-none"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 36,
+            height: 36,
+            borderRadius: 12,
+            background: 'rgba(15, 17, 22, 0.75)',
+            backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))',
+            backdropFilter: 'blur(40px) saturate(150%)',
+            WebkitBackdropFilter: 'blur(40px) saturate(150%)',
+            border: '0.5px solid rgba(255,255,255,0.08)',
+            boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05), 0 4px 12px -4px rgba(0,0,0,0.2)',
+            color: 'var(--color-text-2)',
+            cursor: 'pointer',
+            padding: 0,
+            transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+            WebkitAppRegion: 'no-drag',
+          } as CSSProperties}
+        >
+          <RotateCcw size={16} strokeWidth={2} aria-hidden />
+        </button>
+        {/* Redo button */}
+        <button
+          type="button"
+          title="Redo (Ctrl+Shift+Z)"
+          aria-label="Redo (Ctrl+Shift+Z)"
+          disabled={redoStack.current.length === 0}
+          onClick={redo}
+          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-35 disabled:pointer-events-none"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 36,
+            height: 36,
+            borderRadius: 12,
+            background: 'rgba(15, 17, 22, 0.75)',
+            backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))',
+            backdropFilter: 'blur(40px) saturate(150%)',
+            WebkitBackdropFilter: 'blur(40px) saturate(150%)',
+            border: '0.5px solid rgba(255,255,255,0.08)',
+            boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05), 0 4px 12px -4px rgba(0,0,0,0.2)',
+            color: 'var(--color-text-2)',
+            cursor: 'pointer',
+            padding: 0,
+            transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+            WebkitAppRegion: 'no-drag',
+          } as CSSProperties}
+        >
+          <RotateCw size={16} strokeWidth={2} aria-hidden />
+        </button>
+        {/* Help / keyboard shortcuts button (G2) */}
+        <button
+          type="button"
+          title="Keyboard shortcuts (F1)"
+          aria-label="Keyboard shortcuts (F1)"
+          onClick={() => setShortcutsOpen(true)}
+          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 36,
+            height: 36,
+            borderRadius: 12,
+            background: 'rgba(15, 17, 22, 0.75)',
+            backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))',
+            backdropFilter: 'blur(40px) saturate(150%)',
+            WebkitBackdropFilter: 'blur(40px) saturate(150%)',
+            border: '0.5px solid rgba(255,255,255,0.08)',
+            boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05), 0 4px 12px -4px rgba(0,0,0,0.2)',
+            color: 'var(--color-text-2)',
+            cursor: 'pointer',
+            padding: 0,
+            transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+            WebkitAppRegion: 'no-drag',
+          } as CSSProperties}
+        >
+          <HelpCircle size={16} strokeWidth={2} aria-hidden />
+        </button>
+      </div>
+
+      {/* ── Keyboard shortcuts overlay (G2) ────────────────────────────── */}
+      <KeyboardShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       {/* ── Centered pack-name title pill — top-centre of viewport ──────────
           Extracted to EditorTitlePill; mirrors FaceplateEditor and TopBar
@@ -1218,6 +1722,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         onAcknowledge={() => mutate(p => ({ ...p, titleAcknowledged: true }), { undoable: false })}
         onToggle={() => setPackNameEditOpen(v => !v)}
         popoverOpen={packNameEditOpen}
+        publishError={publishError}
         popoverContent={
           <PackIdentityPopover
             open={packNameEditOpen}
@@ -1270,6 +1775,10 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                 onRequestBuild={handleRequestBuild}
                 onUploadStart={() => setIsUploading(true)}
                 onUploadEnd={() => setIsUploading(false)}
+                onPublishError={(msg) => {
+                  setPublishError(msg)
+                  setTimeout(() => setPublishError(null), 8000)
+                }}
               />
             }
             locked={isUploading || isBuildingTarget}
@@ -1348,7 +1857,8 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           previews. */}
 
       {/* Always-visible vertical decal strip — left-center */}
-      {project.decals.length > 0 && (
+      {/* Uses cellDecals (active part/faction cell) for v6, project.decals for v5 */}
+      {cellDecals.length > 0 && (
         <div
           role="toolbar"
           aria-label="Decals"
@@ -1377,8 +1887,8 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
             if (ev.key === 'Escape') setDecalCtxMenu(null)
           }}
         >
-          {project.decals.map(decal => {
-            const isActive = decal.id === project.activeDecalId
+          {cellDecals.map(decal => {
+            const isActive = decal.id === cellActiveLayerId
             const isMulti = multiSelectedIds.has(decal.id)
             const src = project.sourceImages[decal.sourceImageId]
             const posLocked = decal.locked?.position
@@ -1389,8 +1899,14 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                 tabIndex={0}
                 aria-label={decal.name}
                 aria-pressed={isActive}
+                draggable={renamingDecalId !== decal.id}
+                onDragStart={() => onDecalDragStart(decal.id)}
+                onDragOver={ev => { ev.preventDefault(); onDecalDragOver(decal.id) }}
+                onDrop={() => onDecalDrop(decal.id)}
+                onDragEnd={onDecalDragEnd}
                 onClick={ev => {
                   ev.stopPropagation()
+                  if (renamingDecalId === decal.id) return
                   if (ev.metaKey || ev.ctrlKey) {
                     setMultiSelectedIds(prev => {
                       const next = new Set(prev)
@@ -1403,6 +1919,11 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                     setMultiSelectedIds(new Set())
                     setDecalCtxMenu(null)
                   }
+                }}
+                onDoubleClick={ev => {
+                  ev.stopPropagation()
+                  setActive(decal.id)
+                  setRenamingDecalId(decal.id)
                 }}
                 onKeyDown={ev => {
                   if (ev.key === 'Enter' || ev.key === ' ') {
@@ -1418,23 +1939,29 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                 }}
                 style={{
                   width: 44,
-                  height: 44,
+                  height: 'auto',
+                  minHeight: 44,
                   flexShrink: 0,
                   display: 'flex',
+                  flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
+                  gap: 2,
                   borderRadius: 8,
                   background: isActive ? `${EDITOR_ACCENT}33` : 'rgba(255,255,255,0.04)',
-                  border: isActive
-                    ? `2px solid ${EDITOR_ACCENT}`
-                    : isMulti
-                      ? `1.5px solid ${EDITOR_ACCENT}99`
-                      : '1px solid rgba(255,255,255,0.08)',
-                  cursor: 'pointer',
-                  opacity: decal.visible ? 1 : 0.35,
+                  border: dragOverId === decal.id && dragDecalId !== decal.id
+                    ? `2px dashed ${EDITOR_ACCENT}`
+                    : isActive
+                      ? `2px solid ${EDITOR_ACCENT}`
+                      : isMulti
+                        ? `1.5px solid ${EDITOR_ACCENT}99`
+                        : '1px solid rgba(255,255,255,0.08)',
+                  cursor: dragDecalId ? 'grabbing' : 'grab',
+                  opacity: decal.visible ? (dragDecalId === decal.id ? 0.5 : 1) : 0.35,
                   position: 'relative',
                   overflow: 'visible',
                   outline: 'none',
+                  padding: '2px 2px 4px',
                 }}
               >
                 {src ? (
@@ -1446,6 +1973,60 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                 ) : (
                   <span style={{ fontSize: 10, color: EDITOR_TEXT_4 }}>?</span>
                 )}
+                {/* G6: Layer name label / inline rename input */}
+                {renamingDecalId === decal.id ? (
+                  <input
+                    autoFocus
+                    type="text"
+                    defaultValue={decal.name}
+                    onClick={e => e.stopPropagation()}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === 'Escape') {
+                        e.preventDefault()
+                        const newName = (e.currentTarget as HTMLInputElement).value.trim()
+                        if (newName && e.key === 'Enter') {
+                          mutate(p => updateCellDecal(p, decal.id, d => ({ ...d, name: newName })))
+                        }
+                        setRenamingDecalId(null)
+                      }
+                    }}
+                    onBlur={e => {
+                      const newName = e.currentTarget.value.trim()
+                      if (newName) {
+                        mutate(p => updateCellDecal(p, decal.id, d => ({ ...d, name: newName })))
+                      }
+                      setRenamingDecalId(null)
+                    }}
+                    style={{
+                      width: 40,
+                      fontSize: 8,
+                      color: '#fff',
+                      background: 'rgba(0,0,0,0.6)',
+                      border: `1px solid ${EDITOR_ACCENT}`,
+                      borderRadius: 3,
+                      padding: '1px 2px',
+                      outline: 'none',
+                      textAlign: 'center',
+                    }}
+                  />
+                ) : (
+                  <span
+                    style={{
+                      fontSize: 8,
+                      color: EDITOR_TEXT_4,
+                      maxWidth: 42,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      textAlign: 'center',
+                      lineHeight: 1,
+                      userSelect: 'none',
+                    }}
+                    title={`${decal.name} — double-click to rename`}
+                  >
+                    {decal.name}
+                  </span>
+                )}
                 {/* Lock position toggle */}
                 <button
                   type="button"
@@ -1453,7 +2034,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                   onClick={ev => {
                     ev.stopPropagation()
                     mutate(p =>
-                      updateDecal(p, decal.id, d => ({
+                      updateCellDecal(p, decal.id, d => ({
                         ...d,
                         locked: { ...d.locked, position: !posLocked },
                       })),
@@ -1493,7 +2074,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                   onClick={ev => {
                     ev.stopPropagation()
                     mutate(p =>
-                      updateDecal(p, decal.id, d => ({
+                      updateCellDecal(p, decal.id, d => ({
                         ...d,
                         clippedToDecalBelow: d.clippedToDecalBelow ? undefined : true,
                       })),
@@ -1529,7 +2110,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
       {/* Decal strip context menu */}
       {decalCtxMenu &&
         (() => {
-          const decal = project.decals.find(d => d.id === decalCtxMenu.id)
+          const decal = cellDecals.find(d => d.id === decalCtxMenu.id)
           if (!decal) return null
           return (
             <div
@@ -1552,7 +2133,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                   [
                     decal.visible ? 'Hide' : 'Show',
                     () => {
-                      mutate(p => updateDecal(p, decal.id, d => ({ ...d, visible: !d.visible })))
+                      mutate(p => updateCellDecal(p, decal.id, d => ({ ...d, visible: !d.visible })))
                       setDecalCtxMenu(null)
                     },
                   ],
@@ -1652,15 +2233,35 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
               setBrushOpacity={setBrushOpacity}
               brushErase={brushErase}
               setBrushErase={setBrushErase}
+              eyedropperActive={eyedropperActive}
+              setEyedropperActive={setEyedropperActive}
               mirrorX={mirrorX}
               setMirrorX={setMirrorX}
               mirrorY={mirrorY}
               setMirrorY={setMirrorY}
+              brushHardness={brushHardness}
+              setBrushHardness={setBrushHardness}
+              nudgeStep={nudgeStep}
+              setNudgeStep={setNudgeStep}
+              snapGrid={snapGrid}
+              setSnapGrid={setSnapGrid}
+              snapGridStep={snapGridStep}
+              setSnapGridStep={setSnapGridStep}
+              renamingDecalId={renamingDecalId}
+              setRenamingDecalId={setRenamingDecalId}
               onClearPaint={() => {
                 if (!activeDecal) return
                 const decalId = activeDecal.id
                 mutate(p => {
-                  const d = p.decals.find(x => x.id === decalId)
+                  // Look in the active cell (v6) or flat list (v5).
+                  const getCellList = (proj: Coh2DecalPackProject): Decal[] => {
+                    if (!proj.parts) return proj.decals
+                    const part = proj.parts[activePartIndex]
+                    if (!part) return []
+                    if (activeFaction !== null) return part.overrides?.[activeFaction] ?? part.shared
+                    return part.shared
+                  }
+                  const d = getCellList(p).find(x => x.id === decalId)
                   if (!d) return p
                   const srcId = d.sourceImageId
                   const srcImg = p.sourceImages[srcId]
@@ -1688,35 +2289,95 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         />
       </div>
 
-      {/* Canvas view-mode picker — right-edge vertical stack. Mirrors the
-       *  Vehicle Viewport's ScenePanel and FaceplateEditor's AtlasViewPanel
-       *  so all three editor surfaces share the same control. */}
-      <AtlasViewPanel mode={viewMode} setMode={setViewMode} ariaLabel="Decal pack view mode" />
-
-      {/* In-game preview overlay — replaces the editor surface with the
-       *  CoH2 customise-screen 3-column decal grid mock. The user switches
-       *  back via the view-mode panel to resume editing. */}
-      {viewMode === 'in_game' && (
-        <div
-          data-testid="decal-in-game-overlay"
+      {/* ── Zoom % readout pill — bottom-right corner ─────────────────────
+          Shows the current zoom percentage. "Fit" resets to the default
+          4× and "1:1" snaps to 100% (exact pixels). */}
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 24,
+          right: 80,
+          zIndex: 40,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          height: 32,
+          padding: '0 10px',
+          borderRadius: 10,
+          background: 'rgba(15, 17, 22, 0.75)',
+          backdropFilter: 'blur(40px) saturate(150%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(150%)',
+          border: '0.5px solid rgba(255, 255, 255, 0.08)',
+          boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05), 0 4px 12px -4px rgba(0,0,0,0.2)',
+          WebkitAppRegion: 'no-drag',
+        } as CSSProperties}
+      >
+        {/* Zoom percentage label */}
+        <span
           style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 25,
-            display: 'grid',
-            placeItems: 'center',
-            background: 'rgba(10,11,14,0.92)',
-            backdropFilter: 'blur(12px) saturate(140%)',
-            padding: '80px 80px 200px 80px',
-            overflowY: 'auto',
-            pointerEvents: 'auto',
+            fontSize: 11,
+            fontWeight: 500,
+            fontVariantNumeric: 'tabular-nums',
+            color: EDITOR_TEXT_2,
+            minWidth: 36,
+            textAlign: 'right',
           }}
         >
-          <div style={{ maxWidth: 520, width: '100%' }}>
-            <DecalPackInGamePreview project={project} installRoot={installRoot} />
-          </div>
-        </div>
-      )}
+          {Math.round(zoom * 100)}%
+        </span>
+        {/* Hairline divider */}
+        <span aria-hidden style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.10)', flexShrink: 0 }} />
+        {/* Fit button — resets to default 4× */}
+        <button
+          type="button"
+          title="Fit to default zoom (4×)"
+          aria-label="Fit zoom"
+          onClick={() => setZoom(4)}
+          className="hover:text-white active:scale-95 focus:outline-none"
+          style={{
+            padding: '0 5px',
+            height: 22,
+            borderRadius: 5,
+            border: 'none',
+            background: 'transparent',
+            color: EDITOR_TEXT_4,
+            fontSize: 10,
+            fontWeight: 600,
+            letterSpacing: '0.04em',
+            cursor: 'pointer',
+          } as CSSProperties}
+        >
+          Fit
+        </button>
+        {/* 1:1 button — snaps to 100% */}
+        <button
+          type="button"
+          title="Actual size (100%)"
+          aria-label="100% zoom"
+          onClick={() => setZoom(1)}
+          className="hover:text-white active:scale-95 focus:outline-none"
+          style={{
+            padding: '0 5px',
+            height: 22,
+            borderRadius: 5,
+            border: 'none',
+            background: 'transparent',
+            color: EDITOR_TEXT_4,
+            fontSize: 10,
+            fontWeight: 600,
+            letterSpacing: '0.04em',
+            cursor: 'pointer',
+          } as CSSProperties}
+        >
+          1:1
+        </button>
+      </div>
+
+      {/* Canvas view-mode picker — right-edge vertical stack. Mirrors the
+       *  Vehicle Viewport's ScenePanel and FaceplateEditor's AtlasViewPanel
+       *  so all three editor surfaces share the same control.
+       *  `in_game` mode has been removed from the order. */}
+      <AtlasViewPanel mode={viewMode} setMode={setViewMode} ariaLabel="Decal pack view mode" />
 
       {/* Insignia library modal */}
       {insigniaOpen && (
@@ -1860,17 +2521,30 @@ function DecalToolPeelBody({
   onUpdateActive,
   brushSize,
   setBrushSize,
+  brushHardness,
+  setBrushHardness,
   brushColor,
   setBrushColor,
   brushOpacity,
   setBrushOpacity,
   brushErase,
   setBrushErase,
+  eyedropperActive,
+  setEyedropperActive,
   mirrorX,
   setMirrorX,
   mirrorY,
   setMirrorY,
   onClearPaint,
+  nudgeStep,
+  setNudgeStep,
+  snapGrid,
+  setSnapGrid,
+  snapGridStep,
+  setSnapGridStep,
+  // G6 rename props are passed but not used inside the peel (rename is in the strip)
+  renamingDecalId: _renamingDecalId,
+  setRenamingDecalId: _setRenamingDecalId,
 }: {
   tool: DecalToolId
   project: Coh2DecalPackProject
@@ -1890,17 +2564,29 @@ function DecalToolPeelBody({
   onUpdateActive: (fn: (d: Decal) => Decal) => void
   brushSize: number
   setBrushSize: (v: number) => void
+  brushHardness: number
+  setBrushHardness: (v: number) => void
   brushColor: string
   setBrushColor: (v: string) => void
   brushOpacity: number
   setBrushOpacity: (v: number) => void
   brushErase: boolean
   setBrushErase: (v: boolean) => void
+  eyedropperActive: boolean
+  setEyedropperActive: (v: boolean) => void
   mirrorX: boolean
   setMirrorX: (v: boolean) => void
   mirrorY: boolean
   setMirrorY: (v: boolean) => void
   onClearPaint: () => void
+  nudgeStep: 1 | 2 | 4 | 8
+  setNudgeStep: (v: 1 | 2 | 4 | 8) => void
+  snapGrid: boolean
+  setSnapGrid: (v: boolean) => void
+  snapGridStep: 4 | 8 | 16 | 32
+  setSnapGridStep: (v: 4 | 8 | 16 | 32) => void
+  renamingDecalId: string | null
+  setRenamingDecalId: (v: string | null) => void
 }) {
   const toggleBtnStyle = (active: boolean): React.CSSProperties => ({
     display: 'inline-flex',
@@ -1918,7 +2604,73 @@ function DecalToolPeelBody({
   })
 
   if (tool === 'select') {
-    return null
+    // G8: nudge step segmented control + G11: snap-to-grid toggle
+    const nudgeOptions: (1 | 2 | 4 | 8)[] = [1, 2, 4, 8]
+    const gridOptions: (4 | 8 | 16 | 32)[] = [4, 8, 16, 32]
+    return (
+      <>
+        {/* G8: Nudge step selector */}
+        <span style={{ fontSize: 10, color: EDITOR_TEXT_4, flexShrink: 0, letterSpacing: '0.06em', textTransform: 'uppercase' as const }}>Nudge</span>
+        <div style={{ display: 'inline-flex', borderRadius: 6, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)', flexShrink: 0 }}>
+          {nudgeOptions.map(opt => (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => setNudgeStep(opt)}
+              style={{
+                padding: '0 7px',
+                height: 28,
+                background: nudgeStep === opt ? 'rgba(120,180,255,0.18)' : 'rgba(255,255,255,0.04)',
+                border: 'none',
+                borderRight: opt !== 8 ? '1px solid rgba(255,255,255,0.10)' : 'none',
+                color: nudgeStep === opt ? EDITOR_ACCENT : EDITOR_TEXT_2,
+                fontSize: 11,
+                cursor: 'pointer',
+                fontWeight: nudgeStep === opt ? 600 : 400,
+              }}
+            >{opt}px</button>
+          ))}
+        </div>
+        {/* G11: Snap-to-grid toggle + step */}
+        <div
+          aria-hidden
+          style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.12)', flexShrink: 0, borderRadius: 1 }}
+        />
+        <button
+          type="button"
+          title={snapGrid ? 'Snap to grid ON (click to disable)' : 'Snap to grid OFF (click to enable)'}
+          aria-pressed={snapGrid}
+          onClick={() => setSnapGrid(!snapGrid)}
+          style={toggleBtnStyle(snapGrid)}
+        >
+          <svg width={14} height={14} viewBox="0 0 14 14" fill="none" aria-hidden>
+            <path d="M0 3.5h14M0 7h14M0 10.5h14M3.5 0v14M7 0v14M10.5 0v14" stroke="currentColor" strokeWidth="1" opacity="0.8"/>
+          </svg>
+        </button>
+        {snapGrid && (
+          <div style={{ display: 'inline-flex', borderRadius: 6, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)', flexShrink: 0 }}>
+            {gridOptions.map(opt => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => setSnapGridStep(opt)}
+                style={{
+                  padding: '0 6px',
+                  height: 28,
+                  background: snapGridStep === opt ? 'rgba(120,180,255,0.18)' : 'rgba(255,255,255,0.04)',
+                  border: 'none',
+                  borderRight: opt !== 32 ? '1px solid rgba(255,255,255,0.10)' : 'none',
+                  color: snapGridStep === opt ? EDITOR_ACCENT : EDITOR_TEXT_2,
+                  fontSize: 10,
+                  cursor: 'pointer',
+                  fontWeight: snapGridStep === opt ? 600 : 400,
+                }}
+              >{opt}</button>
+            ))}
+          </div>
+        )}
+      </>
+    )
   }
 
   if (tool === 'images') {
@@ -2110,6 +2862,33 @@ function DecalToolPeelBody({
         >
           <Copy size={14} />
         </button>
+        {/* G4: Rotate 90° CW / CCW buttons */}
+        <button
+          title="Rotate 90° clockwise"
+          aria-label="Rotate 90° clockwise"
+          onClick={() =>
+            onUpdateActive(d => ({
+              ...d,
+              rotation: normaliseRotation(d.rotation + 90),
+            }))
+          }
+          style={toggleBtnStyle(false)}
+        >
+          <RotateCw size={14} />
+        </button>
+        <button
+          title="Rotate 90° counter-clockwise"
+          aria-label="Rotate 90° counter-clockwise"
+          onClick={() =>
+            onUpdateActive(d => ({
+              ...d,
+              rotation: normaliseRotation(d.rotation - 90),
+            }))
+          }
+          style={toggleBtnStyle(false)}
+        >
+          <RotateCcw size={14} />
+        </button>
         <button
           title="Centre and clear rotation"
           aria-label="Centre and clear rotation"
@@ -2125,7 +2904,171 @@ function DecalToolPeelBody({
         >
           <Crosshair size={14} />
         </button>
-        {/* Separator between transform and adjust controls */}
+        {/* G5: Align-to-canvas buttons — 3 horizontal + 3 vertical */}
+        <div
+          aria-hidden
+          style={{
+            width: 1,
+            height: 20,
+            background: 'rgba(255,255,255,0.12)',
+            flexShrink: 0,
+            borderRadius: 1,
+          }}
+        />
+        {/* Horizontal alignment: left / centre / right */}
+        <button
+          title="Align left edge to canvas left"
+          aria-label="Align left"
+          onClick={() =>
+            onUpdateActive(d => {
+              const w = (project.sourceImages[d.sourceImageId]?.width ?? 0) * d.scale
+              return { ...d, x: w / 2 }
+            })
+          }
+          style={toggleBtnStyle(false)}
+        >
+          <AlignStartVertical size={14} />
+        </button>
+        <button
+          title="Align centre horizontally"
+          aria-label="Align centre H"
+          onClick={() => onUpdateActive(d => ({ ...d, x: DECAL_PACK_SIZE / 2 }))}
+          style={toggleBtnStyle(false)}
+        >
+          <AlignCenterVertical size={14} />
+        </button>
+        <button
+          title="Align right edge to canvas right"
+          aria-label="Align right"
+          onClick={() =>
+            onUpdateActive(d => {
+              const w = (project.sourceImages[d.sourceImageId]?.width ?? 0) * d.scale
+              return { ...d, x: DECAL_PACK_SIZE - w / 2 }
+            })
+          }
+          style={toggleBtnStyle(false)}
+        >
+          <AlignEndVertical size={14} />
+        </button>
+        {/* Vertical alignment: top / centre / bottom */}
+        <button
+          title="Align top edge to canvas top"
+          aria-label="Align top"
+          onClick={() =>
+            onUpdateActive(d => {
+              const h = (project.sourceImages[d.sourceImageId]?.height ?? 0) * d.scale
+              return { ...d, y: h / 2 }
+            })
+          }
+          style={toggleBtnStyle(false)}
+        >
+          <AlignStartHorizontal size={14} />
+        </button>
+        <button
+          title="Align centre vertically"
+          aria-label="Align centre V"
+          onClick={() => onUpdateActive(d => ({ ...d, y: DECAL_PACK_SIZE / 2 }))}
+          style={toggleBtnStyle(false)}
+        >
+          <AlignCenter size={14} />
+        </button>
+        <button
+          title="Align bottom edge to canvas bottom"
+          aria-label="Align bottom"
+          onClick={() =>
+            onUpdateActive(d => {
+              const h = (project.sourceImages[d.sourceImageId]?.height ?? 0) * d.scale
+              return { ...d, y: DECAL_PACK_SIZE - h / 2 }
+            })
+          }
+          style={toggleBtnStyle(false)}
+        >
+          <AlignEndHorizontal size={14} />
+        </button>
+        {/* ── Numeric XY position inputs ── */}
+        <div
+          aria-hidden
+          style={{
+            width: 1,
+            height: 20,
+            background: 'rgba(255,255,255,0.12)',
+            flexShrink: 0,
+            borderRadius: 1,
+          }}
+        />
+        {/* X position */}
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+          <span style={{
+            fontSize: 10,
+            fontWeight: 600,
+            letterSpacing: '0.10em',
+            textTransform: 'uppercase' as const,
+            color: EDITOR_TEXT_4,
+            flexShrink: 0,
+          }}>X</span>
+          <input
+            type="number"
+            style={{
+              width: 50,
+              height: 26,
+              background: 'rgba(255,255,255,0.05)',
+              border: '0.5px solid rgba(255,255,255,0.12)',
+              borderRadius: 5,
+              color: EDITOR_TEXT_2,
+              fontSize: 11,
+              padding: '0 5px',
+              outline: 'none',
+              appearance: 'textfield',
+              MozAppearance: 'textfield',
+            }}
+            value={Math.round(activeDecal.x)}
+            min={0}
+            max={DECAL_PACK_SIZE}
+            step={1}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) onUpdateActive(d => ({ ...d, x: v }))
+            }}
+            onClick={e => (e.target as HTMLInputElement).select()}
+          />
+        </label>
+        {/* Y position */}
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+          <span style={{
+            fontSize: 10,
+            fontWeight: 600,
+            letterSpacing: '0.10em',
+            textTransform: 'uppercase' as const,
+            color: EDITOR_TEXT_4,
+            flexShrink: 0,
+          }}>Y</span>
+          <input
+            type="number"
+            style={{
+              width: 50,
+              height: 26,
+              background: 'rgba(255,255,255,0.05)',
+              border: '0.5px solid rgba(255,255,255,0.12)',
+              borderRadius: 5,
+              color: EDITOR_TEXT_2,
+              fontSize: 11,
+              padding: '0 5px',
+              outline: 'none',
+              appearance: 'textfield',
+              MozAppearance: 'textfield',
+            }}
+            value={Math.round(activeDecal.y)}
+            min={0}
+            max={DECAL_PACK_SIZE}
+            step={1}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) onUpdateActive(d => ({ ...d, y: v }))
+            }}
+            onClick={e => (e.target as HTMLInputElement).select()}
+          />
+        </label>
+        {/* Separator between transform/position and adjust controls */}
         <div
           aria-hidden
           style={{
@@ -2176,14 +3119,27 @@ function DecalToolPeelBody({
           format={v => `${v}%`}
           onChange={v => onUpdateActive(d => ({ ...d, saturation: v }))}
         />
+        {/* G10: Hue rotation slider (−180..180°) */}
+        <SliderPopover
+          icon={<Droplet size={14} />}
+          title="Hue"
+          value={activeDecal.hueRotate ?? 0}
+          min={-180}
+          max={180}
+          step={1}
+          identity={0}
+          format={v => `${Math.round(v)}°`}
+          onChange={v => onUpdateActive(d => ({ ...d, hueRotate: v }))}
+        />
         <PanelButton
           disabled={
             (activeDecal.brightness ?? 100) === 100 &&
             (activeDecal.contrast ?? 100) === 100 &&
-            (activeDecal.saturation ?? 100) === 100
+            (activeDecal.saturation ?? 100) === 100 &&
+            (activeDecal.hueRotate ?? 0) === 0
           }
           onClick={() =>
-            onUpdateActive(d => ({ ...d, brightness: 100, contrast: 100, saturation: 100 }))
+            onUpdateActive(d => ({ ...d, brightness: 100, contrast: 100, saturation: 100, hueRotate: 0 }))
           }
         >
           Reset
@@ -2249,8 +3205,20 @@ function DecalToolPeelBody({
           format={v => `${v}px`}
           onChange={setBrushSize}
         />
+        {/* G1: Brush hardness — 1 = hard edge, 0 = fully feathered */}
+        <SliderPopover
+          icon={<Circle size={14} />}
+          title="Hardness"
+          value={brushHardness}
+          min={0}
+          max={1}
+          step={0.05}
+          identity={1}
+          format={v => `${Math.round(v * 100)}%`}
+          onChange={setBrushHardness}
+        />
         {/* Brush colour — visually muted in erase mode. */}
-        <div style={{ opacity: brushErase ? 0.4 : 1, pointerEvents: brushErase ? 'none' : 'auto' }}>
+        <div style={{ opacity: brushErase ? 0.4 : 1, pointerEvents: brushErase ? 'none' : 'auto', display: 'inline-flex', alignItems: 'center' }}>
           <HexColorInput
             value={brushColor}
             onChange={setBrushColor}
@@ -2269,6 +3237,19 @@ function DecalToolPeelBody({
           format={v => `${Math.round(v * 100)}%`}
           onChange={setBrushOpacity}
         />
+        {/* Eyedropper — one-shot colour picker from the composited decal canvas. */}
+        <button
+          title="Eyedropper — click the canvas to sample a colour from the decal"
+          aria-pressed={eyedropperActive}
+          aria-label="Eyedropper"
+          onClick={() => {
+            setEyedropperActive(!eyedropperActive)
+            if (!eyedropperActive) setBrushErase(false)
+          }}
+          style={toggleBtnStyle(eyedropperActive)}
+        >
+          <Pipette size={14} />
+        </button>
         {/* Erase toggle */}
         <button
           title={brushErase ? 'Erase mode ON (click to switch to paint)' : 'Switch to erase mode'}
@@ -2327,15 +3308,62 @@ const peelHint: React.CSSProperties = {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * Normalise a rotation angle (degrees) into the range (-180, 180].
+ * Exported for unit testing (G4 rotate-by-90 pure logic).
+ */
+export function normaliseRotation(deg: number): number {
+  // JavaScript % can return negative values for negative inputs;
+  // add 540 (1.5 full turns) before the modulo to guarantee a positive
+  // intermediate value, then shift back to (-180, 180].
+  return ((deg + 540) % 360) - 180
+}
+
+/**
+ * updateDecal — apply `fn` to the decal with the given id.
+ *
+ * For v6 projects (with parts), the mutation targets only the ACTIVE cell
+ * (part index + faction) so per-part / per-faction layers are kept isolated.
+ * The `activePartIndex` and `activeFaction` are captured via closure from the
+ * component-level helpers; for the canvas drag / arrow-key callers that use
+ * this as a project-level function it is called inside a `mutate()` closure,
+ * which already has the correct part/faction captured.
+ *
+ * For v5 flat projects (no parts), falls back to mutating project.decals.
+ *
+ * NOTE: for production callers that live OUTSIDE the component (e.g. pure
+ * unit tests), we export a version that takes explicit indices below.
+ */
 function updateDecal(
   p: Coh2DecalPackProject,
   id: string,
   fn: (d: Decal) => Decal,
+  activePartIndex?: number,
+  activeFaction?: DecalFaction | null,
 ): Coh2DecalPackProject {
-  return {
-    ...p,
-    decals: p.decals.map(d => (d.id === id ? fn(d) : d)),
+  if (!p.parts) {
+    // v5: mutate project.decals
+    return { ...p, decals: p.decals.map(d => (d.id === id ? fn(d) : d)) }
   }
+  // v6: mutate only the active cell
+  const pi = activePartIndex ?? 1
+  const faction = activeFaction ?? null
+  const parts = p.parts.map((part, i) => {
+    if (i !== pi) return part
+    if (faction !== null) {
+      // Fork-on-write: clone shared into override if not yet present, then mutate.
+      const existing = part.overrides?.[faction] ?? [...part.shared]
+      return {
+        ...part,
+        overrides: {
+          ...part.overrides,
+          [faction]: existing.map(d => (d.id === id ? fn(d) : d)),
+        },
+      }
+    }
+    return { ...part, shared: part.shared.map(d => (d.id === id ? fn(d) : d)) }
+  })
+  return { ...p, parts }
 }
 
 function checkerBackground(): string {

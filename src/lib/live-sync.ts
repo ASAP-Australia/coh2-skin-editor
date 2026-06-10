@@ -62,6 +62,19 @@ type SyncKind = 'skin' | 'faceplate' | 'decal'
  *  branch in `_build()` narrows to a concrete project type. */
 type AnyProject = Coh2SkinProject | Coh2FaceplateProject | Coh2DecalPackProject
 
+/**
+ * Thrown by `_build()` when the signing key pool / template SGA is absent from
+ * the build (e.g. packaged Electron app without `tools/publish-templates.sh`).
+ * `_runSync` catches this specifically and sets state to `idle` with an
+ * informative tooltip — no red error cross — because the absence is expected.
+ */
+class KeyPoolAbsentError extends Error {
+  constructor() {
+    super('Signing template not available')
+    this.name = 'KeyPoolAbsentError'
+  }
+}
+
 type Listener = () => void
 
 // ─── Persistence key ──────────────────────────────────────────────────────────
@@ -344,8 +357,8 @@ class LiveSyncManager {
 
     try {
       // 1. Resolve mods directory handle
-      const modsHandle = await this._resolveModsHandle()
-      if (!modsHandle) {
+      const modsResult = await this._resolveModsHandle()
+      if (!modsResult) {
         this._inFlight = false
         // Distinct from the "Connect" picker on app startup — that one
         // grabs the GAME INSTALL (Steam/…/Company of Heroes 2/) so we
@@ -354,18 +367,26 @@ class LiveSyncManager {
         // the File System Access API can't reach from the install
         // handle. Phrase the prompt so a user who just connected on
         // startup isn't confused by being asked again.
+        // NOT an error — the project is already saved locally and can be
+        // published to Workshop. Writing into the CoH2 mods folder is an
+        // OPTIONAL convenience for in-game testing. Showing a red error
+        // cross on the title pill for "haven't picked the optional folder
+        // yet" alarmed users who expected a green tick. Keep it 'idle'
+        // (green) with an informative tooltip; the folder picker is still
+        // reachable from the TopBar "Install to mods folder" action.
         this._setState(
-          'error',
-          'Live Sync needs one more folder — click here to pick your CoH2 mods folder (Documents › My Games › Company of Heroes 2 › mods)',
+          'idle',
+          'Saved locally — connect your CoH2 mods folder for optional in-game live sync',
         )
         return
       }
+      const { handle: modsHandle, nativePath: modsNativePath } = modsResult
 
       // 2. Build the SGA bytes
       const bytes = await this._build(kind, project, modsHandle)
 
       // 3. Write to disk
-      await this._writeFile(modsHandle, kind, project, bytes)
+      await this._writeFile(modsHandle, modsNativePath, kind, project, bytes)
 
       // 4. Success
       this._syncedAt = Date.now()
@@ -381,6 +402,19 @@ class LiveSyncManager {
         this._scheduleWorkshopPush(kind, project, bytes.filename, wsId)
       }
     } catch (err: unknown) {
+      // Graceful degradation — key pool absent means this build doesn't ship
+      // the signing template SGA. Local install is not possible, but the
+      // project is still saved; Workshop publish still works. Show 'idle'
+      // (no red cross) with an informative tooltip instead of an error state.
+      if (err instanceof KeyPoolAbsentError) {
+        this._setState(
+          'idle',
+          'Saved locally — in-game live sync requires the signing template ' +
+          '(run tools/publish-templates.sh or publish to Workshop to play in-game)',
+        )
+        return
+      }
+
       const msg = err instanceof Error ? err.message : String(err)
       const name = err instanceof Error ? (err as { name?: string }).name : undefined
 
@@ -392,10 +426,39 @@ class LiveSyncManager {
 
       const isPermission = name === 'SecurityError' || name === 'NotFoundError'
 
+      // "read-only in Electron IPC layer" means createWritable() was called on a
+      // native-fs stub handle — should not happen after the _writeFile Electron
+      // fix below, but if it ever does, degrade gracefully rather than showing
+      // a permanent red cross that confuses users who haven't set up live sync.
+      const isElectronReadOnly = msg.includes('read-only in Electron IPC layer')
+
+      // A5: a raw network "Failed to fetch" (TypeError) means a bundled asset
+      // the signed-export path needs (keys/template SGA) couldn't be read —
+      // typically because the packaged renderer loads from `file://`, where
+      // Chromium's fetch refuses the scheme, or the signing template simply
+      // isn't bundled in this build. Either way the project IS saved locally;
+      // only the OPTIONAL in-game live-sync write is unavailable. Surfacing a
+      // red "Sync failed: Failed to fetch" on a metadata rename alarmed users
+      // (reported on "click to rename"). Degrade gracefully like a missing key
+      // pool: stay green/idle with an informative tooltip.
+      const isFetchFailure =
+        name === 'TypeError' && msg.toLowerCase().includes('failed to fetch')
+
       if (isLocked) {
         this._setState('error', 'Close CoH2 to sync — the mod file is locked by the game')
       } else if (isPermission) {
         this._setState('error', 'Reconnect to your CoH2 install — permission lapsed')
+      } else if (isElectronReadOnly) {
+        this._setState(
+          'idle',
+          'Saved locally — connect your CoH2 mods folder for optional in-game live sync',
+        )
+      } else if (isFetchFailure) {
+        this._setState(
+          'idle',
+          'Saved locally — in-game live sync requires the signing template ' +
+          '(publish to Workshop to play in-game)',
+        )
       } else {
         this._setState('error', `Sync failed: ${msg}`)
       }
@@ -562,7 +625,19 @@ class LiveSyncManager {
     }
   }
 
-  private async _resolveModsHandle(): Promise<FileSystemDirectoryHandle | null> {
+  /**
+   * Resolve the CoH2 mods directory handle (and the native FS path when in
+   * Electron). Returns `null` when the folder hasn't been connected yet.
+   *
+   * `nativePath` is non-null only in Electron — callers should use it (via
+   * the top-level `writeFile` helper from native-fs) instead of
+   * `FileSystemFileHandle.createWritable()`, which is a browser-only API that
+   * throws "read-only in Electron IPC layer" on every attempt.
+   */
+  private async _resolveModsHandle(): Promise<{
+    handle: FileSystemDirectoryHandle
+    nativePath: string | null
+  } | null> {
     // 0. Electron auto-detect (preferred when running as the desktop
     //    app). The main process knows where Steam + Proton lay out
     //    Documents/My Games/Company of Heroes 2/mods — no separate
@@ -575,7 +650,11 @@ class LiveSyncManager {
     if (isElectron()) {
       try {
         const modsPath = await detectModsPath()
-        if (modsPath) return nativePathToHandle(modsPath)
+        if (modsPath) {
+          // Normalise path separators so subdirectory joins are consistent.
+          const norm = modsPath.replace(/\\/g, '/')
+          return { handle: nativePathToHandle(norm), nativePath: norm }
+        }
       } catch {
         // detection failed — fall through to the browser IDB paths.
         // Live Sync in a browser tab can still work via the File
@@ -600,11 +679,11 @@ class LiveSyncManager {
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- queryPermission is File System Access API extra not in all lib.dom typings
       const status = await (handle as any).queryPermission?.({ mode: 'readwrite' })
-      if (status === 'granted') return handle
+      if (status === 'granted') return { handle, nativePath: null }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above
       const re = await (handle as any).requestPermission?.({ mode: 'readwrite' })
-      if (re === 'granted') return handle
+      if (re === 'granted') return { handle, nativePath: null }
     }
 
     return null
@@ -644,10 +723,10 @@ class LiveSyncManager {
       // the RSA signature (which covers the TOC only) stays valid.
       const { patchExport, hasKeyPool } = await import('@/lib/mod-export')
       if (!await hasKeyPool()) {
-        throw new Error(
-          'Signing template not available — publish to Workshop to install in-game, ' +
-          'or run tools/publish-templates.sh to enable local install.'
-        )
+        // Signing template SGA (~377 MB) is not present in this build.
+        // Throw a typed sentinel so _runSync can degrade gracefully (idle,
+        // not error) rather than surfacing a red cross to the user.
+        throw new KeyPoolAbsentError()
       }
       const result = await patchExport(
         installHandle,
@@ -707,7 +786,20 @@ class LiveSyncManager {
       // any basename in `mods/faceplates/subscriptions/`, so we use the
       // deterministic 32-hex GUID for both internal asset refs AND the
       // on-disk filename.
-      const guid = deriveGuidFromId(faceplateProject.id)
+      //
+      // CRITICAL: prefer the project's STABLE `guid` over a hash of the
+      // project id. The manual publish path (FaceplateEditor.handleRequestBuild
+      // → buildFaceplateMod) bakes `project.guid` into the SGA's attrib pbgid
+      // and asset paths. If Live Sync instead derived the GUID from the id, the
+      // locally-synced .sga would register a DIFFERENT pbgid than the
+      // Workshop-published copy — so the faceplate the user tweaks via Live
+      // Sync and the faceplate they publish become two separate in-game
+      // identities, and the published one never matches the local file the
+      // engine actually loaded. Using `project.guid` aligns both paths to one
+      // identity. Fall back to the id-hash only for legacy projects that
+      // somehow lack a guid (migrateFaceplateProject backfills one, so this is
+      // belt-and-suspenders).
+      const guid = faceplateProject.guid ?? deriveGuidFromId(faceplateProject.id)
       // generateGuid is still exported for non-sync code paths that legitimately
       // need a fresh guid (e.g. one-shot SGA exports for a project that has no
       // id yet); reference it here so a future inadvertent removal would still
@@ -725,6 +817,7 @@ class LiveSyncManager {
 
   private async _writeFile(
     modsHandle: FileSystemDirectoryHandle,
+    modsNativePath: string | null,
     kind: SyncKind,
     _project: AnyProject,
     { bytes, filename }: { bytes: Uint8Array; filename: string },
@@ -743,6 +836,24 @@ class LiveSyncManager {
     //
     // For skins: write to <modsRoot>/skins/<id>.sga
     // For faceplates: write to <modsRoot>/faceplates/subscriptions/<id>.sga
+
+    // Electron: `createWritable()` is a browser-only File System Access API
+    // not bridged over IPC (it throws "read-only in Electron IPC layer").
+    // Use the `writeFile` helper from native-fs instead, which calls
+    // window.electronAPI.writeFile() via the preload bridge.
+    if (modsNativePath !== null) {
+      let subdir: string
+      if (kind === 'skin') {
+        subdir = `${modsNativePath}/skins`
+      } else if (kind === 'decal') {
+        subdir = `${modsNativePath}/decals/subscriptions`
+      } else {
+        subdir = `${modsNativePath}/faceplates/subscriptions`
+      }
+      await writeFile(`${subdir}/${filename}`, bytes)
+      return
+    }
+
     let targetDir = modsHandle
 
     if (kind === 'skin') {

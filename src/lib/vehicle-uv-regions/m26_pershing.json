@@ -1,0 +1,23 @@
+{
+  "_note": "M26 Pershing (m26_pershing) UV regions in 2048×2048 pixel units. Derived from Wikinger US (AEF) skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger_aef",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 1190,
+      "y": 260,
+      "w": 270,
+      "h": 270,
+      "_source": "wikinger_aef",
+      "_confidence": "high (±30px)",
+      "note": "Hull right side — Wikinger US skin (5a3d5e4e9f854eb39e8edc7e15c4dc25) shows a large white US Army circle-star (pentagram) at atlas (1312,349) centroid. The star is clearly the Allied identification marking on the upper hull right panel. Verified via pixel centroid scan (n=1487 bright pixels, tight bbox 1272-1354 x 287-410). Annotated PNG at artifacts/badge-rects/m26_pershing.png.",
+      "uvCore": {
+        "minU": 0.5811,
+        "maxU": 0.7129,
+        "minV": 0.1270,
+        "maxV": 0.2588
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

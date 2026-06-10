@@ -6,6 +6,7 @@
         "src/workshop_addon.cpp",
         "src/workshop_publish.cpp",
         "src/workshop_update.cpp",
+        "src/workshop_delete.cpp",
         "src/callback_bridge.cpp",
         "src/steam_loop.cpp"
       ],
