@@ -108,7 +108,14 @@ async function tryBundledIcon(
 /** Inner: fetch + image-validation for a single candidate slug. */
 async function tryBundledIconSlug(slug: string): Promise<string | null> {
   try {
-    const r = await fetch(`/icons/vehicles/${slug}.png`)
+    // Resolve relative to the document base, not the filesystem root. The
+    // packaged Electron app loads from a `file://` URL, so an absolute
+    // `/icons/...` path resolves to the FS root and the fetch fails — the
+    // pills then fall through to the slow Three.js render. `document.baseURI`
+    // gives `http://localhost:5173/` in dev and the `file://…/dist/` URL in
+    // the build, so the icon resolves correctly in both.
+    const url = new URL(`icons/vehicles/${slug}.png`, document.baseURI).href
+    const r = await fetch(url)
     if (!r.ok) return null
     // SPA fallback guard — only accept genuine image content. We check the
     // server's Content-Type rather than sniffing magic bytes because
@@ -368,6 +375,13 @@ interface ResolveOpts {
    *  false for one-off use (e.g. rendering a preview that shouldn't
    *  pollute the saved project). */
   cache?: boolean
+  /** When true (default), fall through to an offscreen Three.js render
+   *  of the full vehicle model if no bundled/stock icon exists. This
+   *  loads the RGM + full-res textures and contends with the live
+   *  viewport for the GPU, so the menu rail (which resolves many pills
+   *  on mount) sets this false and lets unmatched vehicles fall to the
+   *  cheap procedural placeholder instead. */
+  render3d?: boolean
 }
 
 /** Resolve the best icon available for a vehicle, going through every
@@ -404,11 +418,16 @@ export async function resolveVehicleIcon(
     return stock
   }
 
-  // 4. Three.js render (set up in step 9)
-  const rendered = await tryThreeRender(vehicleId)
-  if (rendered) {
-    if (cache) setCachedVehicleIcon(project, vehicleId, rendered)
-    return rendered
+  // 4. Three.js render (set up in step 9). Skipped when render3d is
+  //    false (e.g. the menu rail) — an offscreen model render per
+  //    unmatched pill is the dominant selector load cost and starves
+  //    the live viewport's GPU budget.
+  if (opts.render3d !== false) {
+    const rendered = await tryThreeRender(vehicleId)
+    if (rendered) {
+      if (cache) setCachedVehicleIcon(project, vehicleId, rendered)
+      return rendered
+    }
   }
 
   // 5. Procedural placeholder — never null

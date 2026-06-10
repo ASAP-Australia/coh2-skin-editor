@@ -6,25 +6,24 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from 'react'
 import { useDecalHistory } from '@/lib/decal-history'
 const Viewport = lazy(() => import('./Viewport'))
 import TopBar from './TopBar'
 import ScenePanel from './ScenePanel'
-import VehicleMenu from './VehicleMenu'
+import FactionPanel from './FactionPanel'
+import VehicleMenu, { type VehicleIconResolver } from './VehicleMenu'
+import TemplateDecalPills from './TemplateDecalPills'
 import SeasonToggle from './SeasonToggle'
-import GenerateButton from './GenerateButton'
 import ExplodeButton from './ExplodeButton'
 import EditTextureButton from './EditTextureButton'
-import GenerateModal from './GenerateModal'
+import VehicleTextureEditor from './VehicleTextureEditor'
+import { extractBodyUvWireframe } from '@/lib/uv-wireframe'
 import ShortcutHelpSheet from './ShortcutHelpSheet'
 import OnboardingOverlay from './OnboardingOverlay'
-import { PackIdentityPopover } from './PackIdentityPopover'
-import { SlotIconGrid } from './SlotIconGrid'
 import { SlotIconEditor } from './SlotIconEditor'
 import { useToasts } from './Toasts'
-import { VEHICLES, FACTIONS, type Faction } from '@/lib/vehicles'
+import { VEHICLES, FACTIONS, vehiclesForFaction, defaultVehicleForFaction, type Faction } from '@/lib/vehicles'
 import {
   type Coh2SkinProject,
   type Decal,
@@ -50,27 +49,37 @@ import {
 } from '@/lib/brush'
 // (relTime removed with bottom-right "saved Xs ago" indicator)
 import { SgaArchive } from '@/lib/sga'
-import { scheduleLiveSync, useLiveSync } from '@/lib/live-sync'
+import { scheduleLiveSync } from '@/lib/live-sync'
 import { generateCamo, type CamoPreset } from '@/lib/camo-generator'
 // vehicle-3d-renderer is dynamically imported so its Three.js dependency
 // doesn't land in the main chunk — it's only needed after the editor mounts.
 // The import() call is placed inside the useEffect below so bundlers see it
 // as a code-split boundary rather than a static dep.
 import { type PresetId, SCENE_PRESETS, loadPresetId, persistPresetId } from '@/lib/scene-settings'
+import { schedulePrefetch } from '@/lib/preload'
+import { resolveVehicleIcon } from '@/lib/vehicle-icons'
+import { loadDecalPackById } from '@/lib/decal-pack-project'
+import { rasteriseDecal } from '@/lib/decal-pack-export'
+import { bakeDecalOntoDiffuse } from '@/lib/king-tiger-decal-bake'
+import { resolveDecalUvRect } from '@/lib/vehicle-uv-registry'
+import type { RgmMesh } from '@/lib/rgm'
 
 // Models with known parser defects (packed-stride RGM variants where every
-// submesh is skipped → empty viewport). Hoisted so the Set is not re-created
-// on every Editor render.
-const BROKEN_MODELS = new Set(['tiger', 'king_tiger_sdkfz_182'])
+// submesh is skipped → empty viewport). Verified 2026-06-02 via
+// tools/check-submeshes.ts against the real CoH2 SGAs: tiger=75 submeshes,
+// king_tiger_sdkfz_182=4 submeshes — both render fine. Set is empty until
+// a genuinely-broken (0-submesh) model is found.
+const BROKEN_MODELS = new Set<string>([])
 
-// Safe starting vehicle per faction — avoids landing on a broken model after
-// the new-project flow. Hoisted for the same reason as BROKEN_MODELS.
+// Safe starting vehicle per faction — toughest renderable vehicle per
+// faction, computed from vehiclesForFaction (sorted heavy→light) skipping
+// any BROKEN_MODELS entries. Hoisted so the computation runs once.
 const FACTION_DEFAULT_VEHICLE: Record<import('@/lib/vehicles').Faction, string> = {
-  german: 'brummbar',
-  west_german: 'panther_ausf_g',
-  soviet: 't34_85',
-  aef: 'm4a3e8_sherman_easy_8',
-  british: 'cromwell',
+  german:      defaultVehicleForFaction('german',      BROKEN_MODELS),
+  west_german: defaultVehicleForFaction('west_german', BROKEN_MODELS),
+  soviet:      defaultVehicleForFaction('soviet',      BROKEN_MODELS),
+  aef:         defaultVehicleForFaction('aef',         BROKEN_MODELS),
+  british:     defaultVehicleForFaction('british',     BROKEN_MODELS),
 }
 
 interface Props {
@@ -147,7 +156,7 @@ export default function Editor({
   const [vehicleId, setVehicleId] = useState<string>(() => {
     if (initialFaction) return FACTION_DEFAULT_VEHICLE[initialFaction]
     const saved = project.lastVehicleId
-    if (!saved || BROKEN_MODELS.has(saved)) return 'brummbar'
+    if (!saved || BROKEN_MODELS.has(saved)) return FACTION_DEFAULT_VEHICLE['german']
     return saved
   })
   // Keep the vehicleId ref in sync so history getters always read the
@@ -159,7 +168,7 @@ export default function Editor({
   const [selectedFaction, setSelectedFaction] = useState<Faction>(() => {
     if (initialFaction) return initialFaction
     const saved = project.lastVehicleId
-    const resolvedId = !saved || BROKEN_MODELS.has(saved) ? 'brummbar' : saved
+    const resolvedId = !saved || BROKEN_MODELS.has(saved) ? FACTION_DEFAULT_VEHICLE['german'] : saved
     return VEHICLES.find(v => v.id === resolvedId)?.faction ?? 'german'
   })
   const [activePanel, setActivePanel] = useState<
@@ -198,6 +207,13 @@ export default function Editor({
   const [parts, setParts] = useState<string[]>([])
   const [selectedPart, setSelectedPart] = useState<string | null>(null)
   const [explodeAll, setExplodeAll] = useState(false)
+  /** Incremented after each undo/redo/stroke so the VehicleTextureEditor
+   *  receives fresh `canUndo`/`canRedo` props (the history stacks live in
+   *  refs and don't otherwise trigger re-renders).
+   *  The _value_ is read as `void _historyGeneration` to make the lint
+   *  happy; what matters is the re-render triggered by the setter. */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_historyGeneration, setHistoryGeneration] = useState(0)
   // Toggle handler shared between the ExplodeButton click and the E-key
   // global shortcut. Wrapped in useCallback so the bottom-row JSX doesn't
   // re-create the inline lambda on every Editor render.
@@ -439,8 +455,9 @@ export default function Editor({
   // Vehicles for the current faction (for the bottom-left VehicleMenu).
   // Driven by selectedFaction so the menu updates immediately when the
   // user picks a new faction — before the vehicle swap finishes loading.
+  // Sorted toughest→weakest via vehiclesForFaction (super_heavy first).
   const factionVehicles = useMemo(
-    () => VEHICLES.filter(v => v.faction === selectedFaction),
+    () => vehiclesForFaction(selectedFaction),
     [selectedFaction],
   )
   // Set of vehicle ids with at least one placed decal — drives the orange
@@ -470,6 +487,38 @@ export default function Editor({
    *  camo directly onto the previously-composited atlas). Repopulated on
    *  every model load. */
   const vanillaDiffuseRef = useRef<HTMLCanvasElement | null>(null)
+  /**
+   * RGM meshes from the most recently loaded model. Stored so the
+   * decal-pack preview effect can run the vertex-probe UV derivation
+   * without going through the Viewport render pipeline.
+   * Set by the onModelLoaded callback; cleared to null on vehicle switch
+   * before the new model arrives.
+   */
+  const loadedMeshesRef = useRef<RgmMesh[] | null>(null)
+  /**
+   * Pre-baked decal-pack preview canvas: the current baseDiffuse composited
+   * with the first visible decal from project.decalPackRef baked into the
+   * vehicle's hull-right UV rect. Null when no decalPackRef is set or when
+   * the rect cannot be resolved — in which case behavior is identical to
+   * the no-decalPackRef path.
+   *
+   * Used by paintCanvas as a drop-in replacement for baseDiffuseRef: when
+   * non-null it is drawn in place of baseDiffuseRef so the decal preview
+   * is always visible below user-placed skin decals. When null the paint
+   * path falls through to baseDiffuseRef unchanged.
+   *
+   * Updated by the decalPreviewTick effect below; cleared synchronously
+   * whenever decalPackRef is absent.
+   */
+  const decalPreviewCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  /**
+   * Tick counter bumped in onModelLoaded. The decal-pack preview effect
+   * depends on this so it re-bakes whenever a new vehicle model loads —
+   * the new model may have a different UV layout, and baseDiffuseRef is
+   * replaced each load so any baked preview for the previous vehicle must
+   * be regenerated.
+   */
+  const [decalPreviewTick, setDecalPreviewTick] = useState(0)
   /** Bumps each time we repaint or apply camo. The Viewport reads this
    *  via the `overlayVersion` prop and uses it to gate when the 2048²
    *  CanvasTexture is re-uploaded to the GPU. Without it the viewport
@@ -479,16 +528,138 @@ export default function Editor({
   const [overlayVersion, setOverlayVersion] = useState(0)
   const bumpOverlay = useCallback(() => setOverlayVersion(v => v + 1), [])
 
-  // AI generation modal — opened by the bottom-right Generate pill.
-  const [generateOpen, setGenerateOpen] = useState(false)
+  // ---- Decal-pack preview composite effect --------------------------------
+  //
+  // When project.decalPackRef is set AND a vehicle model has been loaded,
+  // this effect:
+  //   1. Loads the decal pack from localStorage via loadDecalPackById.
+  //   2. Rasterises the first visible decal tile to a 128×128 canvas.
+  //   3. Resolves the hull-right UV rect for the current vehicle (JSON
+  //      registry first, vertex probe second, null = skip).
+  //   4. Bakes the decal into a copy of the current baseDiffuse at that
+  //      rect and stores it in decalPreviewCanvasRef.
+  //   5. Calls repaint() so paintCanvas picks up the new preview canvas.
+  //
+  // When decalPackRef is absent or no model is loaded, the preview canvas
+  // is cleared so paintCanvas falls back to plain baseDiffuse — behavior
+  // is IDENTICAL to the no-decalPackRef path (purely additive).
+  //
+  // Note: repaint is defined below this block; the hook is hoisted safely
+  // because all state/refs it closes over are stable by the time it runs.
+  // We access repaint via a ref to avoid a circular dep with the useEffect.
+  const repaintRef = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    const decalPackRef = project.decalPackRef
+    // Fast path: no decal pack → clear preview and exit
+    if (!decalPackRef) {
+      decalPreviewCanvasRef.current = null
+      // repaintRef may not be set on the very first tick (mount order).
+      // The subsequent repaint from onModelLoaded covers this case.
+      repaintRef.current?.()
+      return
+    }
 
-  // Pack-name title popover — top-center glass button, mirrors DecalPackEditor.
-  const [packNameEditOpen, setPackNameEditOpen] = useState(false)
+    // Load the decal pack synchronously from localStorage.
+    const pack = loadDecalPackById(decalPackRef.id)
+    if (!pack) {
+      decalPreviewCanvasRef.current = null
+      repaintRef.current?.()
+      return
+    }
+
+    // Scope gate: when the user pinned the decal preview to a single vehicle,
+    // clear the preview on every other vehicle.
+    if (project.decalScope === 'vehicle'
+        && project.decalScopeVehicleId
+        && project.decalScopeVehicleId !== vehicleId) {
+      decalPreviewCanvasRef.current = null
+      repaintRef.current?.()
+      return
+    }
+
+    // Find the first visible decal tile to preview.
+    // v6 packs use parts[].shared; v5 and earlier use decals[].
+    const allDecals = pack.parts
+      ? pack.parts.flatMap(p => p.shared.filter(d => d.visible))
+      : pack.decals.filter(d => d.visible)
+    const firstDecal = allDecals[0]
+    if (!firstDecal) {
+      decalPreviewCanvasRef.current = null
+      repaintRef.current?.()
+      return
+    }
+
+    const srcImage = pack.sourceImages[firstDecal.sourceImageId]
+    if (!srcImage) {
+      decalPreviewCanvasRef.current = null
+      repaintRef.current?.()
+      return
+    }
+
+    // Resolve the UV rect for this vehicle. JSON-only on first load (meshes
+    // may be null if the model hasn't finished loading yet); the effect
+    // re-runs on decalPreviewTick when meshes arrive.
+    const rect = resolveDecalUvRect(vehicleId, loadedMeshesRef.current)
+    if (!rect) {
+      // No rect available yet — clear preview (graceful skip).
+      decalPreviewCanvasRef.current = null
+      repaintRef.current?.()
+      return
+    }
+
+    const base = baseDiffuseRef.current
+    if (!base) {
+      decalPreviewCanvasRef.current = null
+      repaintRef.current?.()
+      return
+    }
+
+    // Rasterise the decal to a canvas. We need a decoded image element for
+    // rasteriseDecal. Load it asynchronously and bake on completion.
+    const img = new Image()
+    img.onload = () => {
+      // Rasterise the decal tile at 4× (512²) so the bake DOWNscales into the
+      // hull atlas rect (~320-512px) instead of upscaling a soft 128 tile —
+      // keeps the previewed badge crisp.
+      const decalCanvas = rasteriseDecal(firstDecal, img, { supersample: 4 })
+      // bakeDecalOntoDiffuse expects an HTMLCanvasElement; OffscreenCanvas
+      // is also valid but the type is CanvasImageSource which both satisfy.
+      // Cast so TypeScript is happy — the runtime drawImage accepts both.
+      const bakedCanvas = bakeDecalOntoDiffuse(
+        base,
+        decalCanvas as HTMLCanvasElement,
+        rect,
+      )
+      decalPreviewCanvasRef.current = bakedCanvas
+      repaintRef.current?.()
+      // Snap the camera to the right-side hull view so the newly baked decal
+      // is immediately visible.  Only fires if Viewport has wired up the
+      // faceDecalRef (i.e. Viewport is mounted and a model is loaded).
+      viewportFaceDecalRef.current?.()
+    }
+    img.onerror = () => {
+      // Image decode failed — clear preview silently.
+      decalPreviewCanvasRef.current = null
+      repaintRef.current?.()
+    }
+    img.src = srcImage.dataUrl
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.decalPackRef, project.decalScope, project.decalScopeVehicleId, vehicleId, decalPreviewTick])
+  // ^ vehicleId ensures the effect re-runs when the user switches vehicles.
+  //   decalPreviewTick ensures it re-runs when a new model loads (new baseDiffuse).
 
   // Per-slot icon editor — null means not open; number is the global
   // exportSlots index being edited. Opened from the SlotIconGrid inside
   // the PackIdentityPopover.
   const [slotIconEditingIdx, setSlotIconEditingIdx] = useState<number | null>(null)
+
+  // A3: full-screen vehicle-texture editor. The "Edit texture" pill opens
+  // this proper editor screen (live atlas + brush + back button) instead of
+  // the cramped Decals side panel it used to toggle.
+  const [textureEditorOpen, setTextureEditorOpen] = useState(false)
+  // UV-layout wireframe (flat segments [x0,y0,x1,y1,…] in 0..1) for the active
+  // vehicle's body meshes — drives the texture editor's "unwrap" overlay.
+  const [uvLines, setUvLines] = useState<Float32Array | null>(null)
 
   // Save indicator — 'saved' for 1.5 s after each auto-save, then clears.
   const [saveIndicator, setSaveIndicator] = useState<'saved' | null>(null)
@@ -651,62 +822,31 @@ export default function Editor({
     [bumpOverlay, vehicle.id, vehicle.faction],
   )
 
-  // Apply an AI-generated decal stamp. Persists the transparent PNG to
-  // the project image library and places one instance at hull-centre
-  // (UV 1024, 1024 — the centre of the 2048² diffuse). The user can
-  // then drag it around via the Decals panel.
-  //
-  // For scope='faction' the placed decal goes into the faction default
-  // list so every vehicle in the faction picks it up. For 'vehicle' it
-  // attaches to the current vehicle only.
-  const applyDecalImage = useCallback(
-    (
-      asset: { image: HTMLImageElement; dataUrl: string; width: number; height: number },
-      scope: 'vehicle' | 'faction' | 'all' = 'vehicle',
-    ) => {
-      history.commit('Apply decal image')
-      updateProject(p => {
-        // 1. Add to image library with isDecalStamp flag so the
-        //    placement UI surfaces it in the decal-stamps filter.
-        const imageId = 'img_' + Math.random().toString(36).slice(2, 10)
-        p.images[imageId] = {
-          id: imageId,
-          name: 'AI decal',
-          dataUrl: asset.dataUrl,
-          width: asset.width,
-          height: asset.height,
-          isDecalStamp: true,
-        }
-        // 2. Compute next decal id within the target list and append a
-        //    placed instance at hull-centre.
-        const targetList: Decal[] =
-          scope === 'faction'
-            ? getOrInitFactionDefault(p, vehicle.faction).decals
-            : getOrInitVehicle(p, vehicle.id).decals
-        const newId = (targetList.reduce((m, d) => Math.max(m, d.id), 0) ?? 0) + 1
-        targetList.push({
-          id: newId,
-          type: 'image',
-          x: 1024,
-          y: 1024,
-          rot: 0,
-          size: 256,
-          imageId,
-          opacity: 1,
-        })
-      })
-      bumpOverlay()
-    },
-    [bumpOverlay, history, vehicle.id, vehicle.faction],
-  )
+  // Stable refs so the repaint callback can read the latest hover/placeMode
+  // without them appearing in its dependency array.  This prevents repaint
+  // from recreating its identity on every mouse-move event, which in turn
+  // prevents the [repaint, project] useEffect from firing on every hover —
+  // the root cause of the 16 MB GPU texture upload per pointermove event.
+  const hoverRef = useRef<{ x: number; y: number } | null>(null)
+  hoverRef.current = hover
+  const placeModeRef = useRef<DecalType | 'off'>('off')
+  placeModeRef.current = placeMode
 
-  // Repaint whenever the project / vehicle / hover changes
-  const repaint = useCallback(() => {
+  // Core canvas repaint — composites baseDiffuse + decals + (optional)
+  // hover ghost onto the 2048² overlay canvas.
+  // Does NOT call bumpOverlay() so it can be used for hover-preview-only
+  // redraws without triggering a GPU texture re-upload.
+  const paintCanvas = useCallback(() => {
     const cv = overlayCanvasRef.current
     if (!cv) return
     const ctx = cv.getContext('2d')!
     ctx.clearRect(0, 0, 2048, 2048)
-    if (baseDiffuseRef.current) ctx.drawImage(baseDiffuseRef.current, 0, 0, 2048, 2048)
+    // Use the decal-pack preview canvas (baseDiffuse + baked decal) when
+    // available, otherwise fall back to bare baseDiffuse. When
+    // decalPreviewCanvasRef is null (no decalPackRef set, or rect unresolved),
+    // this path is IDENTICAL to the original behavior.
+    const baseSource = decalPreviewCanvasRef.current ?? baseDiffuseRef.current
+    if (baseSource) ctx.drawImage(baseSource, 0, 0, 2048, 2048)
     const renderCtx: RenderContext = {
       ctx,
       palette: project.palette,
@@ -716,26 +856,28 @@ export default function Editor({
       images: project.images ?? {},
     }
     paintDecals(renderCtx, veh.decals, activeDecalId)
-    // Hover preview — translucent ghost of the next-place decal
-    if (hover && placeMode !== 'off') {
+    // Hover preview — translucent ghost of the next-place decal.
+    // Reads hover/placeMode from refs so this callback is stable.
+    const hoverNow = hoverRef.current
+    const placeModeNow = placeModeRef.current
+    if (hoverNow && placeModeNow !== 'off') {
       ctx.globalAlpha = 0.55
       paintDecals(
         renderCtx,
         [
           {
             id: -1,
-            type: placeMode,
-            x: hover.x,
-            y: hover.y,
+            type: placeModeNow,
+            x: hoverNow.x,
+            y: hoverNow.y,
             rot: 0,
-            size: defaultSize(placeMode),
+            size: defaultSize(placeModeNow),
           },
         ],
         -1,
       )
       ctx.globalAlpha = 1
     }
-    bumpOverlay()
   }, [
     project.palette,
     project.images,
@@ -744,10 +886,30 @@ export default function Editor({
     veh.tac,
     veh.decals,
     activeDecalId,
-    hover,
-    placeMode,
-    bumpOverlay,
+    // hover and placeMode are intentionally omitted — read from stable refs
+    // so this callback does NOT recreate on every mouse-move event.
   ])
+
+  // Repaint committed content AND trigger GPU upload.  Use this whenever
+  // real project state changes (decal placed, palette changed, etc.).
+  const repaint = useCallback(() => {
+    paintCanvas()
+    bumpOverlay()
+  }, [paintCanvas, bumpOverlay])
+  // Keep repaintRef current so the decal-preview effect (declared before
+  // repaint to avoid a circular dep) can call repaint() after async bake.
+  // eslint-disable-next-line react-hooks/refs -- intentional "ref-as-latest-value" to bridge declaration order
+  repaintRef.current = repaint
+
+  // Hover-preview repaint — repaints the canvas so the ghost decal moves
+  // with the cursor, but does NOT bump overlayVersion so no GPU re-upload
+  // happens.  Called from a separate effect that tracks only hover/placeMode.
+  useEffect(() => {
+    paintCanvas()
+    // Intentionally NOT calling bumpOverlay() here — hover movement is
+    // cosmetic preview and must not trigger the 16 MB overlayTex upload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hover, placeMode, paintCanvas])
 
   useEffect(() => {
     repaint()
@@ -966,6 +1128,7 @@ export default function Editor({
         if (history.canUndo()) {
           const snap = history.undo()
           if (snap) toast.push(`Undo: ${snap.label}`, 'info')
+          setHistoryGeneration(g => g + 1)
         }
         return
       }
@@ -976,6 +1139,7 @@ export default function Editor({
         if (history.canRedo()) {
           const snap = history.redo()
           if (snap) toast.push(`Redo: ${snap.label}`, 'info')
+          setHistoryGeneration(g => g + 1)
         }
         return
       }
@@ -1165,6 +1329,33 @@ export default function Editor({
     [handleSetVehicleId, setPlaceMode],
   )
 
+  // C1: left-edge faction switcher. Switching faction lands on a vehicle of
+  // that faction — preferring one the pack already has (so the user returns
+  // to their own work-in-progress), else the faction's safe default vehicle.
+  const handleSelectFaction = useCallback(
+    (f: Faction) => {
+      if (f === selectedFaction) return
+      const existing = Object.keys(project.vehicles ?? {}).find(
+        id => VEHICLES.find(v => v.id === id)?.faction === f,
+      )
+      handleSetVehicleId(existing ?? FACTION_DEFAULT_VEHICLE[f])
+      setActiveDecalId(null)
+      setPlaceMode('off')
+    },
+    [selectedFaction, project.vehicles, handleSetVehicleId, setPlaceMode],
+  )
+
+  // Factions the pack already touches — drives the presence dot on the
+  // FactionPanel tiles. Derived from the project's edited vehicles.
+  const packFactions = useMemo(() => {
+    const set = new Set<Faction>()
+    for (const id of Object.keys(project.vehicles ?? {})) {
+      const f = VEHICLES.find(v => v.id === id)?.faction
+      if (f) set.add(f)
+    }
+    return [...set]
+  }, [project.vehicles])
+
   // Stable per-vehicle icon resolver wired into the VehicleMenu pills.
   // The cascade in `vehicle-icons.ts` does:
   //   1. project.vehicleIcons cache (instant after first resolve)
@@ -1180,10 +1371,13 @@ export default function Editor({
   // current project + install root from refs so the callback identity
   // stays stable (memoised with [] deps) and the VehicleMenu doesn't
   // re-fire its per-pill resolve effect on every parent re-render.
-  // (Vehicle-icon resolver removed — see VehicleMenu comment above. The
-  // resolveVehicleIcon helper is still used by SlotIconGrid /
-  // composeTileIcon when rendering slot thumbnails, just not for the
-  // bottom-rail pills.)
+  // Pulls project from a ref so the callback identity stays stable
+  // across re-renders (only `root` changes it), which keeps the
+  // VehicleMenu from re-firing its per-pill resolve effect needlessly.
+  const resolveIcon = useCallback<VehicleIconResolver>(
+    v => resolveVehicleIcon(projectRef.current, v.id, v.faction, { installRoot: root, render3d: false }),
+    [root],
+  )
 
   // Stable getter for the vanilla diffuse canvas — reads a ref so it never
   // needs to be recreated. Passed to TopBar to avoid an inline lambda.
@@ -1194,6 +1388,19 @@ export default function Editor({
   // ignored. Used by App.tsx to unmount the loading-state AuthShell the
   // moment the user's first vehicle is fully on-screen.
   const readyFiredRef = useRef(false)
+
+  // Ref to Viewport's `buildVehicleIntoCache` function. Set by Viewport on
+  // mount via the preloadRef prop, nulled on unmount.
+  const viewportPreloadRef = useRef<((spec: import('@/lib/vehicles').VehicleSpec, season: 'summer' | 'winter', eager?: boolean) => Promise<void>) | null>(null)
+
+  // Ref to Viewport's `faceDecalSide` function. Set by Viewport on mount via
+  // the faceDecalRef prop, nulled on unmount.  Called after a successful decal
+  // bake so the camera snaps to the hull-right side and the decal is
+  // immediately visible without the user having to orbit.
+  const viewportFaceDecalRef = useRef<(() => void) | null>(null)
+
+  // Guard: faction-first preload fires at most once per session.
+  const factionPreloadFiredRef = useRef(false)
 
   // overlayCanvasRef.current is initialized via the lazy-init guard above and
   // is stable across renders; it's safe to read here for passing to children.
@@ -1226,8 +1433,21 @@ export default function Editor({
           vehicle={hideTank ? null : vehicle}
           overlayCanvas={overlayCanvas}
           overlayVersion={overlayVersion}
-          onModelLoaded={(_model, diffuseImg) => {
+          onModelLoaded={(model, diffuseImg) => {
             baseDiffuseRef.current = diffuseImg
+            // Store loaded meshes for the decal-pack preview UV probe.
+            // Clearing the preview canvas here ensures a stale baked canvas
+            // from the previous vehicle doesn't flash on screen while the
+            // new one is being baked asynchronously.
+            loadedMeshesRef.current = model ? model.meshes : null
+            decalPreviewCanvasRef.current = null
+            // Bump tick so the decal-preview effect re-fires with the new
+            // baseDiffuse and meshes.
+            setDecalPreviewTick(t => t + 1)
+            // Extract the body UV wireframe so the texture editor can draw
+            // the "unwrap" overlay on top of the flat atlas. Cheap (one pass
+            // over body-mesh triangle edges); recomputed per model load.
+            setUvLines(model ? extractBodyUvWireframe(model) : null)
             // Snapshot the pristine vanilla diffuse so applyCamo can
             // multiply-blend its procedural pattern over rivets/hatches/
             // welds without those details being eaten by every successive
@@ -1300,13 +1520,65 @@ export default function Editor({
             // blank canvas and the hull renders flat gray while tracks (non-
             // body materials, which keep their own texture) look fine.
             repaint()
-            // First-time-only handoff: tells App.tsx the loading-state
-            // AuthShell can fade out and the Editor can become visible.
-            // Guarded by a ref (not state) so the gating is synchronous
-            // and doesn't depend on React batching.
-            if (!readyFiredRef.current) {
+            // Prefetch normal maps for adjacent vehicles in this faction
+            // during idle time, so subsequent vehicle loads skip BC decode.
+            const factionVehicles = vehiclesForFaction(vehicle.faction)
+            const idx = factionVehicles.findIndex(v => v.id === vehicle.id)
+            const adjacent = [factionVehicles[idx - 1]?.id, factionVehicles[idx + 1]?.id].filter(Boolean) as string[]
+            schedulePrefetch(adjacent)
+            // First-time-only handoff: tells App.tsx the editor-loading
+            // AuthShell (the Connect loading circle) can fade out and the
+            // Editor can become visible. Guarded by a ref (not state) so the
+            // gating is synchronous and doesn't depend on React batching.
+            const fireReady = () => {
+              if (readyFiredRef.current) return
               readyFiredRef.current = true
               onReady?.()
+            }
+            // FULL warmup — runs once per session after the first model is
+            // ready. Builds EVERY vehicle of EVERY faction into the pinned
+            // cache (no eviction) so that, after Connect, switching to ANY
+            // vehicle in ANY faction is a pure cache hit with zero loading and
+            // no pad/camera change. The user's directive: "no loading except at
+            // the connect button — everything loaded into RAM."
+            //
+            // REVEAL IMMEDIATELY: fireReady() is called as soon as the user's
+            // first vehicle is on screen. The fleet warmup continues in the
+            // background behind the now-visible editor. This removes the "stare
+            // at the loading circle while 60 OTHER vehicles build" UX problem.
+            //
+            // NOTE: the vehicle RGM *bytes* are now preloaded during the
+            // Connect screen's 'preloading' phase (ConnectScreen.tsx →
+            // preloadFaction for every faction), so each buildVehicleIntoCache
+            // below hits a warm bytesCache and skips disk I/O — only the GPU
+            // mesh/texture build happens here.
+            //
+            // NO FALLBACK: every machine warms the full fleet at Connect. The
+            // user's directive — "no fall back, optimise so all computers can
+            // load it at once." We removed the old ≥4 GB deviceMemory gate.
+            if (!factionPreloadFiredRef.current) {
+              factionPreloadFiredRef.current = true
+              // Pre-resolve EVERY vehicle's strip icon into the project cache,
+              // in parallel, so the VehicleMenu rail never shows a placeholder→
+              // icon pop after Connect. These are cheap bundled-PNG fetches;
+              // fire-and-forget.
+              void Promise.all(
+                VEHICLES.map(v =>
+                  resolveVehicleIcon(projectRef.current, v.id, v.faction, {
+                    installRoot: root,
+                    render3d: false,
+                  }).catch(() => {}),
+                ),
+              )
+
+              // The full fleet was CPU-warmed at Connect (ConnectScreen's
+              // headless Viewport). Every vehicle is already in pinnedVehicleCache
+              // — switching is a cache hit, so this vehicle is already rendered.
+              // Reveal instantly: no background build loop needed.
+              fireReady()
+            } else {
+              // Warmup already fired this session — reveal immediately.
+              fireReady()
             }
           }}
           onSeasonReady={handleSeasonReady}
@@ -1337,6 +1609,8 @@ export default function Editor({
           showCrew={showCrew}
           preset={preset}
           controlsEnabled={true}
+          preloadRef={viewportPreloadRef}
+          faceDecalRef={viewportFaceDecalRef}
         />
       </Suspense>
 
@@ -1381,6 +1655,7 @@ export default function Editor({
             pendingImageId={pendingImageId}
             setPendingImageId={setPendingImageId}
             installRoot={root}
+            onEditSlotIcon={setSlotIconEditingIdx}
             parts={parts}
             selectedPart={selectedPart}
             setSelectedPart={setSelectedPart}
@@ -1406,101 +1681,6 @@ export default function Editor({
             clearBrushPaint={clearBrushPaint}
           />
 
-          {/* ── Centered pack-name title — top-centre of viewport ─────────────
-              Mirrors DecalPackEditor's centered title pattern so the user
-              always sees which pack they're editing without having to expand
-              the side metadata panel. Click to open a small rename popover.
-              The full ProjectMetaPanel (author/name/description) remains in
-              TopBar's Publish → Project panel for richer metadata edits. */}
-          <div
-            style={
-              {
-                position: 'fixed',
-                top: 'calc(12px + var(--app-top-inset, 0px))',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                zIndex: 50,
-                WebkitAppRegion: 'no-drag',
-              } as CSSProperties
-            }
-          >
-            <button
-              type="button"
-              title="Click to edit pack identity"
-              aria-label="Pack name — click to edit"
-              onClick={() => {
-                setPackNameEditOpen(v => !v)
-              }}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                height: 36,
-                paddingLeft: 14,
-                paddingRight: 14,
-                borderRadius: 12,
-                background: 'rgba(15, 17, 22, 0.75)',
-                backgroundImage:
-                  'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
-                backdropFilter: 'blur(40px) saturate(150%)',
-                WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-                border: '0.5px solid rgba(255, 255, 255, 0.08)',
-                boxShadow:
-                  'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-                color: 'rgba(247,247,250,0.88)',
-                cursor: 'pointer',
-                padding: '0 14px',
-                fontSize: 14,
-                fontWeight: 700,
-                letterSpacing: '0.01em',
-                whiteSpace: 'nowrap',
-                maxWidth: 'calc(100vw - 200px)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-              }}
-            >
-              {project.packName || 'Unnamed Skin Pack'}
-            </button>
-
-            {/* Pack identity popover — name / description / author.
-                Uses the shared PackIdentityPopover so all identity-edit surfaces
-                stay in sync. Enter / Save commits; Escape / outside cancels.
-                NOTE: skin-pack has no single pack-icon field today (per-vehicle
-                exportSlot icons are complex). iconSlot is omitted for this first
-                pass — summer/winter icon editing lands in a follow-up patch. */}
-            <PackIdentityPopover
-              open={packNameEditOpen}
-              onClose={() => setPackNameEditOpen(false)}
-              name={project.packName}
-              description={project.packDescription}
-              author={project.author}
-              onSave={({ name, description, author }) => {
-                // Autosync — fired on every keystroke from the popover.
-                // Do NOT close here; the popover stays open until Escape
-                // / outside-click. Each callback is a full snapshot so we
-                // can merge in one setProject pass without diffing fields.
-                setProject(p => ({
-                  ...p,
-                  packName: name.trim() || p.packName,
-                  packDescription: description,
-                  author: author.trim() || p.author,
-                  modifiedAt: new Date().toISOString(),
-                }))
-              }}
-              extraSection={
-                <SlotIconGrid
-                  project={project}
-                  installRoot={root}
-                  onSlotClick={idx => {
-                    setPackNameEditOpen(false)
-                    setSlotIconEditingIdx(idx)
-                  }}
-                />
-              }
-            />
-          </div>
-
           {/* Save indicator — fades in briefly after each auto-save.
                Inline style override applies the same --app-top-inset shim
                used by TopBar so the pill clears the Demo banner. */}
@@ -1522,6 +1702,15 @@ export default function Editor({
               Undo / Redo are still bound to Ctrl+Z / Ctrl+Y via the
               keyboard handlers in this component. */}
 
+          {/* Left edge: faction switcher (C1) — mirrors ScenePanel on the
+              right. A pack spans multiple factions, so this jumps between
+              them rather than locking one at create time. */}
+          <FactionPanel
+            selected={selectedFaction}
+            onSelect={handleSelectFaction}
+            packFactions={packFactions}
+          />
+
           {/* Right edge: 3 stacked scene-preset icons */}
           <ScenePanel presetId={presetId} setPresetId={setPresetId} />
 
@@ -1530,11 +1719,6 @@ export default function Editor({
               purely vehicle navigation. Centered via left-1/2 + translate so
               it stays visually balanced regardless of vehicle-row width. */}
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex flex-col gap-2 items-center">
-            {/* Sync status — small text+icon pill above the toolbar so the
-                user can see at a glance that their work is being saved /
-                exported. Replaces the previously implicit "trust me" model
-                where Live Sync only lived in the TopBar cluster. */}
-            <SyncStatusPill />
             <div className="flex items-center justify-center gap-4">
               {/* Explode: toggles the CAD-style exploded view so the user
                *  can see every submesh separately. Click an exploded part
@@ -1553,7 +1737,7 @@ export default function Editor({
                   style={{
                     background: 'rgba(20, 22, 28, 0.72)',
                     color: 'rgb(229, 231, 235)',
-                    backdropFilter: 'blur(28px) saturate(180%)',
+                    backdropFilter: 'blur(36px) saturate(160%)',
                     border: '0.5px solid rgba(255,255,255,0.18)',
                     boxShadow:
                       '0 8px 22px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
@@ -1565,40 +1749,35 @@ export default function Editor({
                 </button>
               )}
               <SeasonToggle value={season} onChange={handleSetSeason} loading={seasonLoading} />
-              <GenerateButton onClick={() => setGenerateOpen(true)} />
-              {/* Edit Texture pill — the in-place entry point for direct
-                  brush-painting on the 3D model. Clicking once flips the
-                  editor into paint mode (opens the Brush panel + enables
-                  the brush); clicking again exits cleanly. We deliberately
-                  also clear `symmetric` here so every new editing session
-                  starts in plain one-sided mode — the user's bedtime
-                  request was to make symmetry disable-able, so we lead
-                  with the disabled state and let users opt back into
-                  mirrored painting from the Brush panel. */}
+              {/* Edit Texture pill — opens the FULL-SCREEN vehicle-texture
+                  editor (A3): the live in-game atlas shown large, with brush
+                  tools and a back button in the top-left. Previously this
+                  merely toggled the cramped Decals side panel. */}
               <EditTextureButton
-                brushOn={brushOn}
+                brushOn={textureEditorOpen}
                 disabled={!vehicle}
-                onClick={() => {
-                  const next = !brushOn
-                  setBrushOn(next)
-                  setActivePanel(next ? 'brush' : null)
-                  if (next && brushSettings.symmetric) {
-                    setBrushSettings({ ...brushSettings, symmetric: false })
-                  }
-                }}
+                onClick={() => setTextureEditorOpen(true)}
               />
             </div>
-            {/* User feedback: the procedural per-vehicle icons rendered as
-                near-uniform red folder/T placeholders for most vehicles —
-                visually broken. Until we ship a real per-vehicle icon set
-                we drop the resolver so VehicleMenu falls through to its
-                text-only-pill branch (vehicle.displayName). */}
+            {/* Template + decal-pack quick-pick pills, sitting directly above
+                the vehicle selector rail. Template selection clones a fresh
+                project (same contract as the centre-title identity popover);
+                decal-pack selection records an association on the project. */}
+            <TemplateDecalPills
+              project={project}
+              setProject={setProject}
+              faction={vehicle.faction}
+              onVehicleChange={handleSetVehicleId}
+              currentVehicleId={vehicleId}
+              installRoot={root}
+            />
             <VehicleMenu
               vehicles={factionVehicles}
               selected={vehicle}
               onSelect={handleVehicleSelect}
               dirtyVehicles={dirtyVehicles}
               loading={vehicleLoading}
+              iconResolver={resolveIcon}
             />
           </div>
         </div>
@@ -1640,23 +1819,34 @@ export default function Editor({
         />
       )}
 
+      {/* A3: full-screen vehicle-texture editor overlay. */}
+      {textureEditorOpen && vehicle && overlayCanvasRef.current && (
+        <VehicleTextureEditor
+          overlayCanvas={overlayCanvasRef.current}
+          baseDiffuse={baseDiffuseRef.current}
+          vanilla={vanillaDiffuseRef.current}
+          version={overlayVersion}
+          brush={brushSettings}
+          setBrush={setBrushSettings}
+          onStrokeBegin={() => { history.commit('Paint'); setHistoryGeneration(g => g + 1) }}
+          onComposite={repaint}
+          onStrokeEnd={persistBrushStroke}
+          onClear={clearBrushPaint}
+          onBack={() => setTextureEditorOpen(false)}
+          onUndo={() => { const s = history.undo(); if (s) toast.push(`Undo: ${s.label}`, 'info'); setHistoryGeneration(g => g + 1) }}
+          canUndo={history.canUndo()}
+          onRedo={() => { const s = history.redo(); if (s) toast.push(`Redo: ${s.label}`, 'info'); setHistoryGeneration(g => g + 1) }}
+          canRedo={history.canRedo()}
+          vehicleName={veh.name ?? vehicle.id}
+          uvLines={uvLines}
+        />
+      )}
+
       {toastNode}
 
       <ShortcutHelpSheet />
       <OnboardingOverlay />
 
-      {/* AI generation modal — opens when the bottom Generate button is
-          clicked. Lives at the editor root so it overlays everything. */}
-      <GenerateModal
-        open={generateOpen}
-        onOpenChange={setGenerateOpen}
-        faction={vehicle.faction}
-        season={season}
-        vehicleName={vehicle?.displayName ?? 'vehicle'}
-        onApplyCamo={applyCamo}
-        onApplyCamoImage={applyCamoImage}
-        onApplyDecalImage={applyDecalImage}
-      />
     </div>
   )
 }
@@ -1668,59 +1858,9 @@ export default function Editor({
 // surface a labelled pill near the action surface (paint / generate / vehicle
 // switch) where they care about it most.
 // ---------------------------------------------------------------------------
-function SyncStatusPill() {
-  const sync = useLiveSync()
-  const { state, reason, enabled } = sync
-
-  // Five-state label & dot colour mapping. The wording mirrors the tooltip
-  // text in LiveSyncBadge so screen-reader and visual users see the same
-  // story. We keep "Live Sync" as a prefix so the pill is self-explanatory
-  // for users who haven't opened the docs.
-  let label: string
-  let dot: string
-  if (!enabled) {
-    label = 'Live Sync off'
-    dot = 'rgba(255,255,255,0.35)'
-  } else if (state === 'syncing') {
-    label = 'Live Sync · saving…'
-    dot = '#38bdf8' // sky-400
-  } else if (state === 'queued') {
-    label = 'Live Sync · queued'
-    dot = '#fbbf24' // amber-400
-  } else if (state === 'error') {
-    label = `Live Sync · ${reason || 'error'}`
-    dot = '#f87171' // red-400
-  } else {
-    label = 'Live Sync · saved'
-    dot = '#34d399' // emerald-400
-  }
-
-  return (
-    <div
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium select-none pointer-events-none"
-      style={{
-        background: 'rgba(20, 22, 28, 0.62)',
-        backdropFilter: 'blur(20px) saturate(160%)',
-        WebkitBackdropFilter: 'blur(20px) saturate(160%)',
-        border: '0.5px solid rgba(255,255,255,0.10)',
-        color: 'rgba(247,247,250,0.78)',
-        letterSpacing: '0.02em',
-      }}
-      aria-live="polite"
-      title={enabled ? `Live Sync — ${reason}` : 'Live Sync is off'}
-    >
-      <span
-        aria-hidden
-        className="w-1.5 h-1.5 rounded-full"
-        style={{
-          backgroundColor: dot,
-          boxShadow: `0 0 6px ${dot}`,
-        }}
-      />
-      {label}
-    </div>
-  )
-}
+// SyncStatusPill is ready to drop into the vehicle toolbar when needed —
+// kept here for easy re-activation (see comment block above).
+// function SyncStatusPill() { ... }
 
 function defaultSize(t: DecalType | 'off'): number {
   switch (t) {

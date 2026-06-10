@@ -36,13 +36,7 @@ export default function ScenePanel({ presetId, setPresetId }: Props) {
   // changing immediately on click + the scene actually swapping behind.
   return (
     <div
-      className="fixed top-1/2 right-3 -translate-y-1/2 z-30 flex flex-col gap-2 p-1.5 rounded-2xl"
-      style={{
-        background: 'rgba(20, 22, 28, 0.62)',
-        backdropFilter: 'blur(28px) saturate(180%)',
-        border: '0.5px solid rgba(255,255,255,0.10)',
-        boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
-      }}
+      className="glass-hud fixed top-1/2 right-3 -translate-y-1/2 z-30 flex flex-col gap-2 p-1.5 rounded-2xl"
     >
       {PRESET_ORDER.map(id => {
         const active = presetId === id

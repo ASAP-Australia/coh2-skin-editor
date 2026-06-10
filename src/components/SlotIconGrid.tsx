@@ -151,7 +151,13 @@ function SlotRow({ slots, thumbs, onSlotClick }: SlotRowProps) {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
+        // Size columns to the 80px tile, NOT 1fr. With `repeat(3, 1fr)` the
+        // columns stretched to fill the popover while the tiles stayed pinned
+        // at 80px, so the surplus column width rendered as a big gap BETWEEN
+        // the icons ("space between the summer/winter icons is too wide").
+        // Fixed 80px tracks + an 8px gap keeps the three icons snug.
+        gridTemplateColumns: 'repeat(3, 80px)',
+        justifyContent: 'start',
         gap: 8,
       }}
     >

@@ -26,8 +26,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Clock } from 'lucide-react'
-import { GiPaintBrush, GiShield, GiPaintBucket, GiOpenFolder } from 'react-icons/gi'
+import { Clock, Layers, Frame, Stamp, FolderOpen } from 'lucide-react'
 import { BorderBeam } from '@/components/ui/border-beam'
 import { type Coh2SkinProject, loadActive, readProjectFile } from '@/lib/project'
 import {
@@ -246,25 +245,25 @@ export default function StartScreen({
   rows.push(
     <div key="new-project-grid" className="grid grid-cols-2 gap-3 mb-3">
       <GridButton
-        icon={<GiPaintBrush className="text-amber-400 flex-shrink-0" style={{ width: 24, height: 24 }} aria-hidden />}
+        icon={<Layers className="text-amber-400 flex-shrink-0" size={24} aria-hidden />}
         title="New Skin Pack"
         sublabel="Paint a vehicle livery"
         onClick={onNewSkin}
       />
       <GridButton
-        icon={<GiShield className="text-sky-400 flex-shrink-0" style={{ width: 24, height: 24 }} aria-hidden />}
+        icon={<Frame className="text-sky-400 flex-shrink-0" size={24} aria-hidden />}
         title="New Faceplate"
         sublabel="Player profile banner"
         onClick={onNewFaceplate}
       />
       <GridButton
-        icon={<GiPaintBucket className="text-emerald-400 flex-shrink-0" style={{ width: 24, height: 24 }} aria-hidden />}
+        icon={<Stamp className="text-emerald-400 flex-shrink-0" size={24} aria-hidden />}
         title="New Decal Pack"
         sublabel="A set of vehicle decals"
         onClick={onNewDecalPack}
       />
       <GridButton
-        icon={<GiOpenFolder className="text-violet-400 flex-shrink-0" style={{ width: 24, height: 24 }} aria-hidden />}
+        icon={<FolderOpen className="text-violet-400 flex-shrink-0" size={24} aria-hidden />}
         title="Load Project"
         sublabel="Open saved project"
         onClick={onShowSavedProjects}

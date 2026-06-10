@@ -54,18 +54,25 @@ export default function EditTextureButton({ brushOn, onClick, disabled = false }
           : 'Edit the vehicle texture — paint directly on the 3D model'
       }
       data-testid="edit-texture-pill"
-      className="relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium cursor-pointer transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed"
-      style={{
-        background: brushOn ? 'rgba(160, 200, 90, 0.85)' : 'rgba(20, 22, 28, 0.62)',
-        color: brushOn ? 'rgb(20, 24, 12)' : 'rgb(229, 231, 235)',
-        backdropFilter: 'blur(28px) saturate(180%)',
-        border: brushOn
-          ? '0.5px solid rgba(255,255,255,0.30)'
-          : '0.5px solid rgba(255,255,255,0.10)',
-        boxShadow: brushOn
-          ? '0 8px 22px rgba(120, 160, 60, 0.40), inset 0 0.5px 0 rgba(255,255,255,0.30)'
-          : '0 8px 22px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
-      }}
+      className={
+        'relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium cursor-pointer transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed' +
+        // Inactive surface = shared `glass-pill` recipe; active swaps to the
+        // green "editing" tint below.
+        (brushOn ? '' : ' glass-pill')
+      }
+      style={
+        brushOn
+          ? {
+              background: 'rgba(160, 200, 90, 0.85)',
+              color: 'rgb(20, 24, 12)',
+              backdropFilter: 'blur(36px) saturate(160%)',
+              WebkitBackdropFilter: 'blur(36px) saturate(160%)',
+              border: '0.5px solid rgba(255,255,255,0.30)',
+              boxShadow:
+                '0 8px 22px rgba(120, 160, 60, 0.40), inset 0 0.5px 0 rgba(255,255,255,0.30)',
+            }
+          : { color: 'rgb(229, 231, 235)' }
+      }
     >
       <Brush size={13} strokeWidth={2} />
       <span>{brushOn ? 'Editing texture' : 'Edit texture'}</span>

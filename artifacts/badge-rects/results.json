@@ -1,0 +1,62 @@
+[
+  {
+    "vehicleId": "king_tiger_sdkfz_182",
+    "faction": "west_german",
+    "rect": {
+      "x": 410,
+      "y": 1320,
+      "w": 360,
+      "h": 340
+    },
+    "semanticKey": "hullSideRight",
+    "confidence": "high",
+    "emblemType": "balkenkreuz",
+    "note": "Balkenkreuz + tac# 351 visible in Wikinger OKW skin. Cross dark-pixel centroid ~(590,1490). Zone encompasses both cross and number. Previously hand-authored as {896,1152,512,512} which is wrong per Wikinger ground truth.",
+    "rgtPath": "art/armies/west_german/vehicles/king_tiger_sdkfz_182/skins/49019d41d71c423a84e375faaadd9c6a_summer/king_tiger_sdkfz_182_dif.rgt"
+  },
+  {
+    "vehicleId": "tiger",
+    "faction": "german",
+    "rect": {
+      "x": 996,
+      "y": 1128,
+      "w": 320,
+      "h": 320
+    },
+    "semanticKey": "hullSideRight",
+    "confidence": "high",
+    "emblemType": "balkenkreuz",
+    "note": "Balkenkreuz cross confirmed in crop at x=1156, y=1288. Cross shape verified via density scan (score=48). Right-side hull panel in lower-right quadrant.",
+    "rgtPath": "art/armies/german/vehicles/tiger/skins/d5df8bc8d8504ebdbbbcfaf868c702dd_summer/tiger_dif.rgt"
+  },
+  {
+    "vehicleId": "t34_76",
+    "faction": "soviet",
+    "rect": {
+      "x": 0,
+      "y": 342,
+      "w": 276,
+      "h": 320
+    },
+    "semanticKey": "hullFront",
+    "confidence": "medium",
+    "emblemType": "soviet_star",
+    "note": "Red Soviet star at x=80-152, y=457-548. Left-in-atlas panel = hull right side by T34 atlas convention but visually these are FRONT HULL / GLACIS panels. Using hullFront per instruction; lower confidence.",
+    "rgtPath": "art/armies/soviet/vehicles/t34_76/skins/00fb732f48ee4f66ab79d8f52cd98e14_summer/t34_76_dif.rgt"
+  },
+  {
+    "vehicleId": "m4a3e8_sherman_easy_8",
+    "faction": "aef",
+    "rect": {
+      "x": 1700,
+      "y": 1236,
+      "w": 320,
+      "h": 320
+    },
+    "semanticKey": "hullSideRight",
+    "confidence": "high",
+    "emblemType": "us_star",
+    "note": "White US Army star confirmed at x=1860, y=1396 from visual crop verification. Three stars visible in atlas: S1(1334,1393)=hull-left, S2(1860,1396)=hull-right (this rect), S3(1584,1696)=turret. S2 is rightmost atlas region = hull right side.",
+    "rgtPath": "art/armies/aef/vehicles/m4a3e8_sherman_easy_8/skins/5a3d5e4e9f854eb39e8edc7e15c4dc25_summer/m4a3e8_sherman_easy_8_dif.rgt"
+  }
+]

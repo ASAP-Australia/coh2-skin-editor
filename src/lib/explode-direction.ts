@@ -142,3 +142,69 @@ export function computeExplodeDirection(
 
   return partIsTiny ? dir.multiplyScalar(1.4).normalize() : dir
 }
+
+// ---------------------------------------------------------------------------
+// computeExplodeOffset — B6
+// ---------------------------------------------------------------------------
+
+/**
+ * Full explode OFFSET (direction × magnitude) for a submesh in "explode all"
+ * mode.
+ *
+ * The original `explode all` applied a FIXED 0.5-unit offset along
+ * `computeExplodeDirection`, which returns a ZERO vector for hull / chassis /
+ * body. The result: the entire central body stayed welded together and only
+ * the treads / wheels slid out — the "just shoves the treads out" bug.
+ *
+ * This instead does a proper radial explosion: every part is pushed OUTWARD
+ * from the model centre by an amount proportional to how far it already sits
+ * from that centre (a uniform scale-about-centre). Parts therefore fan out
+ * into separate islands roughly following their physical — and so roughly
+ * their texture-map — layout, which is the "unwrap so each part is exploded
+ * out and visible" behaviour requested.
+ *
+ * Coordinates are whatever consistent space the caller passes (the Viewport
+ * passes group-local geometry-centroid space). `vehicleCenter` is the centre
+ * of that same space; `vehicleSize` its bounding size (for the centre-part
+ * nudge scale).
+ */
+export function computeExplodeOffset(
+  meshName: string,
+  bboxCenter: Vector3,
+  vehicleSize: Vector3,
+  vehicleId: string | null = null,
+  vehicleCenter: Vector3 = new Vector3(),
+): Vector3 {
+  const maxDim = Math.max(vehicleSize.x, vehicleSize.y, vehicleSize.z) || 1
+
+  // Radial vector from the model centre to this part. Prefer an authored
+  // UV-region centroid3d (more faithful to the texture layout) when present.
+  let radial: Vector3 | null = null
+  if (vehicleId) {
+    const entry = UV_REGION_REGISTRY[vehicleId]?.namedObjects[meshName]
+    if (entry?.centroid3d) {
+      const c = entry.centroid3d
+      radial = new Vector3(c.x, c.y, c.z).sub(vehicleCenter)
+    }
+  }
+  if (!radial) radial = bboxCenter.clone().sub(vehicleCenter)
+
+  // Scale each part outward from the centre. K ≈ 0.85 ≈ 1.85× spacing —
+  // enough to read every part as a separate island without flinging them off
+  // screen.
+  const SPREAD = 0.85
+  const offset = radial.multiplyScalar(SPREAD)
+
+  // Parts sitting near the centre (radial ≈ 0 — inner hull, gun breech) would
+  // barely move and stay buried. Give them a name-aware outward nudge so they
+  // still separate and become individually visible.
+  const nudge = 0.18 * maxDim
+  if (offset.length() < nudge) {
+    const dir = computeExplodeDirection(meshName, bboxCenter, vehicleSize, vehicleId, vehicleCenter)
+    offset.add(
+      dir.lengthSq() > 0 ? dir.multiplyScalar(nudge) : new Vector3(0, nudge, 0),
+    )
+  }
+
+  return offset
+}

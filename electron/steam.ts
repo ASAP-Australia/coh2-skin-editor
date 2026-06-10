@@ -78,6 +78,7 @@ interface NativePublishResult {
 interface WorkshopNative {
   publishNewItem(input: NativePublishInput): Promise<NativePublishResult>
   updateExistingItem(input: NativeUpdateInput): Promise<NativePublishResult>
+  deletePublishedItem(publishedFileId: bigint): Promise<{ publishedFileId: bigint }>
   startCallbackPump(): void
   stopCallbackPump(): void
 }
@@ -460,13 +461,14 @@ export async function publishWorkshopItem(
     result.agreementNeeded,
   )
 
-  // Auto-subscribe the publisher to their own item so Steam downloads it into
-  // local game data immediately. ISteamRemoteStorage::PublishWorkshopFile does
-  // not do this automatically. Failure is non-fatal and logged only.
-  await subscribeToWorkshopItem(result.publishedFileId)
-
   if (result.agreementNeeded) {
     const id = result.publishedFileId.toString()
+    // NOTE: do NOT auto-subscribe here. When the Workshop Subscriber Agreement
+    // is unaccepted, PublishWorkshopFile frequently returns publishedFileId=0
+    // (no real item allocated yet). Subscribing to id 0 fails with
+    // "a file was not found" — exactly the noise that was flooding
+    // workshop-error.log. The publish hasn't completed, so there's nothing to
+    // subscribe to. Surface the agreement error and bail.
     throw new Error(
       `Steam Workshop Subscriber Agreement not accepted.\n\n` +
       `Please visit https://steamcommunity.com/sharedfiles/itemedit/?id=${id} ` +
@@ -474,6 +476,13 @@ export async function publishWorkshopItem(
       `(Item ID ${id} was allocated.)`,
     )
   }
+
+  // Auto-subscribe the publisher to their own item so Steam downloads it into
+  // local game data immediately. ISteamRemoteStorage::PublishWorkshopFile does
+  // not do this automatically. Runs AFTER the agreement guard so we only ever
+  // subscribe to a real, fully-allocated item id. Failure is non-fatal and
+  // logged only (subscribeToWorkshopItem additionally guards id<=0).
+  await subscribeToWorkshopItem(result.publishedFileId)
 
   return {
     workshopId: result.publishedFileId.toString(),
@@ -485,31 +494,39 @@ export async function publishWorkshopItem(
 export interface UpdateWorkshopInput extends PublishWorkshopInput {}
 
 /**
- * Re-publish content under an existing Workshop file ID via legacy
- * ISteamRemoteStorage update path.
+ * Update an existing Workshop item's metadata via the modern ISteamUGC API
+ * (steamworks.js `workshop.updateItem`).
  *
- * NOTE: Only items originally published via publishWorkshopItem (this legacy
- * path) can be updated. Items created via the modern ISteamUGC API cannot.
+ * IMPORTANT — why this does NOT re-upload the .sga content:
+ *   CoH2 (appid 231430) stores Workshop content as **legacy
+ *   ISteamRemoteStorage shared files** (ugchandle, `manifest = -1` in
+ *   appworkshop_231430.acf), not as an ISteamUGC depot. Two facts, both
+ *   verified live against Steam on 2026-06-10:
+ *     1. ISteamUGC `SetItemContent` / `SubmitItemUpdate` with a content folder
+ *        returns "a parameter is invalid" for CoH2 — the app has no UGC
+ *        content depot, so depot uploads are rejected.
+ *     2. The legacy `ISteamRemoteStorage::CreatePublishedFileUpdateRequest`
+ *        path returns a handle that maps to no valid record in the current
+ *        Steam client; the first field setter then segfaults inside
+ *        steamclient.so (`__strlen_avx2` on a poisoned pointer). This was the
+ *        whole-app freeze users hit when changing an item's visibility.
+ *   ISteamUGC metadata updates (title / description / visibility / tags /
+ *   preview) ARE fully supported for CoH2 items and never crash, so that is
+ *   the only update we perform here. Re-uploading changed .sga content
+ *   requires a fresh publish (a new Workshop id), handled by the caller.
  */
 export async function updateWorkshopItem(
   workshopId: string,
   input: UpdateWorkshopInput,
 ): Promise<UpdateWorkshopResult> {
-  requireSteamClient()
+  const client = requireSteamClient()
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const fs = require('fs') as typeof import('fs')
-  let contentDirExists = false
-  let contentDirIsDir = false
-  let contentDirFiles: string[] = []
+
+  // Preview pre-flight — Steam rejects previews larger than 1 MB.
   let previewExists = false
   let previewSize = -1
-  try {
-    const cs = fs.statSync(input.contentPath)
-    contentDirExists = true
-    contentDirIsDir = cs.isDirectory()
-    if (contentDirIsDir) contentDirFiles = fs.readdirSync(input.contentPath)
-  } catch { /* logged below */ }
   try {
     const ps = fs.statSync(input.previewPath)
     previewExists = true
@@ -517,14 +534,10 @@ export async function updateWorkshopItem(
   } catch { /* logged below */ }
 
   console.log(
-    '[workshop:update] step=pre-flight workshopId=%s appId=%d title=%j contentPath=%s contentDirExists=%s isDir=%s files=%j previewPath=%s previewExists=%s previewSize=%d tags=%j visibility=%s changeNote=%j',
+    '[workshop:update] step=pre-flight (ISteamUGC metadata) workshopId=%s appId=%d title=%j previewPath=%s previewExists=%s previewSize=%d tags=%j visibility=%s changeNote=%j',
     workshopId,
     COH2_APP_ID,
     input.title,
-    input.contentPath,
-    contentDirExists,
-    contentDirIsDir,
-    contentDirFiles,
     input.previewPath,
     previewExists,
     previewSize,
@@ -533,63 +546,48 @@ export async function updateWorkshopItem(
     input.changeNote ?? '(default: Update)',
   )
 
-  if (!contentDirExists || !contentDirIsDir) {
-    throw new Error(
-      `[workshop:update] content folder missing or not a directory: ${input.contentPath}`,
-    )
-  }
-  if (!previewExists) {
-    throw new Error(`[workshop:update] preview file not found: ${input.previewPath}`)
-  }
   const ONE_MB = 1_048_576
-  if (previewSize > ONE_MB) {
+  if (previewExists && previewSize > ONE_MB) {
     throw new Error(
       `[workshop:update] preview PNG is ${previewSize} bytes — Steam requires < 1 MB. Resize the preview image.`,
     )
   }
 
-  try {
-    const previewBuf = fs.readFileSync(input.previewPath)
-    if (previewBuf.length >= 24) {
-      const w = previewBuf.readUInt32BE(16)
-      const h = previewBuf.readUInt32BE(20)
-      console.log('[workshop:update] step=preview-dimensions width=%d height=%d bytes=%d', w, h, previewBuf.length)
-    }
-  } catch (e) {
-    console.warn('[workshop:update] step=preview-dimensions-failed', e)
-  }
-
-  // Prefer the explicitly-passed sgaPath (project-specific SGA) over the
-  // directory scan. The scan is kept as a fallback for legacy callers that
-  // only set contentPath (e.g. first-time publish, decals, faceplates).
-  const sgaPath = input.sgaPath ?? findSgaInDir(input.contentPath)
-  console.log('[workshop:update] step=sga-resolved sgaPath=%s (explicit=%s)', sgaPath, Boolean(input.sgaPath))
-
-  const addon = requireNativeAddon()
-  console.log('[workshop:update] step=updateExistingItem itemId=%s', workshopId)
-  const result = await addon.updateExistingItem({
-    publishedFileId: BigInt(workshopId),
-    sgaPath,
-    previewPath: input.previewPath,
-    appId: COH2_APP_ID,
+  // ISteamUGC metadata update. `contentPath` is intentionally NOT attached
+  // (see the doc comment above — CoH2 has no UGC content depot, and passing a
+  // content folder makes SubmitItemUpdate fail with "a parameter is invalid").
+  const details: {
+    title?: string
+    description?: string
+    changeNote?: string
+    previewPath?: string
+    tags?: string[]
+    visibility?: number
+  } = {
     title: input.title,
     description: input.description ?? '',
-    visibility: (input.visibility ?? 0) as 0 | 1 | 2 | 3,
-    tags: input.tags ?? [],
     changeNote: input.changeNote ?? 'Update',
-  })
+    tags: input.tags ?? [],
+    visibility: input.visibility ?? 0,
+  }
+  // Only attach the preview when the file exists — a missing path makes
+  // SubmitItemUpdate fail with "a parameter is invalid".
+  if (previewExists) details.previewPath = input.previewPath
+
+  console.log('[workshop:update] step=updateItem (ISteamUGC) itemId=%s', workshopId)
+  const result = await client.workshop.updateItem(BigInt(workshopId), details, COH2_APP_ID)
 
   console.log(
-    '[workshop:update] step=updateExistingItem-resolved publishedFileId=%s agreementNeeded=%s',
-    result.publishedFileId.toString(),
-    result.agreementNeeded,
+    '[workshop:update] step=updateItem-resolved itemId=%s needsToAcceptAgreement=%s',
+    result.itemId?.toString?.() ?? workshopId,
+    result.needsToAcceptAgreement,
   )
 
-  // Auto-subscribe (idempotent — already-subscribed users get a no-op).
-  // Ensures game data is kept up to date after each update.
-  await subscribeToWorkshopItem(result.publishedFileId)
+  // Keep the publisher subscribed so Steam keeps their local copy current.
+  // Idempotent (already-subscribed → no-op), guarded against id <= 0, non-fatal.
+  await subscribeToWorkshopItem(BigInt(workshopId))
 
-  return { needsAgreement: result.agreementNeeded }
+  return { needsAgreement: Boolean(result.needsToAcceptAgreement) }
 }
 
 /** A Workshop item published by the current user. */
@@ -616,27 +614,41 @@ export async function getMyWorkshopItems(): Promise<MyWorkshopItem[]> {
   let page = 1
   const MAX_PAGES = 20
   while (page <= MAX_PAGES) {
-    const result = await client.workshop.getUserItems(
-      page,
-      me.accountId,
-      0, // UserListType.Published
-      0, // UGCType.Items
-      3, // UserListOrder.LastUpdatedDesc
-      { creator: COH2_APP_ID, consumer: COH2_APP_ID },
-      { includeMetadata: true, language: 'english' },
-    )
+    let result: Awaited<ReturnType<typeof client.workshop.getUserItems>>
+    try {
+      // NOTE: Do NOT pass includeMetadata/language options here.
+      // Legacy ISteamRemoteStorage-published items (our publish path) crash the
+      // steamworks.js native binding when queried with metadata options — those
+      // fields do not exist on legacy items and the native code dereferences a
+      // null pointer. The plain query is sufficient: we only need title + tags.
+      result = await client.workshop.getUserItems(
+        page,
+        me.accountId,
+        0, // UserListType.Published
+        0, // UGCType.Items
+        3, // UserListOrder.LastUpdatedDesc
+        { creator: COH2_APP_ID, consumer: COH2_APP_ID },
+      )
+    } catch (e) {
+      console.warn('[workshop:getMine] page %d getUserItems threw (non-fatal, stopping enumeration): %s', page, e)
+      break
+    }
     for (const it of result.items) {
       if (!it) continue
-      out.push({
-        workshopId: it.publishedFileId.toString(),
-        title: it.title,
-        description: it.description,
-        tags: it.tags,
-        visibility: it.visibility as number,
-        timeUpdated: it.timeUpdated,
-        previewUrl: it.previewUrl ?? null,
-        url: it.url,
-      })
+      try {
+        out.push({
+          workshopId: it.publishedFileId.toString(),
+          title: it.title ?? '',
+          description: it.description ?? '',
+          tags: Array.isArray(it.tags) ? it.tags : [],
+          visibility: (it.visibility as number) ?? 0,
+          timeUpdated: it.timeUpdated ?? 0,
+          previewUrl: it.previewUrl ?? null,
+          url: it.url ?? '',
+        })
+      } catch (e) {
+        console.warn('[workshop:getMine] skipping malformed item (non-fatal): %s', e)
+      }
     }
     if (out.length >= result.totalResults || result.items.length === 0) break
     page++
@@ -653,6 +665,16 @@ export async function getMyWorkshopItems(): Promise<MyWorkshopItem[]> {
  * regardless of subscribe outcome.
  */
 async function subscribeToWorkshopItem(publishedFileId: bigint): Promise<void> {
+  // Guard against id 0 / negatives. A zero id reaches here when an upstream
+  // publish/update didn't allocate a real file (e.g. unaccepted Workshop
+  // agreement, or a legacy update commit that didn't echo the id). Steam's
+  // SubscribeItem(0) returns "a file was not found", which used to spam
+  // workshop-error.log on every publish. Nothing to subscribe to — bail quietly.
+  if (publishedFileId <= 0n) {
+    console.warn('[workshop] auto-subscribe skipped: invalid publishedFileId=%s', publishedFileId.toString())
+    return
+  }
+
   const state = initSteam()
   if (!state.ok) return // Steam not available — skip silently
 
@@ -676,6 +698,40 @@ async function subscribeToWorkshopItem(publishedFileId: bigint): Promise<void> {
       fs.appendFileSync(logPath, `[${timestamp}] auto-subscribe failed for ${publishedFileId}: ${msg}\n\n`)
     } catch { /* ignore log-write errors */ }
   }
+}
+
+/**
+ * Delete an existing Workshop item via the legacy ISteamRemoteStorage API.
+ *
+ * Validates that workshopId is a real published id (1..5e9, the app-wide
+ * isRealWorkshopId convention) before calling the native addon — locally
+ * generated fake ids from freshPackId() land in [1e15, 9e15). Throws with a
+ * clear message for fake ids so the renderer can skip the Workshop call and
+ * proceed to local removal.
+ */
+export async function deleteWorkshopItem(
+  workshopId: string,
+): Promise<{ ok: true; workshopId: string }> {
+  // Guard: only real published ids may reach Steam. Mirrors the app-wide
+  // isRealWorkshopId convention — real CoH2 Workshop ids are ≤5e9; locally
+  // generated fake ids from freshPackId() land in [1e15, 9e15).
+  const id = BigInt(workshopId)
+  if (id <= 0n || id > 5_000_000_000n) {
+    throw new Error(
+      `[workshop:delete] workshopId ${workshopId} is not a real published Workshop id (expected 1..5e9) — item was never published to Steam, no deletion needed`,
+    )
+  }
+
+  // Ensure Steam is initialised (and the callback pump is running).
+  requireSteamClient()
+
+  const addon = requireNativeAddon()
+
+  console.log('[workshop:delete] step=deletePublishedItem workshopId=%s', workshopId)
+  await addon.deletePublishedItem(id)
+  console.log('[workshop:delete] step=deletePublishedItem-resolved workshopId=%s', workshopId)
+
+  return { ok: true, workshopId }
 }
 
 /**

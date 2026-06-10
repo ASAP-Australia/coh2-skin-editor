@@ -136,29 +136,10 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
     runningDataLen += stored.length
   }
 
-  // ----- Build folder list with explicit drive ownership -----
-  // Each folder record carries its owning drive index. Folders are sorted
-  // by drive first so each drive owns a contiguous range of folder records.
-  const folderEntries: { folder: string; drive: number }[] = []
-  {
-    const seen = new Set<string>()  // key = drive + '\0' + folder
-    for (const p of prepared) {
-      const di = driveOf(p.path)
-      const k = di + '\0' + p.folder
-      if (!seen.has(k)) {
-        seen.add(k)
-        folderEntries.push({ folder: p.folder, drive: di })
-      }
-    }
-    folderEntries.sort((a, b) => {
-      if (a.drive !== b.drive) return a.drive - b.drive
-      return a.folder.localeCompare(b.folder)
-    })
-  }
-  const uniqueFolders = folderEntries.map(e => e.folder)
-  // Names section: emit each folder's full path, then each file's basename.
-  // Each entry is NUL-terminated. We track byte offsets relative to the start
-  // of the names section so the TOC can index into them.
+  // ----- Names section helper -----
+  // NUL-terminated UTF-8 strings, packed. Offsets are relative to the start of
+  // the names section so the TOC can index into them. Folder name strings are
+  // emitted first (in folder order), then file basenames.
   const nameToOffset = new Map<string, number>()
   const namesBytes: number[] = []
   const enc = new TextEncoder()
@@ -170,30 +151,129 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
     namesBytes.push(0)
     return off
   }
-  // Folder records: emit FOLDER FULL PATHS (relic uses the folder's full path
-  // string, e.g. "art/armies/german/vehicles/tiger" not just "tiger"). We
-  // serialise folders as <name_pos, folder_first, folder_last, file_first, file_last>.
-  // Folder_first/last refer to subdirectories inside this folder — for a flat
-  // layout we set them to (i+1, i+1) i.e. empty range, which CoH2 accepts.
-  const folderRecords = uniqueFolders.map((p, i) => ({
-    folder: p,
-    namePos: addName(p),
-    folderFirst: i + 1,
-    folderLast: i + 1,    // empty subdir range — files are listed below
-    fileFirst: 0,         // filled in next
-    fileLast: 0,
-  }))
 
-  // Group files by their folder index. Because both arrays are sorted, the
-  // file index ranges per folder are naturally contiguous.
-  const folderIndexOf = new Map(uniqueFolders.map((f, i) => [f, i]))
-  for (let i = 0; i < prepared.length; i++) {
-    const fi = folderIndexOf.get(prepared[i].folder)!
-    if (folderRecords[fi].fileLast === folderRecords[fi].fileFirst) {
-      folderRecords[fi].fileFirst = i
-    }
-    folderRecords[fi].fileLast = i + 1
+  // ----- Build a proper folder TREE per drive -----
+  //
+  // CoH2's loader requires the COMPLETE folder hierarchy with WINDOWS BACKSLASH
+  // separators — not the flat, forward-slash, leaf-only layout we used before
+  // (which the engine rejects with "invalid file structure / <name> not
+  // permitted"). Each drive must contain:
+  //   - an empty-string root folder ("")
+  //   - every intermediate ancestor folder ("ui", "ui\\assets", …)
+  //   - the leaf folders that directly hold files ("ui\\assets\\textures")
+  // Folder name strings use backslashes ("attrib\\faceplate"). Folders are
+  // ordered by an "allocate all of a node's children contiguously, THEN
+  // DFS-recurse into each child" traversal, which yields the contiguous
+  // sub-folder index ranges the engine walks. This was reverse-engineered
+  // byte-for-byte from real Steam-subscribed reference packs (HK416V2 +
+  // clarkson faceplates, HeinzBeanz decal) — see /tmp/sga-dump2.mjs.
+  type FolderNode = {
+    path: string                 // forward-slash internal key ("" = drive root)
+    name: string                 // backslash display name ("" for root)
+    drive: number
+    children: FolderNode[]
+    index: number
+    subStart: number
+    subEnd: number
+    fileFirst: number
+    fileLast: number
   }
+
+  const driveAliases = ['attrib', 'locale', 'info', 'data']
+  const driveTrees: FolderNode[] = []
+  for (let di = 0; di < 4; di++) {
+    const root: FolderNode = {
+      path: '', name: '', drive: di, children: [],
+      index: -1, subStart: 0, subEnd: 0, fileFirst: 0, fileLast: 0,
+    }
+    const byPath = new Map<string, FolderNode>([['', root]])
+    const ensure = (fwdPath: string): FolderNode => {
+      const existing = byPath.get(fwdPath)
+      if (existing) return existing
+      const slash = fwdPath.lastIndexOf('/')
+      const parent = ensure(slash < 0 ? '' : fwdPath.slice(0, slash))
+      const node: FolderNode = {
+        path: fwdPath,
+        name: fwdPath.replace(/\//g, '\\'),
+        drive: di, children: [],
+        index: -1, subStart: 0, subEnd: 0, fileFirst: 0, fileLast: 0,
+      }
+      byPath.set(fwdPath, node)
+      parent.children.push(node)
+      return node
+    }
+    // Gather this drive's leaf folders (every file's parent dir) and create the
+    // full ancestor chain for each. Sort leaves so the tree is deterministic.
+    const leafPaths = new Set<string>()
+    for (const p of prepared) {
+      if (driveOf(p.path) === di) leafPaths.add(p.folder)
+    }
+    for (const lp of [...leafPaths].sort()) if (lp !== '') ensure(lp)
+    // Children of every node sorted by path (matches reference ordering).
+    for (const node of byPath.values()) {
+      node.children.sort((a, b) => a.path.localeCompare(b.path))
+    }
+    driveTrees.push(root)
+  }
+
+  // Allocate global folder indices: per drive, root first, then the
+  // "children-block-then-recurse" traversal. Records sub-folder ranges.
+  const folderNodesInOrder: FolderNode[] = []
+  let folderCounter = 0
+  const driveFolderRanges: { first: number; last: number; root: number }[] = []
+  for (let di = 0; di < 4; di++) {
+    const root = driveTrees[di]
+    const driveFirst = folderCounter
+    root.index = folderCounter++
+    folderNodesInOrder.push(root)
+    const allocate = (node: FolderNode) => {
+      node.subStart = folderCounter
+      for (const c of node.children) {
+        c.index = folderCounter++
+        folderNodesInOrder.push(c)
+      }
+      node.subEnd = folderCounter
+      for (const c of node.children) allocate(c)
+    }
+    allocate(root)
+    driveFolderRanges.push({ first: driveFirst, last: folderCounter, root: driveFirst })
+  }
+
+  // Assign per-folder file ranges + per-drive file ranges. Files (`prepared`)
+  // are sorted by (drive, path), so each folder's files are contiguous and each
+  // drive occupies a contiguous file window. Empty folders (roots/intermediates
+  // with no direct files) get [driveFileStart, driveFileStart) — matching the
+  // reference packs exactly.
+  const driveFileRanges: { first: number; last: number }[] = []
+  let fileCursor = 0
+  for (let di = 0; di < 4; di++) {
+    const driveFileStart = fileCursor
+    for (const node of folderNodesInOrder) {
+      if (node.drive !== di) continue
+      let first = -1, last = -1
+      for (let i = 0; i < prepared.length; i++) {
+        if (driveOf(prepared[i].path) === di && prepared[i].folder === node.path) {
+          if (first < 0) first = i
+          last = i + 1
+        }
+      }
+      if (first < 0) { node.fileFirst = driveFileStart; node.fileLast = driveFileStart }
+      else { node.fileFirst = first; node.fileLast = last }
+    }
+    let count = 0
+    for (const p of prepared) if (driveOf(p.path) === di) count++
+    driveFileRanges.push({ first: driveFileStart, last: driveFileStart + count })
+    fileCursor += count
+  }
+
+  // Folder records, in allocation order. name_pos = backslash folder path.
+  const folderRecords = folderNodesInOrder.map(node => ({
+    namePos: addName(node.name),
+    folderFirst: node.subStart,
+    folderLast: node.subEnd,
+    fileFirst: node.fileFirst,
+    fileLast: node.fileLast,
+  }))
 
   // File records — name_pos is the basename (not full path)
   const fileRecords = prepared.map(p => ({
@@ -205,35 +285,15 @@ export async function buildSga(opts: BuildSgaOptions): Promise<Uint8Array> {
     crc32: p.crc32,
   }))
 
-  // ----- Build the four canonical drive records -----
-  // Each drive owns a contiguous range of folders + files (the input arrays
-  // are sorted by drive). We compute these ranges from the explicit drive
-  // index attached to each folderEntries / prepared record.
-  const driveAliases = ['attrib', 'locale', 'info', 'data']
-  const driveRanges = driveAliases.map((alias, idx) => {
-    let folderFirst = -1, folderLast = -1, fileFirst = -1, fileLast = -1
-    for (let f = 0; f < folderEntries.length; f++) {
-      if (folderEntries[f].drive === idx) {
-        if (folderFirst < 0) folderFirst = f
-        folderLast = f + 1
-      }
-    }
-    for (let f = 0; f < prepared.length; f++) {
-      const di = driveOf(prepared[f].path)
-      if (di === idx) {
-        if (fileFirst < 0) fileFirst = f
-        fileLast = f + 1
-      }
-    }
-    return {
-      alias,
-      folderFirst: folderFirst < 0 ? 0 : folderFirst,
-      folderLast: folderLast < 0 ? 0 : folderLast,
-      fileFirst: fileFirst < 0 ? 0 : fileFirst,
-      fileLast: fileLast < 0 ? 0 : fileLast,
-      rootFolder: folderFirst < 0 ? 0 : folderFirst,
-    }
-  })
+  // ----- Four canonical drive records (attrib / locale / info / data) -----
+  const driveRanges = driveAliases.map((alias, idx) => ({
+    alias,
+    folderFirst: driveFolderRanges[idx].first,
+    folderLast: driveFolderRanges[idx].last,
+    fileFirst: driveFileRanges[idx].first,
+    fileLast: driveFileRanges[idx].last,
+    rootFolder: driveFolderRanges[idx].root,
+  }))
 
   // ----- Lay out the TOC with the correct offsets -----
   // toc layout: [tocHeader=40][drive_defs×4=592][folder_defs][file_defs][names]

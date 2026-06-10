@@ -75,31 +75,39 @@ export const SCENE_PRESETS: Record<PresetId, ScenePreset> = {
     // base as a dark olive, so use Neutral (Khronos PBR Neutral) — preserves
     // diffuse brightness + saturation without ACES contrast.
     toneMapping: 'neutral',
-    exposure: 1.0,
-    // Hemi — provides flat neutral ambient fill while the PMREM RoomEnvironment
-    // (wired in Viewport.tsx via scene.environment) handles diffuse irradiance
-    // and specular IBL (the Essence EnvMapDiffuse / EnvMapSpecular role).
-    // Intensity reduced from 1.2 → 0.5 to avoid double-counting ambient once
-    // the PMREM env is active. Sky/ground are kept near-neutral grey (no
-    // blue-sky/brown-ground tint) because Corsix's analysis shows the real
-    // ambient is flat: `ambientscale (0.7)` × a white EnvMapDiffuse cube.
-    hemi: { sky: 0xd0d0d0, ground: 0x888888, intensity: 0.9 },
+    // B4: lifted from 1.0 → 1.12. Users reported vehicles reading too dark
+    // vs the in-game look; neutral tonemapping has no highlight roll-off so
+    // this is a safe linear lift that brightens midtones without clipping.
+    // LIGHTING-PARITY pass (vs in-game StuG III, Pripyat summer refs): the
+    // in-game summer look is a warm golden-hour key over a warm ambient —
+    // the neutral-grey rig below read too cool/flat next to the references.
+    // Lifted 1.12 → 1.14 to match the bright (but un-blown) reference EV.
+    exposure: 1.14,
+    // Hemi — provides ambient fill while the PMREM RoomEnvironment (wired in
+    // Viewport.tsx via scene.environment) handles diffuse irradiance and
+    // specular IBL (the Essence EnvMapDiffuse / EnvMapSpecular role).
+    // PARITY: warmed from neutral grey (sky 0xd0d0d0 / ground 0x888888) to a
+    // warm off-white sky + warm tan ground bounce. The reference shadowed
+    // faces hold a warm grey-brown — driven by the sunlit tan ground bounce,
+    // not a cold blue sky — so the ground hemi term is now a warm earth tone.
+    hemi: { sky: 0xe2d8c4, ground: 0x6e5c42, intensity: 1.1 },
     directionalLights: [
       // Key (sun): `dirlight0` in the Essence shader is WHITE (1,1,1), NOT
       // the cyan `fxlight_suncolour (0.9,1.0,1.0)` — that constant is the
       // PARTICLE subsystem light, not the vehicle key light. Confirmed via
-      // corsix's coh2-explorer (essence_panel.cpp). Intensity 3.0 and
-      // position (5,5,-5) are deliberately tuned for Three.js HDR headroom
-      // — do not change. Position derives from `dirlight0_dir (-0.577,
-      // -0.577, 0.577)` inverted to light-source coordinates. Shadow caster
-      // (Viewport.tsx wires shadowMap only on directionalLights[0]).
-      { color: 0xffffff, intensity: 3.0, position: [5, 5, -5] },
-      // Cool fill from camera-left. Reads as faint sky-bounce on the
-      // shaded side rather than a competing key.
-      { color: 0xcdd3d8, intensity: 0.45, position: [-6, 5, -2] },
-      // Cool neutral rim from behind for silhouette separation against
-      // the cubemap background.
-      { color: 0xdce0e6, intensity: 0.5, position: [-3, 3, -10] },
+      // corsix's coh2-explorer (essence_panel.cpp). Position (5,5,-5) is
+      // tuned for Three.js HDR headroom — derives from `dirlight0_dir
+      // (-0.577,-0.577,0.577)` inverted to light-source coordinates. Shadow
+      // caster (Viewport.tsx wires shadowMap only on directionalLights[0]).
+      // PARITY: the in-game summer sun reads distinctly WARM/golden on the
+      // top decks + mantlet (see refs), so the key is warmed 0xffffff →
+      // 0xffe8c8 (~late-afternoon sunlight). Intensity held at 2.5.
+      { color: 0xffe8c8, intensity: 2.5, position: [5, 5, -5] },
+      // Warm-neutral fill from camera-left — reads as warm ground/sky bounce
+      // on the shaded side (refs show warm, detailed shadows, not cool ones).
+      { color: 0xd8cdba, intensity: 0.45, position: [-6, 5, -2] },
+      // Neutral rim from behind for silhouette separation against the sky.
+      { color: 0xdcd6cc, intensity: 0.5, position: [-3, 3, -10] },
     ],
     background: { kind: 'cubemap' },
     showGrid: false,
@@ -143,7 +151,7 @@ export const SCENE_PRESETS: Record<PresetId, ScenePreset> = {
       { color: 0xffffff, intensity: 0.4, position: [0, 0, SHOWCASE_OMNI_RADIUS] },
       { color: 0xffffff, intensity: 0.4, position: [0, 0, -SHOWCASE_OMNI_RADIUS] },
     ],
-    background: { kind: 'color', hex: 0x1c1d22 },
+    background: { kind: 'color', hex: 0x2e3039 },
     showGrid: true,
     showGround: false,
     autoRotate: false,
@@ -174,6 +182,8 @@ export const SCENE_PRESETS: Record<PresetId, ScenePreset> = {
       { color: 0xffffff, intensity: 0.5, position: [0, 0, SHOWCASE_OMNI_RADIUS] },
       { color: 0xffffff, intensity: 0.5, position: [0, 0, -SHOWCASE_OMNI_RADIUS] },
     ],
+    // True black backdrop (matches the description + the in-game showcase look)
+    // — was 0x404448 which read as a flat gray.
     background: { kind: 'color', hex: 0x000000 },
     showGrid: false,
     showGround: false,
@@ -196,16 +206,17 @@ export const DEFAULT_PRESET_ID: PresetId = 'in_game_field'
 // BOOSTED ambient because snow reflects ~80 % of skylight back up.
 // Shadows pick up a strong blue tint from the sky.
 //
-// Confidence: MEDIUM. The base SUMMER values are HIGH confidence
-// (extracted from corsix's coh2-explorer C++ shader constants), but no
-// per-map .aps atmosphere file was extracted for winter. The values
-// below are physically motivated estimates that match the perceptual
-// look of in-game winter screenshots; tune visually before shipping a
-// future "lighting parity" pass against reference frames.
+// Confidence: the base SUMMER values started from corsix's coh2-explorer
+// C++ shader constants (HIGH), and BOTH seasons have since been tuned in a
+// LIGHTING-PARITY pass against in-game reference frames — StuG III on
+// Pripyat, summer (three-colour camo) + winter (vanilla), 3/4 side angles.
+// Summer: warm golden key + warm tan-ground ambient, detailed warm shadows.
+// Winter: cool blue snow ambient dominates (blue shadows), with a WEAK pale-
+// warm low sun catching only the top decks — matched to the references.
 //
-// Source: Barrero (2013) — "Ambient occlusion is key for snowy
-// environments"; COH2.org community notes on Frost maps; physics of
-// snow albedo + temperate winter sun elevation.
+// Source: corsix coh2-explorer shader constants; Barrero (2013) "Ambient
+// occlusion is key for snowy environments"; + visual parity vs the StuG
+// Pripyat summer/winter reference frames (2026-06 lighting pass).
 // ─────────────────────────────────────────────────────────────────────────
 
 export interface SeasonOverrides {
@@ -216,27 +227,32 @@ export interface SeasonOverrides {
 
 const WINTER_OVERRIDES_IN_GAME: SeasonOverrides = {
   // Slightly stopped down — overcast winter sky is naturally lower-EV
-  // than a clear summer sun, but the boosted ambient compensates so
+  // than a clear summer sun, but the boosted snow ambient compensates so
   // the model is still well-lit.
-  exposure: 0.95,
-  // Snow-bright ambient with cold blue sky + near-white ground bounce.
-  // The HIGH ground value (0xd0dce8) is the snow GI — physically real,
-  // and the reason winter scenes have such soft, low-contrast lighting
-  // even with the sun visible.
-  hemi: { sky: 0x8ab0d0, ground: 0xd0dce8, intensity: 1.3 },
+  // B4: lifted 0.95 → 1.08. PARITY (vs in-game StuG III, Pripyat winter
+  // refs): the reference snow scene is bright and very LOW-contrast; held
+  // at 1.08 (below summer's 1.14) — the cool ambient does the lifting.
+  exposure: 1.08,
+  // Snow-bright COOL ambient — this is the dominant term in winter and the
+  // reason the whole scene reads cool/blue (snow + sky bounce), with shadows
+  // tinting distinctly blue rather than just going dark. The HIGH near-white
+  // blue ground value is the snow GI bounce. PARITY: intensity lifted
+  // 1.5 → 1.65 to flatten contrast to match the soft overcast references.
+  hemi: { sky: 0x9cb8d4, ground: 0xd4dfeb, intensity: 1.65 },
   directionalLights: [
-    // Sun: cold blue-white, lower angle (~15° elevation), lower
-    // intensity than summer (overcast scatter + sun closer to horizon).
-    // Shadow caster — Viewport.tsx wires shadowMap only on index 0.
-    { color: 0xc8dff0, intensity: 1.5, position: [1, 3, -10] },
-    // Sky-coloured fill — replicates the cool blue shadow-fill that
-    // makes winter shadows distinctly cooler than the lit sides
-    // (instead of just darker). Equivalent to the deferred pipeline's
-    // ambient-probe contribution from the visible sky dome.
-    { color: 0x3355aa, intensity: 0.25, position: [-5, 5, 5] },
-    // Soft warm bounce from any visible exposed soil/mud kicks a
-    // subtle warm rim into the lower silhouette — keeps the model
-    // from reading as a flat blue cutout.
+    // Sun: the references show a WEAK, low winter sun that lands a faint
+    // WARM catch on the top decks + gun (NOT a cold blue key — that washed
+    // the whole hull blue and lost the subtle warm highlight). So the key is
+    // now a pale-warm low sun: it only warms the sun-facing top facets while
+    // the strong cool hemi keeps the body + shadows blue. Raised slightly
+    // ([2,4,-9]) so it grazes the top decks. Intensity 1.85 → 1.5 (lower
+    // contrast). Shadow caster — Viewport.tsx wires shadowMap only on idx 0.
+    { color: 0xffe9cf, intensity: 1.5, position: [2, 4, -9] },
+    // Cool blue sky fill — deepens the distinctly blue shadow tint the
+    // references show on the off-sun side. Lifted 0.25 → 0.32.
+    { color: 0x3a5cb0, intensity: 0.32, position: [-5, 5, 5] },
+    // Soft warm bounce from exposed soil/mud kicks a subtle warm rim into
+    // the lower silhouette so the model isn't a flat blue cutout.
     { color: 0xa89880, intensity: 0.15, position: [-3, 1, -8] },
   ],
 }

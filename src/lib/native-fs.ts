@@ -126,6 +126,7 @@ interface ElectronSteamWorkshopNamespace {
   publish: (input: PublishWorkshopInput) => Promise<PublishWorkshopResult>
   update: (workshopId: string, input: PublishWorkshopInput) => Promise<UpdateWorkshopResult>
   getMine: () => Promise<MyWorkshopItem[]>
+  delete: (workshopId: string) => Promise<{ ok: true; workshopId: string }>
 }
 
 interface ElectronSteamNamespace {
@@ -247,6 +248,15 @@ async function makeNativeFile(filePath: string): Promise<File> {
 
   const blob = makeBlob(0, size)
   return Object.assign(blob, { name }) as unknown as File
+}
+
+/** Public wrapper around {@link makeNativeFile}: open an arbitrary on-disk
+ *  path as a lazily-sliced `File` (ranged IPC reads). Returns null outside
+ *  Electron. Used to `SgaArchive.open()` workshop archives that live outside
+ *  the granted install root. */
+export async function nativeFileFromPath(filePath: string): Promise<File | null> {
+  if (!isElectron()) return null
+  return makeNativeFile(filePath)
 }
 
 function makeFileHandle(filePath: string): FileSystemFileHandle {

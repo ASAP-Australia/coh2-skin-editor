@@ -57,14 +57,15 @@ export default function OnboardingOverlay() {
     if (typeof window === 'undefined') return
     try {
       const forceTour = new URLSearchParams(window.location.search).get('tour') === '1'
-      // ?tour=1 forces the tour regardless of saved flag/project state.
+      // The tour no longer auto-pops — it was an intrusive full-screen modal
+      // that blocked the editor on every first run. It now only appears when
+      // explicitly requested via ?tour=1. Mark first-run users as onboarded so
+      // nothing else re-triggers it.
       if (!forceTour) {
-        if (window.localStorage.getItem(STORAGE_KEY) === '1') return
-        const hasProject = Object.keys(window.localStorage).some(k => k.startsWith('coh2.project.'))
-        if (hasProject) {
+        if (window.localStorage.getItem(STORAGE_KEY) !== '1') {
           window.localStorage.setItem(STORAGE_KEY, '1')
-          return
         }
+        return
       }
       const t = window.setTimeout(() => setOpen(true), 600)
       return () => window.clearTimeout(t)

@@ -1,9 +1,54 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, memo, lazy, Suspense } from 'react'
 import { isSupported, locateArchives, pickInstall } from '@/lib/coh2-fs'
 import { BorderBeam } from '@/components/ui/border-beam'
 import { AnimatedSwap } from '@/components/ui/animated-swap'
 import { isElectron, detectInstallPath, pickInstallPathNative, nativePathToHandle, initSteamNative } from '@/lib/native-fs'
 import type { SteamInitInfo } from '@/lib/native-fs'
+import { preloadFaction } from '@/lib/preload'
+import { VEHICLES, FACTIONS, defaultVehicleForFaction, type Faction } from '@/lib/vehicles'
+
+// Lazy-loaded so Three.js doesn't hit the initial JS parse budget. The
+// headless warm Viewport is only mounted during the 'preloading' phase.
+const Viewport = lazy(() => import('./Viewport'))
+
+/**
+ * Isolated progress counter for the 'preloading' phase.
+ *
+ * WHY: `setLoadProgress` fires on every vehicle byte-read completion, which
+ * would re-render the entire ConnectScreen component including BorderBeam
+ * (which re-injects a <style> block on each render, compounding jank).
+ *
+ * FIX: progress is held in a ref on the parent and pushed imperatively into
+ * this child via the `counterRef` handle. The parent never calls
+ * `setLoadProgress` (the state is removed entirely), so BorderBeam's subtree
+ * stays mounted and never re-renders on progress ticks. Only the
+ * VehicleLoadCounter re-renders, which is a single text span.
+ */
+interface VehicleCounterHandle {
+  update: (done: number, total: number) => void
+}
+
+interface VehicleCounterProps {
+  total: number
+  handleRef: React.MutableRefObject<VehicleCounterHandle | null>
+}
+
+const VehicleLoadCounter = memo(function VehicleLoadCounter({ total, handleRef }: VehicleCounterProps) {
+  const [done, setDone] = useState(0)
+
+  // Expose an imperative update so the parent can push progress without
+  // triggering a re-render of ConnectScreen or any of its other children.
+  useEffect(() => {
+    handleRef.current = { update: (d: number) => setDone(d) }
+    return () => { handleRef.current = null }
+  }, [handleRef])
+
+  return (
+    <span style={{ fontSize: 13, fontWeight: 500, letterSpacing: '-0.01em', whiteSpace: 'nowrap' }}>
+      Loading vehicles… {done}/{total}
+    </span>
+  )
+})
 
 interface Props {
   onConnected: (handle: FileSystemDirectoryHandle, steamInfo?: SteamInitInfo) => void
@@ -28,7 +73,7 @@ interface Props {
  * Editor" sub-heading, which read as two stacked cards under the
  * AuthShell brand mark on first run.
  */
-type Phase = 'idle' | 'picking' | 'scanning' | 'linking-steam' | 'success' | 'warning'
+type Phase = 'idle' | 'picking' | 'scanning' | 'linking-steam' | 'preloading' | 'success' | 'warning'
 
 export default function ConnectScreen({ onConnected }: Props) {
   const [supported] = useState(() => isSupported() || isElectron())
@@ -36,12 +81,26 @@ export default function ConnectScreen({ onConnected }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [steamWarning, setSteamWarning] = useState<string | null>(null)
   const [detectedPath, setDetectedPath] = useState<string | null>(null)
+  // Vehicle byte-preload progress, shown beside the spinner during the
+  // 'preloading' phase ("Loading vehicles… N/total").
+  // counterRef holds the imperative handle to VehicleLoadCounter.
+  // Progress updates go through this handle so only the counter re-renders,
+  // not ConnectScreen (which would re-render BorderBeam and re-inject CSS).
+  const counterRef = useRef<VehicleCounterHandle | null>(null)
   // Snapshot of detectedPath at the moment the user clicks connect — frozen so
   // async detection can't mutate bullet #3 text mid-click. Kept in state (not
   // a ref) so it's safe to read during render.
   const [bulletThreeSnapshot, setBulletThreeSnapshot] = useState<string | null>(null)
   // 'warning' is intentionally NOT busy — the user can click again immediately.
-  const busy = phase === 'picking' || phase === 'scanning' || phase === 'linking-steam' || phase === 'success'
+  const busy = phase === 'picking' || phase === 'scanning' || phase === 'linking-steam' || phase === 'preloading' || phase === 'success'
+
+  // The FileSystemDirectoryHandle of the CoH2 install. Set in state during
+  // 'preloading' so a hidden <Viewport warmupOnly> can be rendered (it needs
+  // root as a prop). Null at all other phases.
+  const [warmupHandle, setWarmupHandle] = useState<FileSystemDirectoryHandle | null>(null)
+  // Ref to the headless Viewport's buildVehicleIntoCache function, wired via
+  // the preloadRef prop. Used to drive per-vehicle CPU builds at Connect.
+  const viewportPreloadRef = useRef<((spec: import('@/lib/vehicles').VehicleSpec, season: 'summer' | 'winter', eager?: boolean, cpuOnly?: boolean) => Promise<void>) | null>(null)
 
   // In Electron: probe the OS for a default Steam path so we can show
   // it on the button (e.g. "Connect CoH2 install (auto-detected)") and
@@ -75,10 +134,7 @@ export default function ConnectScreen({ onConnected }: Props) {
 
       // Validate: archives folder must exist under the picked root.
       setPhase('scanning')
-      const t0 = Date.now()
       const archives = await locateArchives(handle)
-      const elapsed = Date.now() - t0
-      if (elapsed < 350) await new Promise(r => setTimeout(r, 350 - elapsed))
       if (!archives) {
         setError("That folder doesn't look like a Company of Heroes 2 install — couldn't find CoH2/Archives.")
         setPhase('warning')
@@ -128,10 +184,97 @@ export default function ConnectScreen({ onConnected }: Props) {
         }
       }
 
+      // Byte-preload every faction's vehicle RGM bytes into the module cache
+      // (pure disk I/O — formerly done lazily when a skin pack was opened).
+      // Doing it here, behind the Connect spinner with visible progress, means
+      // the editor's per-vehicle GPU build later hits a warm bytesCache and
+      // skips disk I/O. We don't know the pack's faction at connect, so preload
+      // all factions in parallel (archive opens share a module cache, so the
+      // common Art*.sga TOC parses only happen once). Per-faction errors are
+      // non-fatal — Viewport falls back to its on-demand SGA search.
+      setPhase('preloading')
+      // Trigger the hidden warm Viewport mount by storing handle in state.
+      // React will re-render and the <Viewport warmupOnly> will mount, creating
+      // a renderer+camera and wiring viewportPreloadRef via the preloadRef prop.
+      setWarmupHandle(handle!)
+      // Initialise counter to 0 via the imperative handle (no ConnectScreen re-render).
+      counterRef.current?.update(0, VEHICLES.length)
+      const total = VEHICLES.length
+      const fractionByFaction = new Map<Faction, number>()
+      // Throttle counter updates: only push when the rounded done-count actually
+      // changes, avoiding dozens of identical re-renders of VehicleLoadCounter
+      // during burst completions. The final forced update below guarantees the
+      // counter always settles on the correct value.
+      let lastDone = 0
+      await Promise.allSettled(
+        FACTIONS.map(({ id }) =>
+          preloadFaction(handle!, id, p => {
+            fractionByFaction.set(id, p.fraction)
+            let sum = 0
+            for (const f of fractionByFaction.values()) sum += f
+            const avg = sum / FACTIONS.length
+            // Scale bytes phase to 0–50 % of total so vehicle CPU-warm phase
+            // can drive the second 50 %. Each phase independently goes 0→total.
+            const rounded = Math.round(avg * total)
+            if (rounded !== lastDone) {
+              lastDone = rounded
+              counterRef.current?.update(rounded, total)
+            }
+          }),
+        ),
+      )
+
+      // ── Vehicle CPU-warm phase ────────────────────────────────────────────
+      // Bytes are in cache; now drive buildVehicleIntoCache (cpuOnly=true) for
+      // every vehicle so pinnedVehicleCache is fully populated before the editor
+      // opens. Opening a skin pack and switching vehicles will be instant cache
+      // hits, with no loading overlay and no loading beam.
+      //
+      // Safety: if the headless Viewport fails to init (renderer error, WebGL
+      // unavailable) viewportPreloadRef stays null and we skip gracefully.
+      // The editor's on-demand fallback path remains intact.
+      //
+      // Wait up to 4 s for the Viewport to mount and wire viewportPreloadRef.
+      const WARM_READY_TIMEOUT_MS = 4000
+      const WARM_TOTAL_TIMEOUT_MS = 90000 // 90 s hard ceiling across all builds
+      const warmReadyStart = Date.now()
+      while (!viewportPreloadRef.current && Date.now() - warmReadyStart < WARM_READY_TIMEOUT_MS) {
+        await new Promise<void>(r => setTimeout(r, 50))
+      }
+
+      const buildFn = viewportPreloadRef.current
+      if (buildFn) {
+        // Warm ONLY the default vehicle (german, toughest non-broken) so the
+        // very first editor open is instant. ConnectScreen unmounts as soon as
+        // onConnected() fires (App.tsx switches phase 'connect'→'start'), so
+        // the headless Viewport is torn down regardless — there is no way to
+        // keep a background pump alive here. All other vehicles build lazily
+        // on first open via Viewport's on-demand path, which shows no spinner
+        // and keeps the old model visible during the switch. The
+        // WARM_TOTAL_TIMEOUT_MS safety ceiling still applies to this single build.
+        const warmStart = Date.now()
+        counterRef.current?.update(0, total)
+        const defaultVehicleId = defaultVehicleForFaction('german', new Set<string>())
+        const firstSpec = VEHICLES.find(v => v.id === defaultVehicleId) ?? VEHICLES[0]
+        if (firstSpec && Date.now() - warmStart < WARM_TOTAL_TIMEOUT_MS) {
+          await buildFn(firstSpec, 'summer', true, true).catch(() => {/* non-fatal */})
+        }
+        counterRef.current?.update(total, total)
+      }
+
+      // Unmount warm Viewport — clears the GL context before the editor mounts.
+      setWarmupHandle(null)
+
+      counterRef.current?.update(total, total)
+
       setPhase('success')
-      await new Promise(r => setTimeout(r, 1400))
+      // Reduced from 900 ms — the success tick animation is visually
+      // apparent within ~200 ms; the remaining time was dead wait.
+      await new Promise(r => setTimeout(r, 200))
       onConnected(handle, resolvedSteamInfo)
     } catch (err: unknown) {
+      // Ensure the warm Viewport is unmounted on any error path.
+      setWarmupHandle(null)
       const e = err as { name?: string; message?: string }
       if (e?.name === 'AbortError') {
         setPhase('idle')
@@ -145,6 +288,38 @@ export default function ConnectScreen({ onConnected }: Props) {
   }
 
   return (
+    <>
+    {/* ── Headless warm Viewport ───────────────────────────────────────────
+        Mounted during 'preloading' so buildVehicleIntoCache (wired via
+        viewportPreloadRef) can CPU-warm all 61 vehicles into
+        pinnedVehicleCache. Container is 1×1 px, opacity:0, pointer-events:none
+        so it is invisible and non-interactive. NOT display:none — a zero-size
+        canvas can lose its WebGL context on some drivers.
+        Unmounted once warm is complete (setWarmupHandle(null)) so the GL
+        context is freed before the editor's Viewport mounts. */}
+    {warmupHandle && (
+      <div style={{
+        position: 'fixed', left: 0, top: 0,
+        width: 1, height: 1,
+        opacity: 0, pointerEvents: 'none',
+        overflow: 'hidden', zIndex: -1,
+      }}>
+        <Suspense fallback={null}>
+          <Viewport
+            root={warmupHandle}
+            vehicle={null}
+            selectedPart={null}
+            explodeAll={false}
+            season="summer"
+            envArchive={null}
+            envName=""
+            controlsEnabled={false}
+            warmupOnly={true}
+            preloadRef={viewportPreloadRef}
+          />
+        </Suspense>
+      </div>
+    )}
     <div>
       {/* h2 because AuthShell provides the sr-only h1 product heading;
           reduced to text-[20px] font-medium per heading hierarchy audit. */}
@@ -218,36 +393,33 @@ export default function ConnectScreen({ onConnected }: Props) {
             boxShadow: '0 1px 0 rgb(255 255 255 / 0.14) inset',
           }}
         >
-          {/* AnimatedSwap drives the downward-cascade transition between
-              button states. ALL the in-button status icons (spinner, success
-              tick, warning) share the single key 'busy' so they swap IN PLACE
-              with no vertical movement — the loading circle just gets replaced
-              by the green tick where it sits. Only the initial label↔busy
-              change (the click) animates the cascade. */}
-          <AnimatedSwap
-            swapKey={
-              phase === 'picking' || phase === 'scanning' || phase === 'linking-steam' ||
-              phase === 'success' || phase === 'warning'
-                ? 'busy'
-                : 'idle'
-            }
-          >
-            {phase === 'picking' || phase === 'scanning' || phase === 'linking-steam' ? (
-              <span className="inline-flex items-center justify-center" style={{ minWidth: 180 }}>
-                <InlineSpinner />
-              </span>
-            ) : phase === 'success' ? (
-              <span className="inline-flex items-center justify-center" style={{ minWidth: 180 }}>
-                <InlineSuccessTick />
-              </span>
-            ) : phase === 'warning' ? (
-              <span className="inline-flex items-center justify-center" style={{ minWidth: 180 }}>
-                <InlineWarningIcon />
-              </span>
-            ) : (
-              <span style={{ minWidth: 180, display: 'inline-flex', justifyContent: 'center' }}>Connect CoH2 install</span>
-            )}
-          </AnimatedSwap>
+          {/* Fixed-size centered container — each state is absolutely
+              positioned and cross-fades via opacity only (no translateY).
+              The button's h-12 height is always preserved; the inner content
+              never changes height so there is no positional jump. */}
+          <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 280, height: 24 }}>
+            <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 160ms ease', opacity: phase === 'idle' ? 1 : 0, pointerEvents: 'none' }}>
+              Connect CoH2 install
+            </span>
+            <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 160ms ease', opacity: (phase === 'picking' || phase === 'scanning' || phase === 'linking-steam') ? 1 : 0, pointerEvents: 'none' }}>
+              <InlineSpinner />
+            </span>
+            {/* 'preloading' — spinner on the left, live vehicle-byte progress
+                text on the right, so the user sees the fleet warming up.
+                VehicleLoadCounter is updated imperatively via counterRef so
+                only the text node re-renders on each progress tick — BorderBeam
+                and the rest of ConnectScreen are never re-rendered. */}
+            <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, transition: 'opacity 160ms ease', opacity: phase === 'preloading' ? 1 : 0, pointerEvents: 'none' }}>
+              <InlineSpinner />
+              <VehicleLoadCounter total={VEHICLES.length} handleRef={counterRef} />
+            </span>
+            <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 160ms ease', opacity: phase === 'success' ? 1 : 0, pointerEvents: 'none' }}>
+              <InlineSuccessTick />
+            </span>
+            <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 160ms ease', opacity: phase === 'warning' ? 1 : 0, pointerEvents: 'none' }}>
+              <InlineWarningIcon />
+            </span>
+          </span>
         </button>
       </BorderBeam>
 
@@ -259,6 +431,7 @@ export default function ConnectScreen({ onConnected }: Props) {
         }
       `}</style>
     </div>
+    </>
   )
 }
 

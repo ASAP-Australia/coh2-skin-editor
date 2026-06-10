@@ -162,12 +162,18 @@ export async function runAuditCaptureReal(): Promise<void> {
     console.log(`[renderer:${tag}:${src}:${line}] ${message}`)
   })
 
+  // Optional single-vehicle filter for eyeballing one vehicle per launch.
+  const onlyQuery = process.env.AUDIT_ONLY
+    ? `&only=${encodeURIComponent(process.env.AUDIT_ONLY)}` +
+      (process.env.AUDIT_ONLY_SEASON ? `&onlySeason=${encodeURIComponent(process.env.AUDIT_ONLY_SEASON)}` : '')
+    : ''
+
   // Load the audit URL
   const auditUrl = USE_DEV_SERVER
-    ? 'http://localhost:5173/?audit=1'
+    ? `http://localhost:5173/?audit=1${onlyQuery}`
     : (() => {
         const distIndex = path.join(__dirname, '..', 'dist', 'index.html')
-        return `file://${distIndex}?audit=1`
+        return `file://${distIndex}?audit=1${onlyQuery}`
       })()
 
   console.log('[audit-real] Loading:', auditUrl)

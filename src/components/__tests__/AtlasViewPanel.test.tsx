@@ -52,18 +52,18 @@ afterEach(() => {
 })
 
 describe('AtlasViewPanel — rendering', () => {
-  it('renders three buttons, one per AtlasViewMode', () => {
+  it('renders two buttons, one per AtlasViewMode in ATLAS_VIEW_MODE_ORDER', () => {
     const el = render(createElement(AtlasViewPanel, { mode: 'template', setMode: () => {} }))
     const buttons = el.querySelectorAll('button[data-mode]')
-    expect(buttons).toHaveLength(3)
+    expect(buttons).toHaveLength(2)
   })
 
-  it('renders buttons in canonical order: template → checkerboard → in_game', () => {
+  it('renders buttons in canonical order: template → checkerboard', () => {
     const el = render(createElement(AtlasViewPanel, { mode: 'template', setMode: () => {} }))
     const modes = Array.from(el.querySelectorAll('button[data-mode]')).map(b =>
       b.getAttribute('data-mode'),
     )
-    expect(modes).toEqual(['template', 'checkerboard', 'in_game'])
+    expect(modes).toEqual(['template', 'checkerboard'])
   })
 
   it('honours the ariaLabel prop on the container group', () => {
@@ -93,7 +93,7 @@ describe('AtlasViewPanel — rendering', () => {
 
   it('every button has its own aria-label matching the mode label', () => {
     const el = render(createElement(AtlasViewPanel, { mode: 'template', setMode: () => {} }))
-    for (const id of ['template', 'checkerboard', 'in_game'] as const) {
+    for (const id of ['template', 'checkerboard'] as const) {
       const btn = el.querySelector(`button[data-mode="${id}"]`)!
       expect(btn.getAttribute('aria-label')).toBe(ATLAS_VIEW_MODE_LABEL[id].label)
     }
@@ -105,10 +105,8 @@ describe('AtlasViewPanel — active state', () => {
     const el = render(createElement(AtlasViewPanel, { mode: 'checkerboard', setMode: () => {} }))
     const active = el.querySelector('button[data-mode="checkerboard"]')!
     const inactive1 = el.querySelector('button[data-mode="template"]')!
-    const inactive2 = el.querySelector('button[data-mode="in_game"]')!
     expect(active.getAttribute('aria-pressed')).toBe('true')
     expect(inactive1.getAttribute('aria-pressed')).toBe('false')
-    expect(inactive2.getAttribute('aria-pressed')).toBe('false')
   })
 
   it('updates aria-pressed when the controlled mode prop changes', () => {
@@ -117,12 +115,12 @@ describe('AtlasViewPanel — active state', () => {
       'true',
     )
     act(() => {
-      root!.render(createElement(AtlasViewPanel, { mode: 'in_game', setMode: () => {} }))
+      root!.render(createElement(AtlasViewPanel, { mode: 'checkerboard', setMode: () => {} }))
     })
     expect(el.querySelector('button[data-mode="template"]')?.getAttribute('aria-pressed')).toBe(
       'false',
     )
-    expect(el.querySelector('button[data-mode="in_game"]')?.getAttribute('aria-pressed')).toBe(
+    expect(el.querySelector('button[data-mode="checkerboard"]')?.getAttribute('aria-pressed')).toBe(
       'true',
     )
   })
@@ -133,10 +131,10 @@ describe('AtlasViewPanel — click behaviour', () => {
     const setMode = vi.fn()
     const el = render(createElement(AtlasViewPanel, { mode: 'template', setMode }))
     act(() => {
-      ;(el.querySelector('button[data-mode="in_game"]') as HTMLButtonElement).click()
+      ;(el.querySelector('button[data-mode="checkerboard"]') as HTMLButtonElement).click()
     })
     expect(setMode).toHaveBeenCalledTimes(1)
-    expect(setMode).toHaveBeenCalledWith('in_game')
+    expect(setMode).toHaveBeenCalledWith('checkerboard')
   })
 
   it('clicking the currently-active button still emits (idempotent invocations are caller-controlled)', () => {
@@ -162,12 +160,6 @@ describe('AtlasViewPanel — click behaviour', () => {
       ;(el.querySelector('button[data-mode="checkerboard"]') as HTMLButtonElement).click()
     })
     expect(el.querySelector('button[data-mode="checkerboard"]')?.getAttribute('aria-pressed')).toBe(
-      'true',
-    )
-    act(() => {
-      ;(el.querySelector('button[data-mode="in_game"]') as HTMLButtonElement).click()
-    })
-    expect(el.querySelector('button[data-mode="in_game"]')?.getAttribute('aria-pressed')).toBe(
       'true',
     )
     act(() => {

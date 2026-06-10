@@ -109,6 +109,41 @@
   box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.08);
 }
 
+/* ── HUD glass — floating chrome that docks over the 3D viewport ───────────
+ * Shares the surface language of glass-1/2 (dark base, heavy blur+saturate,
+ * 0.5px hairline, inset top-edge highlight) but adds a deep OUTSET float
+ * shadow: the viewport is the hero, so side rails / docks / pills must visibly
+ * lift off it. The base tint (20 22 28) is a hair lighter & cooler than the
+ * overlay glass-1/2 (15 17 22) so chrome stays legible over BOTH bright
+ * skyboxes and dark studio scenes. Three elevations keep the layering honest:
+ *   glass-hud   → panels & rails (deep 12/32 float shadow)
+ *   glass-pill  → small bottom-row control pills (shallow 8/22 shadow)
+ *   glass-pop   → popovers/panels that open from chrome (denser 0.72 base)
+ * Use these for editor chrome; use glass-1/2/3 for menus/dialogs/cards that
+ * overlay dimmed content. Single source of truth — never hand-roll these
+ * values inline again. */
+@utility glass-hud {
+  background-color: rgb(20 22 28 / 0.62);
+  backdrop-filter: blur(36px) saturate(160%);
+  -webkit-backdrop-filter: blur(36px) saturate(160%);
+  border: 0.5px solid rgb(255 255 255 / 0.10);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.45), inset 0 0.5px 0 rgb(255 255 255 / 0.10);
+}
+@utility glass-pill {
+  background-color: rgb(20 22 28 / 0.62);
+  backdrop-filter: blur(36px) saturate(160%);
+  -webkit-backdrop-filter: blur(36px) saturate(160%);
+  border: 0.5px solid rgb(255 255 255 / 0.10);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 0.45), inset 0 0.5px 0 rgb(255 255 255 / 0.10);
+}
+@utility glass-pop {
+  background-color: rgb(20 22 28 / 0.72);
+  backdrop-filter: blur(36px) saturate(160%);
+  -webkit-backdrop-filter: blur(36px) saturate(160%);
+  border: 0.5px solid rgb(255 255 255 / 0.10);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.5), inset 0 0.5px 0 rgb(255 255 255 / 0.08);
+}
+
 /* When running in Electron the custom titlebar pill occupies the top-right
  * corner (~y 8 → 36, ~80 px wide). Shift the right-side chrome down + the
  * left-side TopMenu down by the same amount so nothing overlaps the pill
@@ -128,8 +163,12 @@ html, body, #root { height: 100%; }
 body {
   background: #0a0b0e;   /* near-black with a hint of cool — Apple-ish */
   color: var(--color-text-1);
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
-               'Inter', system-ui, sans-serif;
+  /* Lead with Geist (our --font-sans) so the body inherits the same face the
+   * rest of the app declares via `html { @apply font-sans }`. Previously this
+   * led with -apple-system, which (as body is the ancestor of all content)
+   * silently overrode Geist app-wide. SF Pro / system-ui remain as fallbacks. */
+  font-family: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+               'SF Pro Display', 'Inter', system-ui, sans-serif;
   font-feature-settings: 'cv11', 'ss01', 'kern';
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -255,6 +294,14 @@ body {
   }
   html {
     @apply font-sans;
+  }
+  button,
+  [role="button"] {
+    cursor: pointer;
+  }
+  button:disabled,
+  [role="button"][aria-disabled="true"] {
+    cursor: default;
   }
 }
 

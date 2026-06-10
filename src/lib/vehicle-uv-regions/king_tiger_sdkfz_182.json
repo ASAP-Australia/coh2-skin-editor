@@ -5,18 +5,21 @@
   "_leftSideLocation": "The hull LEFT side (X<0) UV region peaks at approximately x=384-640, y=384-640 in the texture. This is the symmetric location for the other-side decals.",
   "semanticRegions": {
     "hullSideRight": {
-      "x": 896,
-      "y": 1152,
-      "w": 512,
-      "h": 512,
-      "note": "Hull right side skirt — peak density zone of X>0 (right-side) chassis vertices. SS Totenkopf decal zone (x=400-1000 y=1400-1700) falls in the WIDER right-side UV band. This is the core panel.",
+      "x": 410,
+      "y": 1320,
+      "w": 360,
+      "h": 340,
+      "_source": "wikinger",
+      "_confidence": "high",
+      "_previousHandAuthored": { "x": 896, "y": 1152, "w": 512, "h": 512 },
+      "note": "Hull right side — Wikinger OKW skin Balkenkreuz cross + tactical number 351 verified at this location. Dark-pixel cross centroid ~(590,1490), number above at ~y=1400-1480. Encompasses both emblem and number. The _keyFinding in this file's notes already identified x=400-1000 y=1400-1700 as hull-right; this rect tightens that to the actual emblem zone. Previous hand-authored rect {896,1152,512,512} was wrong — it pointed to a different atlas region.",
       "uvCore": {
-        "minU": 0.4375,
-        "maxU": 0.625,
-        "minV": 0.5625,
-        "maxV": 0.8125
+        "minU": 0.2002,
+        "maxU": 0.3760,
+        "minV": 0.6445,
+        "maxV": 0.8105
       },
-      "ssTotenkopfRefOverlap": true
+      "wikingerGroundTruth": true
     },
     "hullSideLeft": {
       "x": 384,

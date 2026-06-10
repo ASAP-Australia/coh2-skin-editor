@@ -27,13 +27,7 @@ export default function SeasonToggle({ value, onChange, loading = false }: Props
     <LoadingBorder
       active={loading}
       radius={9999}
-      className="inline-flex items-center gap-0.5 rounded-full p-1 select-none"
-      style={{
-        background: 'rgba(20, 22, 28, 0.62)',
-        backdropFilter: 'blur(28px) saturate(180%)',
-        border: '0.5px solid rgba(255,255,255,0.10)',
-        boxShadow: '0 8px 22px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
-      }}
+      className="glass-pill inline-flex items-center gap-0.5 rounded-full p-1 select-none"
     >
       <Segment
         active={value === 'summer'}

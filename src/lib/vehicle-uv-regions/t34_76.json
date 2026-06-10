@@ -1,0 +1,23 @@
+{
+  "_note": "T-34/76 (t34_76) UV regions in 2048×2048 pixel units. Derived from Wikinger Soviet skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger",
+  "semanticRegions": {
+    "hullFront": {
+      "x": 0,
+      "y": 342,
+      "w": 276,
+      "h": 320,
+      "_source": "wikinger",
+      "_confidence": "medium",
+      "note": "Hull front/fender panel — Wikinger Soviet skin shows red Soviet star at atlas x=80-152, y=457-548 (center 116, 502). This is the LEFT-in-atlas front hull fender panel; T-34 atlas places both hull sides on frontal panels, not a dedicated side panel. Using hullFront semantic key because these stars are on the glacis/fender area, not a distinct hull-side UV panel. Badge zone encompasses the left star (x=0-276, y=342-662). The RIGHT-in-atlas star at (628, 502) covers the opposite fender.",
+      "uvCore": {
+        "minU": 0.0000,
+        "maxU": 0.1348,
+        "minV": 0.1670,
+        "maxV": 0.3232
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

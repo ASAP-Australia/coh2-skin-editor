@@ -176,6 +176,13 @@ export interface Decal {
    */
   saturation?: number
   /**
+   * Hue rotation applied at render time via CSS filter hue-rotate().
+   * Range −180..180 degrees where 0 = identity (no change). Defaults to 0
+   * when absent. Positive values rotate the hue clockwise on the colour wheel.
+   * Added in schema v6.1 (optional field — no migration needed, absent = 0).
+   */
+  hueRotate?: number
+  /**
    * Photoshop-style blend mode for this decal's compositing step. Identity =
    * 'normal' (absent = no-op). Maps directly to
    * `CanvasRenderingContext2D.globalCompositeOperation`. v4 addition.
@@ -312,6 +319,8 @@ export interface Coh2DecalPackProject {
   activePartIndex?: number
   /** Which faction override is being edited. null = shared (default). */
   activeFaction?: DecalFaction | null
+  /** Persisted editor zoom level (0.5–8). Absent = default 4. */
+  editorZoom?: number
   /** ISO timestamp of the last save — drives the recent-projects ordering. */
   modifiedAt: string
 }
@@ -662,6 +671,23 @@ export function listAllDecalPacks(): RecentDecalPack[] {
   // ISO-8601 timestamps, so this is correct without parsing.
   entries.sort((a, b) => (b.lastEditedAt ?? '').localeCompare(a.lastEditedAt ?? ''))
   return entries
+}
+
+/** Clear the workshopId from a decal pack project in localStorage without
+ *  otherwise mutating the project or affecting the recent registry. Used
+ *  by the "Delete from Workshop" affordance after a successful Workshop
+ *  deletion — the project stays local but is treated as unpublished. */
+export function clearDecalPackWorkshopId(id: string): void {
+  try {
+    const raw = localStorage.getItem(projectStorageKey(id))
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (parsed?.magic !== 'coh2-decalpack-project') return
+    delete parsed.workshopId
+    localStorage.setItem(projectStorageKey(id), JSON.stringify(parsed))
+  } catch {
+    /* swallow — non-critical */
+  }
 }
 
 /** Remove a decal pack from the recent-decal-packs registry AND delete

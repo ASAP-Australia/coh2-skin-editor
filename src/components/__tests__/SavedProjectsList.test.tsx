@@ -127,6 +127,13 @@ function findArmButton(el: HTMLElement, title: string): HTMLButtonElement {
   return btn!
 }
 
+/** Find the Workshop-delete arm button for a row by aria-label. */
+function findArmWorkshopButton(el: HTMLElement, title: string): HTMLButtonElement | undefined {
+  return Array.from(el.querySelectorAll('button')).find(
+    b => b.getAttribute('aria-label') === `Remove ${title} from Workshop`,
+  ) as HTMLButtonElement | undefined
+}
+
 // ── DOM harness ──────────────────────────────────────────────────────────────
 
 let container: HTMLDivElement | null = null
@@ -507,6 +514,146 @@ describe('SavedProjectsList', () => {
         diskBtn.click()
       })
       expect(onPickFromDisk).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('Workshop delete affordance', () => {
+    const REAL_WORKSHOP_ID = '123456789' // ≤ 5e9, treated as a real Workshop id
+
+    /** Build a skin snapshot with a real workshopId. */
+    function validSkinSnapshotWithWorkshop(id: string, packName: string): string {
+      return JSON.stringify({
+        magic: 'coh2-skin-project',
+        version: 2,
+        id,
+        packName,
+        workshopId: REAL_WORKSHOP_ID,
+        exportSlots: [],
+        generationSessions: {},
+        vehicleIcons: {},
+        vehicles: {},
+        palette: [],
+        activeSlotIdx: 0,
+        modifiedAt: new Date().toISOString(),
+      })
+    }
+
+    const deployedSkinEntry = {
+      id: 'skin_deployed',
+      name: 'Published Pack',
+      faction: 'german',
+      lastEditedAt: Date.now() - 60_000,
+      vehicleCount: 1,
+      decalCount: 0,
+    }
+
+    const undeployedSkinEntry = {
+      id: 'skin_local',
+      name: 'Local Only Pack',
+      faction: 'soviet',
+      lastEditedAt: Date.now() - 60_000,
+      vehicleCount: 1,
+      decalCount: 0,
+    }
+
+    beforeEach(() => {
+      seedLocalStorage({
+        [SKIN_KEY]: JSON.stringify([deployedSkinEntry, undeployedSkinEntry]),
+        'coh2.project.skin_deployed': validSkinSnapshotWithWorkshop('skin_deployed', 'Published Pack'),
+        'coh2.project.skin_local': validSkinSnapshot('skin_local', 'Local Only Pack'),
+      })
+
+      // Provide a mock Workshop delete API that resolves successfully.
+      const workshopDeleteMock = vi.fn().mockResolvedValue({ ok: true, workshopId: REAL_WORKSHOP_ID })
+      Object.defineProperty(window, 'electronAPI', {
+        value: {
+          steam: {
+            workshop: {
+              delete: workshopDeleteMock,
+            },
+          },
+        },
+        writable: true,
+        configurable: true,
+      })
+    })
+
+    afterEach(() => {
+      // Remove the electronAPI mock so other tests aren't affected.
+      Object.defineProperty(window, 'electronAPI', {
+        value: undefined,
+        writable: true,
+        configurable: true,
+      })
+    })
+
+    it('Workshop delete button is shown for deployed projects and hidden for non-deployed', () => {
+      const el = render(createElement(SavedProjectsList, makeProps()))
+      // Deployed project has the Workshop arm button.
+      expect(findArmWorkshopButton(el, 'Published Pack')).not.toBeUndefined()
+      // Non-deployed project does NOT have the Workshop arm button.
+      expect(findArmWorkshopButton(el, 'Local Only Pack')).toBeUndefined()
+    })
+
+    it('arming Workshop delete shows a confirm+cancel cluster in amber', async () => {
+      const el = render(createElement(SavedProjectsList, makeProps()))
+      act(() => {
+        findArmWorkshopButton(el, 'Published Pack')!.click()
+      })
+      expect(el.querySelectorAll('[data-testid="confirm-workshop-delete"]').length).toBe(1)
+      expect(el.querySelectorAll('[data-testid="cancel-workshop-delete"]').length).toBe(1)
+      // Local-delete arm button is still visible (it hasn't been armed).
+      expect(el.querySelectorAll('[data-testid="arm-delete"]').length).toBeGreaterThan(0)
+    })
+
+    it('cancelling Workshop delete confirm restores the arm button', () => {
+      const el = render(createElement(SavedProjectsList, makeProps()))
+      act(() => {
+        findArmWorkshopButton(el, 'Published Pack')!.click()
+      })
+      act(() => {
+        ;(el.querySelector('[data-testid="cancel-workshop-delete"]') as HTMLButtonElement).click()
+      })
+      expect(el.querySelectorAll('[data-testid="confirm-workshop-delete"]').length).toBe(0)
+      expect(findArmWorkshopButton(el, 'Published Pack')).not.toBeUndefined()
+    })
+
+    it('confirming Workshop delete calls the delete API, clears workshopId, hides the Workshop button, and keeps the project in the list', async () => {
+      const el = render(createElement(SavedProjectsList, makeProps()))
+      act(() => {
+        findArmWorkshopButton(el, 'Published Pack')!.click()
+      })
+      await act(async () => {
+        ;(el.querySelector('[data-testid="confirm-workshop-delete"]') as HTMLButtonElement).click()
+      })
+
+      // Project row is still in the DOM.
+      expect(el.textContent).toContain('Published Pack')
+
+      // The workshopId should have been cleared from localStorage.
+      const stored = JSON.parse(storage.get('coh2.project.skin_deployed') ?? '{}')
+      expect(stored.workshopId).toBeUndefined()
+
+      // The Workshop arm button should no longer be shown (workshopId cleared).
+      expect(findArmWorkshopButton(el, 'Published Pack')).toBeUndefined()
+
+      // The electron Workshop delete API was called with the correct id.
+      const mockDelete = (window.electronAPI as unknown as { steam: { workshop: { delete: ReturnType<typeof vi.fn> } } }).steam.workshop.delete
+      expect(mockDelete).toHaveBeenCalledWith(REAL_WORKSHOP_ID)
+    })
+
+    it('local delete (trash) does NOT call the Workshop delete API, even for deployed projects', () => {
+      const el = render(createElement(SavedProjectsList, makeProps()))
+      act(() => {
+        findArmButton(el, 'Published Pack').click()
+      })
+      act(() => {
+        ;(el.querySelector('[data-testid="confirm-delete"]') as HTMLButtonElement).click()
+      })
+      const mockDelete = (window.electronAPI as unknown as { steam: { workshop: { delete: ReturnType<typeof vi.fn> } } }).steam.workshop.delete
+      expect(mockDelete).not.toHaveBeenCalled()
+      // Row is gone locally.
+      expect(el.textContent).not.toContain('Published Pack')
     })
   })
 

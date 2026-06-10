@@ -16,6 +16,17 @@
 
 import type { CamoPreset } from './camo-generator'
 import type { Faction } from './vehicles'
+import { VEHICLES } from './vehicles'
+
+/** C3/C5/C6/C7 — reference to the template a pack was seeded from / is
+ *  associated with. `kind` mirrors TemplatePicker's TemplateKind. */
+export interface ProjectTemplateRef {
+  /** 'blank' | a saved project id | 'stock:<faction>/<vehicleId>' | 'workshop:<id>' */
+  id: string
+  kind: 'blank' | 'saved' | 'stock' | 'workshop'
+  /** Human-readable label captured at selection time. */
+  name: string
+}
 
 export type DecalType = 'shield' | 'number' | 'name' | 'kills' | 'cross' | 'image'
 export interface Decal {
@@ -155,6 +166,27 @@ export interface Coh2SkinProject {
   packDescription: string
   /** Author credit. */
   author: string
+  /** A2: false on a freshly-created pack so the centre title pill shows the
+   *  first-open BorderBeam beam (mirrors decal/faceplate packs); flipped to
+   *  true the first time the user opens the title popover. Undefined on
+   *  legacy projects = treated as already acknowledged (no beam). */
+  titleAcknowledged?: boolean
+  /** C3/C6/C7: the template this pack was seeded from / is associated with.
+   *  Shown + re-selectable in the centre-title identity popover. `kind`
+   *  mirrors TemplatePicker's TemplateKind. Undefined on legacy projects =
+   *  treated as a blank canvas. */
+  template?: ProjectTemplateRef
+  /** Quick-pick reference to a decal pack the user associated with this skin
+   *  pack via the bottom-bar decal-pack pill. Decal packs ship as a SEPARATE
+   *  CoH2 mod, so this is an association/quick-access record (not merged into
+   *  the skin export). Undefined = no decal pack chosen. */
+  decalPackRef?: { id: string; name: string }
+  /** Decal preview scope chosen via the bottom-bar decal pill. 'vehicle' = preview
+   *  the decal only on `decalScopeVehicleId`; 'all' (default when undefined) = preview
+   *  on every vehicle. Affects PREVIEW only — decal packs export as a separate mod. */
+  decalScope?: 'vehicle' | 'all'
+  /** When decalScope === 'vehicle', the vehicle id the decal preview is pinned to. */
+  decalScopeVehicleId?: string
   /** Steam Workshop item ID, set after a successful publish via
    *  PublishToWorkshopDialog. Absent / undefined = not yet published.
    *  ≤5×10⁹ = real Workshop ID (safe to call update); ≥1×10¹⁵ = fake
@@ -240,6 +272,8 @@ export function newProject(packName = 'My Skin Pack'): Coh2SkinProject {
     packName,
     packDescription: 'A custom CoH2 skin pack made with the community editor.',
     author: 'Anonymous',
+    titleAcknowledged: false,
+    template: { id: 'blank', kind: 'blank', name: 'Blank canvas' },
     vehicles: {},
     factionDefaults: {},
     refPackId: null,
@@ -252,6 +286,107 @@ export function newProject(packName = 'My Skin Pack'): Coh2SkinProject {
     activeSlotIdx: 0,
     generationSessions: {},
   }
+}
+
+// ---------------------------------------------------------------------------
+// Template cloning (C5 seed half — pick a template → fresh editable project)
+// ---------------------------------------------------------------------------
+
+/** Stock template id format is `stock:<faction>/<vehicleId>`. Parse it back
+ *  into its parts, validating against the VEHICLES catalog. Returns null when
+ *  the id is malformed or names an unknown vehicle. */
+export function parseStockTemplateId(
+  id: string,
+): { faction: Faction; vehicleId: string } | null {
+  if (!id.startsWith('stock:')) return null
+  const rest = id.slice('stock:'.length)
+  const slash = rest.indexOf('/')
+  if (slash < 0) return null
+  const faction = rest.slice(0, slash)
+  const vehicleId = rest.slice(slash + 1)
+  const v = VEHICLES.find(x => x.id === vehicleId && x.faction === faction)
+  if (!v) return null
+  return { faction: v.faction, vehicleId: v.id }
+}
+
+/**
+ * Parse a workshop template id of the form `workshop:<itemId>::<vehicleId>`.
+ * The optional `::<vehicleId>` suffix lets the picker target the vehicle the
+ * subscribed camo paints (detected from the archive's internal art paths).
+ * Returns null for ids that aren't workshop ids.
+ */
+export function parseWorkshopTemplateId(
+  id: string,
+): { itemId: string; vehicleId: string | null } | null {
+  if (!id.startsWith('workshop:')) return null
+  const rest = id.slice('workshop:'.length)
+  const sep = rest.indexOf('::')
+  if (sep < 0) return { itemId: rest, vehicleId: null }
+  return { itemId: rest.slice(0, sep), vehicleId: rest.slice(sep + 2) || null }
+}
+
+/**
+ * Produce a FRESH, editable skin project seeded from `template`.
+ *
+ *   • 'blank'    → an empty project (same as `newProject`), tagged blank.
+ *   • 'saved'    → a deep CLONE of the saved project `template.id`: identical
+ *                  content (vehicles / palette / images / slots), but a brand
+ *                  new `id`, `workshopId` cleared (a clone is unpublished), and
+ *                  `template` pointing back at its source. The clone is fully
+ *                  independent — mutating it never touches the original.
+ *   • 'stock'    → a fresh empty project pre-targeted at the stock vehicle
+ *                  (`lastVehicleId`); the stock diffuse loads through the
+ *                  editor's normal SGA pipeline when that vehicle opens.
+ *   • 'workshop' → not yet supported (TemplatePicker hides the kind); falls
+ *                  back to blank so the caller never gets null for a real pick.
+ *
+ * Returns null ONLY when a 'saved' source id can't be loaded (deleted/corrupt)
+ * — callers should fall back to `newProject()` in that case.
+ */
+export function cloneSkinProjectFromTemplate(
+  template: ProjectTemplateRef,
+): Coh2SkinProject | null {
+  const freshId = () => 'proj_' + Math.random().toString(36).slice(2, 10)
+
+  if (template.kind === 'saved') {
+    const source = loadById(template.id)
+    if (!source) return null
+    const clone: Coh2SkinProject = structuredClone(source)
+    clone.id = freshId()
+    clone.workshopId = undefined
+    clone.titleAcknowledged = false
+    clone.modifiedAt = new Date().toISOString()
+    clone.template = { id: template.id, kind: 'saved', name: template.name }
+    return clone
+  }
+
+  if (template.kind === 'stock') {
+    const parsed = parseStockTemplateId(template.id)
+    const p = newProject()
+    p.id = freshId()
+    p.template = { id: template.id, kind: 'stock', name: template.name }
+    if (parsed) p.lastVehicleId = parsed.vehicleId
+    return p
+  }
+
+  if (template.kind === 'workshop') {
+    // Subscribed in-game camo. We can't yet extract the workshop diffuse as an
+    // editable base (that pipeline hasn't landed), so this behaves like the
+    // 'stock' path: a fresh project pre-targeted at the vehicle the camo
+    // paints, so the editor opens on the right model.
+    const parsed = parseWorkshopTemplateId(template.id)
+    const p = newProject()
+    p.id = freshId()
+    p.template = { id: template.id, kind: 'workshop', name: template.name }
+    if (parsed?.vehicleId) p.lastVehicleId = parsed.vehicleId
+    return p
+  }
+
+  // 'blank' fallback.
+  const p = newProject()
+  p.id = freshId()
+  p.template = { id: 'blank', kind: 'blank', name: template.name || 'Blank canvas' }
+  return p
 }
 
 // ---------------------------------------------------------------------------
@@ -542,6 +677,23 @@ export function listAllSkinProjects(): RecentProjectEntry[] {
   }
   entries.sort((a, b) => b.lastEditedAt - a.lastEditedAt)
   return entries
+}
+
+/** Clear the workshopId from a skin project in localStorage without
+ *  otherwise mutating the project or affecting the recent registry. Used
+ *  by the "Delete from Workshop" affordance after a successful Workshop
+ *  deletion — the project stays local but is treated as unpublished. */
+export function clearSkinWorkshopId(id: string): void {
+  try {
+    const raw = localStorage.getItem(`${PROJECT_KEY_PREFIX}${id}`)
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (parsed?.magic !== 'coh2-skin-project') return
+    delete parsed.workshopId
+    localStorage.setItem(`${PROJECT_KEY_PREFIX}${id}`, JSON.stringify(parsed))
+  } catch {
+    /* swallow — non-critical */
+  }
 }
 
 /** Remove a skin project from the recent registry AND delete its per-id

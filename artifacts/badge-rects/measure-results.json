@@ -1,0 +1,98 @@
+[
+  {
+    "id": "jagdpanzer_iv_sdkfz_162",
+    "rect": {
+      "x": 660,
+      "y": 10,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "high (score=40, ±20px)",
+    "note": "Wikinger OKW skin; Balkenkreuz centroid=(820,170)"
+  },
+  {
+    "id": "stug_iii",
+    "rect": {
+      "x": 760,
+      "y": 860,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "high (score=40, ±20px)",
+    "note": "Wikinger German skin; Balkenkreuz centroid=(920,1020)"
+  },
+  {
+    "id": "kv2_heavy_tank",
+    "rect": {
+      "x": 360,
+      "y": 860,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (score=40, ±20px)",
+    "note": "Wikinger OKW skin (German cross on Soviet tank); centroid=(520,1020)"
+  },
+  {
+    "id": "kv1_heavy_tank",
+    "rect": {
+      "x": 0,
+      "y": 1160,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (score=40, ±20px)",
+    "note": "Wikinger OKW skin (German cross on Soviet tank); centroid=(20,1320)"
+  },
+  {
+    "id": "t70m_light_tank",
+    "rect": {
+      "x": 480,
+      "y": 580,
+      "w": 280,
+      "h": 280
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (score=40, ±20px)",
+    "note": "Wikinger OKW skin (German cross on Soviet tank); centroid=(620,720)"
+  },
+  {
+    "id": "su85",
+    "rect": {
+      "x": 0,
+      "y": 865,
+      "w": 320,
+      "h": 320
+    },
+    "key": "hullSideRight",
+    "confidence": "high (score=48, ±20px)",
+    "note": "Wikinger OKW skin (German cross on Soviet tank); centroid=(125,1025)"
+  },
+  {
+    "id": "panzer_iv_sdkfz_ausf_i",
+    "rect": {
+      "x": 0,
+      "y": 0,
+      "w": 280,
+      "h": 280
+    },
+    "key": "hullSideRight",
+    "confidence": "medium (score=28, ±20px)",
+    "note": "Wikinger OKW skin; cross centroid=(15,15)"
+  },
+  {
+    "id": "panzerwerfer",
+    "rect": {
+      "x": 0,
+      "y": 0,
+      "w": 300,
+      "h": 300
+    },
+    "key": "hullSideRight",
+    "confidence": "high (score=36, ±20px)",
+    "note": "Wikinger OKW skin; Balkenkreuz centroid=(18,18)"
+  }
+]

@@ -483,7 +483,6 @@ export function PackIdentityPopover({
       {/* ── Publish section (caller-supplied) ────────────────────────────── */}
       {publishSection && (
         <>
-          <div style={{ height: '0.5px', background: 'rgba(255,255,255,0.10)', marginInline: -2 }} aria-hidden />
           {publishSection}
         </>
       )}

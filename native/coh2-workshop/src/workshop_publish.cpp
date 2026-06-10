@@ -85,7 +85,11 @@ static void start_poll(uv_loop_t* loop, PollHandle* ph) {
             auto cb = ph->on_timeout;
             // Note: ph is deleted in the close callback above, but the
             // function objects were copied — safe.
-            if (cb) cb();
+            if (cb) {
+                try { cb(); }
+                catch (const Napi::Error&) { /* exception already pending in env; do not rethrow */ }
+                catch (...) { /* last-resort swallow — prevents std::terminate across the C boundary */ }
+            }
             return;
         }
         if (ph->is_done()) {
@@ -94,7 +98,11 @@ static void start_poll(uv_loop_t* loop, PollHandle* ph) {
                 delete static_cast<PollHandle*>(hh->data);
             });
             auto cb = ph->on_complete;
-            if (cb) cb();
+            if (cb) {
+                try { cb(); }
+                catch (const Napi::Error&) { /* exception already pending in env; do not rethrow */ }
+                catch (...) { /* last-resort swallow — prevents std::terminate across the C boundary */ }
+            }
         }
     });
 }
@@ -129,6 +137,11 @@ private:
     SteamAPICall_t pending_call_;
     std::string cloud_sga_path_;
     std::string cloud_preview_path_;
+    int fileShareAttempts_ = 0;
+    // The cloud upload that backs FileShare is asynchronous; FileShare returns
+    // FileNotFound (9) until Steam has pushed the file to its servers. Retry
+    // patiently (~30s) to ride out the upload rather than giving up at ~5s.
+    static constexpr int kMaxFileShareAttempts = 20;
 
     void ResolveSuccess() {
         Napi::Env env(raw_env_);
@@ -149,6 +162,24 @@ private:
         ISteamRemoteStorage* rs = steam_get_rs();
         if (!rs) { RejectError("[coh2-workshop:publish] ISteamRemoteStorage is null — Steam not initialised?"); return; }
 
+        // Root-cause probe: FileShare returns FileNotFound (9) when the file is
+        // written to the local cloud folder but never uploaded to Steam's
+        // servers — which happens when Cloud is disabled for the app. Read the
+        // cloud-enable state + quota, and force-enable app cloud if it's off.
+        bool     cloudApp  = rs_IsCloudEnabledForApp(rs);
+        bool     cloudAcct = rs_IsCloudEnabledForAccount(rs);
+        uint64_t qTotal = 0, qAvail = 0;
+        bool     quotaOk = rs_GetQuota(rs, &qTotal, &qAvail);
+        fprintf(stderr, "[coh2-workshop:publish] cloud: app=%d acct=%d quota(ok=%d total=%llu avail=%llu)\n",
+                (int)cloudApp, (int)cloudAcct, (int)quotaOk,
+                (unsigned long long)qTotal, (unsigned long long)qAvail);
+        fflush(stderr);
+        if (!cloudApp) {
+            fprintf(stderr, "[coh2-workshop:publish] Cloud disabled for app — calling SetCloudEnabledForApp(true)\n");
+            fflush(stderr);
+            rs_SetCloudEnabledForApp(rs, true);
+        }
+
         std::vector<char> sgaData;
         std::string readErr;
         if (!read_file(ctx_->sgaPath, sgaData, readErr)) {
@@ -160,14 +191,12 @@ private:
         cloud_sga_path_     = "mods/workshop/" + safeName + ".sga";
         cloud_preview_path_ = "mods/workshop/" + safeName + "_preview.png";
 
-        // Delete any prior Steam Cloud copy before writing so that Steam
-        // treats this as a fresh write rather than a no-op when bytes are
-        // identical. Without this, FileWrite is silently skipped and the
-        // subsequent FileShare returns EResult::FileNotFound (9).
-        bool delOk = rs_FileDelete(rs, cloud_sga_path_.c_str());
-        fprintf(stderr, "[coh2-workshop:publish] FileDelete('%s'): %s\n",
-                cloud_sga_path_.c_str(), delOk ? "OK" : "not present (OK)");
-        fflush(stderr);
+        // NOTE: We intentionally do NOT FileDelete the prior cloud copy first.
+        // Deleting wipes the server-side file and forces a fresh upload, which
+        // the subsequent FileShare then races (returning FileNotFound). By
+        // overwriting in place with FileWrite + SetSyncPlatforms, an already
+        // uploaded copy can be shared immediately and changed bytes upload as a
+        // normal update.
 
         fprintf(stderr, "[coh2-workshop:publish] FileWrite('%s', %zu bytes)\n",
                 cloud_sga_path_.c_str(), sgaData.size());
@@ -179,17 +208,24 @@ private:
             return;
         }
 
+        // Force the file to sync to all platforms so Steam uploads it to the
+        // cloud servers (k_ERemoteStoragePlatformAll = -1). FileShare shares the
+        // server-side copy, so the file must be flagged for upload.
+        bool syncOk = rs_SetSyncPlatforms(rs, cloud_sga_path_.c_str(), -1);
+        fprintf(stderr, "[coh2-workshop:publish] SetSyncPlatforms(All): %s\n",
+                syncOk ? "OK" : "FAILED/absent");
+        fflush(stderr);
+
         // Write preview to Steam Cloud (PublishWorkshopFile uses a cloud path for preview)
         std::vector<char> previewData;
         if (read_file(ctx_->previewPath, previewData, readErr)) {
-            // Delete prior preview copy for the same reason as the SGA above.
-            bool prevDelOk = rs_FileDelete(rs, cloud_preview_path_.c_str());
-            fprintf(stderr, "[coh2-workshop:publish] FileDelete('%s'): %s\n",
-                    cloud_preview_path_.c_str(), prevDelOk ? "OK" : "not present (OK)");
-            fflush(stderr);
-
+            // Overwrite in place (no pre-delete) and flag for upload, same as the
+            // SGA above — avoids the delete/re-upload race.
             bool pok = rs_FileWrite(rs, cloud_preview_path_.c_str(),
                                     previewData.data(), (int32_t)previewData.size());
+            if (pok) {
+                rs_SetSyncPlatforms(rs, cloud_preview_path_.c_str(), -1);
+            }
             fprintf(stderr, "[coh2-workshop:publish] Preview FileWrite('%s'): %s (%zu bytes)\n",
                     cloud_preview_path_.c_str(), pok ? "OK" : "FAILED", previewData.size());
             if (!pok) {
@@ -205,13 +241,56 @@ private:
             fflush(stderr);
         }
 
-        fprintf(stderr, "[coh2-workshop:publish] FileShare('%s')...\n", cloud_sga_path_.c_str());
+        // Wait for Steam to persist the freshly-written cloud file before
+        // sharing it. FileShare returns FileNotFound (9) when it runs before
+        // the local write has been committed/synced to Steam Cloud — the root
+        // cause of the intermittent "FileShare failed: file not found" error.
+        WaitForPersistThenShare();
+    }
+
+    // Poll until the just-written cloud file is persisted (or a short budget
+    // elapses), then issue FileShare. Degrades to "share immediately" when the
+    // FilePersisted symbol is unavailable (rs_FilePersisted returns true).
+    void WaitForPersistThenShare() {
+        ISteamRemoteStorage* rs = steam_get_rs();
+        auto self = shared_from_this();
+        std::string path = cloud_sga_path_;
+        auto* ph = new PollHandle();
+        ph->is_done = [ph, rs, path]() -> bool {
+            return rs_FilePersisted(rs, path.c_str()) || ph->ticks >= 300; // ~3s cap
+        };
+        ph->on_complete = [self]() { self->IssueFileShare(); };
+        ph->on_timeout  = [self]() { self->IssueFileShare(); };
+        start_poll(uv_default_loop(), ph);
+    }
+
+    // Simple tick delay, then run cb (used to space out FileShare retries).
+    void DelayThen(int ticks, std::function<void()> cb) {
+        auto* ph = new PollHandle();
+        ph->is_done     = [ph, ticks]() -> bool { return ph->ticks >= ticks; };
+        ph->on_complete = cb;
+        ph->on_timeout  = cb;
+        start_poll(uv_default_loop(), ph);
+    }
+
+    void IssueFileShare() {
+        ISteamRemoteStorage* rs = steam_get_rs();
+        if (!rs) { RejectError("[coh2-workshop:publish] ISteamRemoteStorage is null"); return; }
+
+        bool    exists    = rs_FileExists(rs, cloud_sga_path_.c_str());
+        int32_t sz        = rs_GetFileSize(rs, cloud_sga_path_.c_str());
+        bool    persisted = rs_FilePersisted(rs, cloud_sga_path_.c_str());
+        fprintf(stderr, "[coh2-workshop:publish] FileShare('%s') attempt %d/%d exists=%d size=%d persisted=%d\n",
+                cloud_sga_path_.c_str(), fileShareAttempts_ + 1, kMaxFileShareAttempts,
+                (int)exists, sz, (int)persisted);
         fflush(stderr);
+
         SteamAPICall_t call = rs_FileShare(rs, cloud_sga_path_.c_str());
         if (!call) {
             RejectError("[coh2-workshop:publish] FileShare returned null call handle");
             return;
         }
+        fileShareAttempts_++;
         pending_call_ = call;
         state_ = State::kFileShare;
         PollForResult();
@@ -255,6 +334,16 @@ private:
             fflush(stderr);
 
             if (!ok || pbFailed || res.m_eResult != 1) {
+                // eResult 9 = FileNotFound: the cloud file wasn't ready to share
+                // yet. Wait briefly and retry the share before giving up.
+                if (res.m_eResult == 9 && fileShareAttempts_ < kMaxFileShareAttempts) {
+                    fprintf(stderr, "[coh2-workshop:publish] FileShare FileNotFound — retrying after delay (next attempt %d/%d)\n",
+                            fileShareAttempts_ + 1, kMaxFileShareAttempts);
+                    fflush(stderr);
+                    auto self = shared_from_this();
+                    DelayThen(120, [self]() { self->WaitForPersistThenShare(); }); // ~1.2s
+                    return;
+                }
                 RejectError(std::string("[coh2-workshop:publish] FileShare failed: ") + eresult_to_string(res.m_eResult));
                 return;
             }

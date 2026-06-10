@@ -1,0 +1,23 @@
+{
+  "_note": "Sherman Easy 8 (m4a3e8_sherman_easy_8) UV regions in 2048×2048 pixel units. Derived from Wikinger USF skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 1700,
+      "y": 1236,
+      "w": 320,
+      "h": 320,
+      "_source": "wikinger",
+      "_confidence": "high",
+      "note": "Hull right side — Wikinger USF skin shows white US Army star at atlas (1860, 1396) in the right-side hull panel. Three stars visible in atlas: S1(1334,1393)=hull-left, S2(1860,1396)=hull-right (this rect), S3(1584,1696)=turret. S2 is in the rightmost atlas region consistent with hull-right-side UV unwrap. Visual crop verification confirmed white star shape at that location.",
+      "uvCore": {
+        "minU": 0.8301,
+        "maxU": 0.9863,
+        "minV": 0.6035,
+        "maxV": 0.7598
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

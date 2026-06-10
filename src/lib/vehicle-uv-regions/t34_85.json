@@ -1,0 +1,23 @@
+{
+  "_note": "T-34/85 (t34_85) UV regions in 2048×2048 pixel units. Derived from Wikinger Soviet skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger_soviet",
+  "semanticRegions": {
+    "hullFront": {
+      "x": 0,
+      "y": 150,
+      "w": 280,
+      "h": 340,
+      "_source": "wikinger_soviet",
+      "_confidence": "medium (±50px)",
+      "note": "Hull front panel — Wikinger Soviet skin (00fb732f48ee4f66ab79d8f52cd98e14) shows white Soviet stars + Cyrillic text (regiment name + number) on hull glacis/front panels in upper-left atlas region. Same layout as T-34/76 (hullFront not hullSideRight — stars are on glacis/fender panels). Pixel centroid at (122,336), tall bbox (80-154 x, 176-549 y) spanning two stars + text. This rect is the correct hull-front emblem zone matching T-34/76 convention. Annotated PNG at artifacts/badge-rects/t34_85.png.",
+      "uvCore": {
+        "minU": 0.0000,
+        "maxU": 0.1367,
+        "minV": 0.0732,
+        "maxV": 0.2393
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

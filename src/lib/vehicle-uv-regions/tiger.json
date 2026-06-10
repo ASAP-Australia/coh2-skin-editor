@@ -1,0 +1,23 @@
+{
+  "_note": "Tiger I (tiger) UV regions in 2048×2048 pixel units. Derived from Wikinger OstHeer skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 996,
+      "y": 1128,
+      "w": 320,
+      "h": 320,
+      "_source": "wikinger",
+      "_confidence": "high",
+      "note": "Hull right side — Wikinger OstHeer skin Balkenkreuz cross confirmed at center (1156, 1288). Cross shape identified via density scan (score=48) and visual crop verification. Badge zone encompasses cross with margin.",
+      "uvCore": {
+        "minU": 0.4863,
+        "maxU": 0.6426,
+        "minV": 0.5508,
+        "maxV": 0.7070
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

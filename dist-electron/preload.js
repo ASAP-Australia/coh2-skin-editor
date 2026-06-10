@@ -99,6 +99,7 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
             publish: (input) => electron_1.ipcRenderer.invoke('steam:workshop:publish', input),
             update: (workshopId, input) => electron_1.ipcRenderer.invoke('steam:workshop:update', workshopId, input),
             getMine: () => electron_1.ipcRenderer.invoke('steam:workshop:get-mine'),
+            delete: (workshopId) => electron_1.ipcRenderer.invoke('steam:workshop:delete', workshopId),
         },
     },
 });

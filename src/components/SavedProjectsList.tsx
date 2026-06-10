@@ -5,9 +5,17 @@
  * The user can click any entry to load it directly, delete an entry via
  * the per-row trash affordance (with inline two-step confirm), or fall
  * back to the old disk-picker via "Open from disk…".
+ *
+ * Each row has TWO independent actions:
+ *   1. Trash (Delete project) — removes the saved project from local
+ *      storage only. Never touches the Workshop.
+ *   2. Cloud-off (Delete from Workshop) — shown ONLY for deployed projects
+ *      (real workshopId ≤5e9). Uses the same arm→confirm pattern as the
+ *      trash button. On success: clears the persisted workshopId and hides
+ *      this button; the project itself stays in the list.
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Layers,
   UserSquare,
@@ -17,18 +25,30 @@ import {
   Trash2,
   Check,
   X,
+  CloudOff,
 } from 'lucide-react'
-import { listAllSkinProjects, removeRecentProject, type RecentProjectEntry } from '@/lib/project'
+import {
+  listAllSkinProjects,
+  removeRecentProject,
+  loadById,
+  clearSkinWorkshopId,
+  type RecentProjectEntry,
+} from '@/lib/project'
 import {
   listAllFaceplates,
   removeRecentFaceplate,
+  loadFaceplateById,
+  clearFaceplateWorkshopId,
   type RecentFaceplateEntry,
 } from '@/lib/faceplate-project'
 import {
   listAllDecalPacks,
   removeRecentDecalPack,
+  loadDecalPackById,
+  clearDecalPackWorkshopId,
   type RecentDecalPack,
 } from '@/lib/decal-pack-project'
+import { useToasts } from '@/components/Toasts'
 
 interface Props {
   onPickSkin: (id: string) => void
@@ -69,25 +89,77 @@ export default function SavedProjectsList({
   onPickFromDisk,
 }: Props) {
   // Lists are mirrored into local state so deletes can re-render without
-  // a parent refresh. Reads from localStorage happen once on mount via
-  // the initialiser. We use the `listAll*` readers (NOT the 12-entry
-  // `getRecent*` registries) so the load-project menu shows every healthy
-  // snapshot the user still has on disk — projects they made months ago
-  // were previously invisible here once they fell off the recent list.
-  // Broken/corrupt snapshots are silently excluded by the loader-validity
-  // gate so they can't crash the editor on click. The custom scrollbar
-  // below handles arbitrarily-long lists.
-  const [skins, setSkins] = useState<RecentProjectEntry[]>(() => listAllSkinProjects())
-  const [faceplates, setFaceplates] = useState<RecentFaceplateEntry[]>(() => listAllFaceplates())
-  const [decalPacks, setDecalPacks] = useState<RecentDecalPack[]>(() => listAllDecalPacks())
+  // a parent refresh. Reads from localStorage are deferred to a useEffect
+  // so the component paints immediately (showing the loading state) before
+  // the synchronous JSON.parse work begins — prevents a visible freeze when
+  // several large projects (5–20 MB base64 each) are stored. We use the
+  // `listAll*` readers (NOT the 12-entry `getRecent*` registries) so the
+  // load-project menu shows every healthy snapshot the user still has on
+  // disk — projects they made months ago were previously invisible here
+  // once they fell off the recent list. Broken/corrupt snapshots are
+  // silently excluded by the loader-validity gate so they can't crash the
+  // editor on click. The custom scrollbar below handles arbitrarily-long
+  // lists.
+  const { api: toast, node: toastNode } = useToasts()
+
+  const [skins, setSkins] = useState<RecentProjectEntry[]>([])
+  const [faceplates, setFaceplates] = useState<RecentFaceplateEntry[]>([])
+  const [decalPacks, setDecalPacks] = useState<RecentDecalPack[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setSkins(listAllSkinProjects())
+    setFaceplates(listAllFaceplates())
+    setDecalPacks(listAllDecalPacks())
+    setLoading(false)
+  }, [])
 
   // Track which row is currently in "confirm delete" state so only one
   // row at a time shows the confirm UI. The key is `${group}:${id}` so
   // ids that collide across groups don't tangle.
   const [confirmKey, setConfirmKey] = useState<string | null>(null)
 
-  const isEmpty = skins.length === 0 && faceplates.length === 0 && decalPacks.length === 0
+  // Track which row is in "confirm Workshop delete" state (separate from
+  // the local-delete confirm so both buttons can be armed independently).
+  const [confirmWorkshopKey, setConfirmWorkshopKey] = useState<string | null>(null)
 
+  // Track which row has an in-flight async Workshop delete so we can
+  // disable it and show a spinner-like label.
+  const [deletingKey, setDeletingKey] = useState<string | null>(null)
+
+  // A nonce incremented after a successful Workshop deletion to force
+  // `getRealWorkshopId` to re-evaluate (the helper reads localStorage
+  // on each call, so a new render cycle after clearing is sufficient).
+  const [refreshNonce, setRefreshNonce] = useState(0)
+
+  const isEmpty = !loading && skins.length === 0 && faceplates.length === 0 && decalPacks.length === 0
+
+  /** Return the workshopId for a project if it's a real published id.
+   *  Mirrors the app-wide `isRealWorkshopId` convention (PublishToWorkshopDialog /
+   *  live-sync): real CoH2 Workshop ids are ≤5e9; locally-generated fake ids from
+   *  freshPackId() land in [1e15, 9e15). */
+  function getRealWorkshopId(group: Group, id: string): string | null {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- nonce read forces re-evaluation on Workshop delete
+    void refreshNonce
+    try {
+      let workshopId: string | undefined
+      if (group === 'skin') {
+        workshopId = loadById(id)?.workshopId
+      } else if (group === 'faceplate') {
+        workshopId = loadFaceplateById(id)?.workshopId
+      } else {
+        workshopId = loadDecalPackById(id)?.workshopId
+      }
+      if (!workshopId) return null
+      const n = BigInt(workshopId)
+      return n > 0n && n <= 5_000_000_000n ? workshopId : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Local-only delete: remove the project from localStorage and the list.
+   *  Does NOT touch the Workshop. */
   const handleDelete = (group: Group, id: string) => {
     if (group === 'skin') {
       removeRecentProject(id)
@@ -102,8 +174,45 @@ export default function SavedProjectsList({
     setConfirmKey(null)
   }
 
+  /** Workshop delete: calls the IPC Workshop delete API, then clears the
+   *  persisted workshopId so the project is treated as unpublished.
+   *  The project is NOT removed from the local list on success. */
+  const handleWorkshopDelete = async (group: Group, id: string) => {
+    const rowKey = `${group}:${id}`
+    const realWorkshopId = getRealWorkshopId(group, id)
+    if (!realWorkshopId || !window.electronAPI?.steam?.workshop?.delete) return
+
+    setDeletingKey(rowKey)
+    try {
+      await window.electronAPI.steam.workshop.delete(realWorkshopId)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      toast.push(`Workshop delete failed: ${msg}`, 'error')
+      setDeletingKey(null)
+      setConfirmWorkshopKey(null)
+      return
+    }
+
+    // Clear the persisted workshopId so the project is unpublished.
+    if (group === 'skin') {
+      clearSkinWorkshopId(id)
+    } else if (group === 'faceplate') {
+      clearFaceplateWorkshopId(id)
+    } else {
+      clearDecalPackWorkshopId(id)
+    }
+
+    setDeletingKey(null)
+    setConfirmWorkshopKey(null)
+    // Bump the nonce to force getRealWorkshopId to re-read localStorage so
+    // the Workshop button disappears for this row.
+    setRefreshNonce(n => n + 1)
+    toast.push('Removed from Steam Workshop', 'success')
+  }
+
   return (
     <div>
+      {toastNode}
       {/* Subtle back affordance — v1.0 user feedback: "get rid of the back
        * button and get rid of the 'Saved projects' [header]. Is there a
        * better way we can do the back button thing?"
@@ -138,7 +247,11 @@ export default function SavedProjectsList({
         <span>Back</span>
       </button>
 
-      {isEmpty ? (
+      {loading ? (
+        <div className="text-center py-6">
+          <p className="text-[13px] text-muted-foreground">Loading projects…</p>
+        </div>
+      ) : isEmpty ? (
         <div className="text-center py-6">
           <p className="text-[13px] text-muted-foreground mb-4">No saved projects yet.</p>
           <button
@@ -221,9 +334,21 @@ export default function SavedProjectsList({
                       subtitle={relTime(entry.lastEditedAt)}
                       onClick={() => onPickSkin(entry.id)}
                       confirming={confirmKey === `skin:${entry.id}`}
-                      onArmDelete={() => setConfirmKey(`skin:${entry.id}`)}
-                      onConfirmDelete={() => handleDelete('skin', entry.id)}
+                      confirmingWorkshop={confirmWorkshopKey === `skin:${entry.id}`}
+                      deleting={deletingKey === `skin:${entry.id}`}
+                      hasWorkshopId={getRealWorkshopId('skin', entry.id) !== null}
+                      onArmDelete={() => {
+                        setConfirmWorkshopKey(null)
+                        setConfirmKey(`skin:${entry.id}`)
+                      }}
+                      onConfirmDelete={() => { handleDelete('skin', entry.id) }}
                       onCancelDelete={() => setConfirmKey(null)}
+                      onArmWorkshopDelete={() => {
+                        setConfirmKey(null)
+                        setConfirmWorkshopKey(`skin:${entry.id}`)
+                      }}
+                      onConfirmWorkshopDelete={() => { void handleWorkshopDelete('skin', entry.id) }}
+                      onCancelWorkshopDelete={() => setConfirmWorkshopKey(null)}
                     />
                   ))}
                 </Section>
@@ -239,9 +364,21 @@ export default function SavedProjectsList({
                       subtitle={relTime(entry.lastEditedAt)}
                       onClick={() => onPickFaceplate(entry.id)}
                       confirming={confirmKey === `faceplate:${entry.id}`}
-                      onArmDelete={() => setConfirmKey(`faceplate:${entry.id}`)}
-                      onConfirmDelete={() => handleDelete('faceplate', entry.id)}
+                      confirmingWorkshop={confirmWorkshopKey === `faceplate:${entry.id}`}
+                      deleting={deletingKey === `faceplate:${entry.id}`}
+                      hasWorkshopId={getRealWorkshopId('faceplate', entry.id) !== null}
+                      onArmDelete={() => {
+                        setConfirmWorkshopKey(null)
+                        setConfirmKey(`faceplate:${entry.id}`)
+                      }}
+                      onConfirmDelete={() => { handleDelete('faceplate', entry.id) }}
                       onCancelDelete={() => setConfirmKey(null)}
+                      onArmWorkshopDelete={() => {
+                        setConfirmKey(null)
+                        setConfirmWorkshopKey(`faceplate:${entry.id}`)
+                      }}
+                      onConfirmWorkshopDelete={() => { void handleWorkshopDelete('faceplate', entry.id) }}
+                      onCancelWorkshopDelete={() => setConfirmWorkshopKey(null)}
                     />
                   ))}
                 </Section>
@@ -257,9 +394,21 @@ export default function SavedProjectsList({
                       subtitle={relTime(isoToMs(entry.lastEditedAt))}
                       onClick={() => onPickDecalPack(entry.id)}
                       confirming={confirmKey === `decal:${entry.id}`}
-                      onArmDelete={() => setConfirmKey(`decal:${entry.id}`)}
-                      onConfirmDelete={() => handleDelete('decal', entry.id)}
+                      confirmingWorkshop={confirmWorkshopKey === `decal:${entry.id}`}
+                      deleting={deletingKey === `decal:${entry.id}`}
+                      hasWorkshopId={getRealWorkshopId('decal', entry.id) !== null}
+                      onArmDelete={() => {
+                        setConfirmWorkshopKey(null)
+                        setConfirmKey(`decal:${entry.id}`)
+                      }}
+                      onConfirmDelete={() => { handleDelete('decal', entry.id) }}
                       onCancelDelete={() => setConfirmKey(null)}
+                      onArmWorkshopDelete={() => {
+                        setConfirmKey(null)
+                        setConfirmWorkshopKey(`decal:${entry.id}`)
+                      }}
+                      onConfirmWorkshopDelete={() => { void handleWorkshopDelete('decal', entry.id) }}
+                      onCancelWorkshopDelete={() => setConfirmWorkshopKey(null)}
                     />
                   ))}
                 </Section>
@@ -314,59 +463,150 @@ function Section({
 /**
  * Row layout:
  *
- *   [────── main load-button ──────][trash / confirm cluster]
+ *   [────── main load-button ──────][cloud-off][trash / confirm cluster]
  *
- * The main load action and the delete action live as siblings in a flex
+ * The main load action and the delete actions live as siblings in a flex
  * row, NOT nested — nested <button> is invalid HTML and breaks keyboard
  * a11y. The whole row keeps its rounded-card look via the surrounding
  * Section wrapper.
  *
- * Delete UX: clicking the trash icon "arms" the row — the trash icon is
- * replaced by an inline confirm cluster (✓ delete / ✕ cancel) and the
- * row tints red. Only one row can be armed at a time (managed by the
- * parent's `confirmKey` state), so clicking trash on a different row
- * disarms the previous one automatically.
+ * Two independent two-step arm→confirm flows:
+ *   - Trash (Delete project): arms to confirm-delete / cancel-delete.
+ *     Removes the project from local storage. Does NOT touch the Workshop.
+ *   - CloudOff (Delete from Workshop): shown only when `hasWorkshopId` is
+ *     true. Arms to confirm-workshop-delete / cancel-workshop-delete. Calls
+ *     the Workshop delete API, then clears the persisted workshopId so the
+ *     button hides on the next render. The project row stays in the list.
+ *
+ * Only one confirm cluster is visible at a time: arming one disarms the
+ * other (managed in the parent component via separate confirmKey /
+ * confirmWorkshopKey state).
  */
 function ProjectRow({
   title,
   subtitle,
   onClick,
   confirming,
+  confirmingWorkshop,
+  deleting,
+  hasWorkshopId,
   onArmDelete,
   onConfirmDelete,
   onCancelDelete,
+  onArmWorkshopDelete,
+  onConfirmWorkshopDelete,
+  onCancelWorkshopDelete,
 }: {
   title: string
   subtitle: string
   onClick: () => void
   confirming: boolean
+  confirmingWorkshop: boolean
+  deleting: boolean
+  hasWorkshopId: boolean
   onArmDelete: () => void
   onConfirmDelete: () => void
   onCancelDelete: () => void
+  onArmWorkshopDelete: () => void
+  onConfirmWorkshopDelete: () => void
+  onCancelWorkshopDelete: () => void
 }) {
+  // Either confirm cluster active tints the row.
+  const rowActive = confirming || confirmingWorkshop
+
   return (
     <div
       data-testid="saved-project-row"
       className={`w-full flex items-stretch border-b border-white/[0.06] last:border-b-0 transition-colors duration-150 ${
-        confirming ? 'bg-red-500/[0.08]' : 'bg-white/[0.03] hover:bg-white/[0.06]'
+        confirmingWorkshop
+          ? 'bg-amber-500/[0.08]'
+          : confirming
+          ? 'bg-red-500/[0.08]'
+          : 'bg-white/[0.03] hover:bg-white/[0.06]'
       }`}
     >
       {/* Main load-the-project button — fills the row except for the
-       *  trailing trash/confirm cluster. */}
+       *  trailing action cluster. */}
       <button
         type="button"
         onClick={onClick}
+        disabled={deleting || rowActive}
         className="flex-1 min-w-0 text-left px-4 py-3 flex items-center gap-3
                    hover:bg-white/[0.04] focus:bg-white/[0.04] focus:outline-none
-                   transition-colors duration-150"
+                   transition-colors duration-150 disabled:opacity-50"
       >
         <div className="flex-1 min-w-0">
           <div className="text-[13px] font-medium text-foreground truncate">{title}</div>
-          <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">{subtitle}</div>
+          <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">
+            {deleting ? 'Removing from Workshop…' : subtitle}
+          </div>
         </div>
       </button>
 
-      {/* Delete affordance — armed/unarmed in-place to keep the row
+      {/* ── Workshop-delete cluster (shown only for deployed projects) ─────
+       *  Displayed to the LEFT of the trash cluster so the trash remains
+       *  the rightmost affordance (consistent with the non-deployed layout). */}
+      {hasWorkshopId && (
+        <>
+          {confirmingWorkshop ? (
+            <div className="flex items-stretch shrink-0 border-l border-white/[0.06]">
+              <button
+                type="button"
+                data-testid="confirm-workshop-delete"
+                onClick={e => {
+                  e.stopPropagation()
+                  onConfirmWorkshopDelete()
+                }}
+                disabled={deleting}
+                aria-label={`Confirm remove ${title} from Workshop`}
+                title="Confirm: remove from Steam Workshop (project stays local)"
+                className="px-3 flex items-center justify-center text-amber-300 hover:text-amber-200
+                           hover:bg-amber-500/15 focus:bg-amber-500/15 focus:outline-none
+                           transition-colors duration-150 disabled:opacity-50"
+              >
+                <Check size={14} aria-hidden />
+              </button>
+              <button
+                type="button"
+                data-testid="cancel-workshop-delete"
+                onClick={e => {
+                  e.stopPropagation()
+                  onCancelWorkshopDelete()
+                }}
+                disabled={deleting}
+                aria-label={`Cancel remove ${title} from Workshop`}
+                className="px-3 flex items-center justify-center text-muted-foreground
+                           hover:text-foreground hover:bg-white/[0.06] focus:bg-white/[0.06]
+                           focus:outline-none border-l border-white/[0.04]
+                           transition-colors duration-150 disabled:opacity-50"
+              >
+                <X size={14} aria-hidden />
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              data-testid="arm-workshop-delete"
+              onClick={e => {
+                e.stopPropagation()
+                onArmWorkshopDelete()
+              }}
+              disabled={deleting}
+              aria-label={`Remove ${title} from Workshop`}
+              title="Remove from Steam Workshop (keeps project locally)"
+              className="px-3 flex items-center justify-center shrink-0 border-l border-white/[0.06]
+                         text-muted-foreground/60 hover:text-amber-300 hover:bg-amber-500/10
+                         focus:text-amber-300 focus:bg-amber-500/10 focus:outline-none
+                         transition-colors duration-150 disabled:opacity-50"
+            >
+              <CloudOff size={14} aria-hidden />
+            </button>
+          )}
+        </>
+      )}
+
+      {/* ── Local-delete cluster ────────────────────────────────────────────
+       *  Delete affordance — armed/unarmed in-place to keep the row
        *  layout stable. Stop click propagation so the underlying row
        *  doesn't catch the click (defensive — they're siblings, not
        *  nested, so propagation wouldn't fire the main button — but
@@ -380,10 +620,11 @@ function ProjectRow({
               e.stopPropagation()
               onConfirmDelete()
             }}
+            disabled={deleting}
             aria-label={`Confirm delete ${title}`}
             className="px-3 flex items-center justify-center text-red-300 hover:text-red-200
                        hover:bg-red-500/15 focus:bg-red-500/15 focus:outline-none
-                       transition-colors duration-150"
+                       transition-colors duration-150 disabled:opacity-50"
           >
             <Check size={14} aria-hidden />
           </button>
@@ -394,11 +635,12 @@ function ProjectRow({
               e.stopPropagation()
               onCancelDelete()
             }}
+            disabled={deleting}
             aria-label={`Cancel delete ${title}`}
             className="px-3 flex items-center justify-center text-muted-foreground
                        hover:text-foreground hover:bg-white/[0.06] focus:bg-white/[0.06]
                        focus:outline-none border-l border-white/[0.04]
-                       transition-colors duration-150"
+                       transition-colors duration-150 disabled:opacity-50"
           >
             <X size={14} aria-hidden />
           </button>
@@ -411,12 +653,13 @@ function ProjectRow({
             e.stopPropagation()
             onArmDelete()
           }}
+          disabled={deleting}
           aria-label={`Delete ${title}`}
-          title="Delete"
+          title="Delete project locally"
           className="px-3 flex items-center justify-center shrink-0 border-l border-white/[0.06]
                      text-muted-foreground/60 hover:text-red-300 hover:bg-red-500/10
                      focus:text-red-300 focus:bg-red-500/10 focus:outline-none
-                     transition-colors duration-150"
+                     transition-colors duration-150 disabled:opacity-50"
         >
           <Trash2 size={14} aria-hidden />
         </button>

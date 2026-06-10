@@ -44,8 +44,8 @@ describe('atlas-view-settings module surface', () => {
     expect(DEFAULT_ATLAS_VIEW_MODE).toBe('template')
   })
 
-  it('ATLAS_VIEW_MODE_ORDER lists template, checkerboard, in_game in that order', () => {
-    expect(ATLAS_VIEW_MODE_ORDER).toEqual(['template', 'checkerboard', 'in_game'])
+  it('ATLAS_VIEW_MODE_ORDER lists template, checkerboard in that order', () => {
+    expect(ATLAS_VIEW_MODE_ORDER).toEqual(['template', 'checkerboard'])
   })
 
   it('every order entry has a label + description in ATLAS_VIEW_MODE_LABEL', () => {
