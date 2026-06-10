@@ -76,12 +76,14 @@ describe('bakeDecalOntoKingTigerDiffuse', () => {
     expect(outsidePixel[2]).toBeCloseTo(60, 0)
   })
 
-  it('HULL_SIDE_RIGHT_RECT exports the correct pixel rect from the JSON', () => {
+  it('HULL_SIDE_RIGHT_RECT exports the correct pixel rect from the JSON (Wikinger ground truth)', () => {
+    // Updated to Wikinger OKW skin ground truth: cross+number zone confirmed visually.
+    // Previous hand-authored value {896,1152,512,512} was incorrect per Wikinger evidence.
     expect(HULL_SIDE_RIGHT_RECT).toMatchObject({
-      x: 896,
-      y: 1152,
-      w: 512,
-      h: 512,
+      x: 410,
+      y: 1320,
+      w: 360,
+      h: 340,
     })
   })
 })

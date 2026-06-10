@@ -11,11 +11,12 @@
  *           they're not first-run even if the onboarded flag was wiped)
  *           — overlay self-stamps the onboarded flag in this case so it
  *           won't reappear next launch either.
- *   2. ?tour=1 in the URL forces the overlay regardless of the saved
- *      flag or saved-project state. This is the "replay tour" escape
- *      hatch.
- *   3. Overlay opens after a 600 ms setTimeout (lets the editor settle
- *      its initial paint).
+ *   2. The overlay NEVER auto-opens — it was an intrusive full-screen
+ *      modal that blocked the editor on first launch. First-run users
+ *      are silently stamped onboarded. ?tour=1 in the URL is the only
+ *      way to summon it (the "replay tour" escape hatch).
+ *   3. Once summoned via ?tour=1, the overlay opens after a 600 ms
+ *      setTimeout (lets the editor settle its initial paint).
  *   4. Four steps, each with its own title:
  *        Pick a vehicle → Apply a camo → Paint by hand → Place decals
  *      Counter reads "1 / 4" … "4 / 4".
@@ -136,39 +137,36 @@ describe('OnboardingOverlay — gating', () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBe('1')
   })
 
-  it('ignores the v1 flag — bumped key forces the tour to re-show once', () => {
+  it('does NOT auto-open on first run; it stamps the v3 flag instead', () => {
+    // The intrusive full-screen tour no longer auto-pops. First-run users
+    // are marked onboarded so nothing re-triggers it, and the editor is
+    // never blocked on launch.
+    render()
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    expect(panel()).toBeNull()
+    expect(localStorage.getItem(STORAGE_KEY)).toBe('1')
+  })
+
+  it('does not auto-open even with a stale v1 flag; stamps v3', () => {
     localStorage.setItem('coh2-skin-editor:onboarded-v1', '1')
     render()
     act(() => {
       vi.advanceTimersByTime(700)
     })
-    expect(panel()).not.toBeNull()
+    expect(panel()).toBeNull()
+    expect(localStorage.getItem(STORAGE_KEY)).toBe('1')
   })
 
-  it('ignores the v2 flag — v3 bump re-airs the "Edit texture" pill copy once', () => {
-    // Users who already dismissed the previous 4-step tour (v2 key set
-    // to '1') should still see the v3 tour one more time so they
-    // discover the new bottom-row Edit texture pill + symmetry toggle.
+  it('does not auto-open even with a stale v2 flag; stamps v3', () => {
     localStorage.setItem('coh2-skin-editor:onboarded-v2', '1')
     render()
     act(() => {
       vi.advanceTimersByTime(700)
     })
-    expect(panel()).not.toBeNull()
-  })
-
-  it('opens on first run after the 600ms settle delay', () => {
-    render()
-    // Not yet — overlay is still gated by the setTimeout.
     expect(panel()).toBeNull()
-    act(() => {
-      vi.advanceTimersByTime(599)
-    })
-    expect(panel()).toBeNull()
-    act(() => {
-      vi.advanceTimersByTime(2)
-    })
-    expect(panel()).not.toBeNull()
+    expect(localStorage.getItem(STORAGE_KEY)).toBe('1')
   })
 
   it('?tour=1 forces the overlay even with the onboarded flag set + a saved project', () => {
@@ -185,6 +183,8 @@ describe('OnboardingOverlay — gating', () => {
 
 describe('OnboardingOverlay — steps', () => {
   function openTour() {
+    // The tour no longer auto-opens; ?tour=1 is the only way it appears.
+    setUrl('?tour=1')
     render()
     act(() => {
       vi.advanceTimersByTime(700)
@@ -259,6 +259,8 @@ describe('OnboardingOverlay — steps', () => {
 
 describe('OnboardingOverlay — dismiss paths', () => {
   function openTour() {
+    // The tour no longer auto-opens; ?tour=1 is the only way it appears.
+    setUrl('?tour=1')
     render()
     act(() => {
       vi.advanceTimersByTime(700)

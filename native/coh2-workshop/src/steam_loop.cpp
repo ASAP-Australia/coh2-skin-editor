@@ -8,7 +8,14 @@ static uv_timer_t s_timer;
 static std::atomic<bool> s_running{false};
 
 static void on_timer(uv_timer_t* /*handle*/) {
-    steam_run_callbacks();
+    // NOTE: We deliberately do NOT call SteamAPI_RunCallbacks here. steamworks.js
+    // selects MANUAL callback dispatch in its init() and runs its own 30Hz pump
+    // (setInterval(runCallbacks, 1000/30)). Calling the STANDARD-dispatch
+    // SteamAPI_RunCallbacks after manual dispatch was selected makes Steam log
+    // "[S_API FAIL] Standard callback dispatch cannot be used; manual dispatch
+    // has already been selected." on every tick. This pump was a dead no-op; the
+    // timer is retained only to keep the loop reference/lifecycle identical.
+    // steam_run_callbacks(); // intentionally disabled
 }
 
 void steam_loop_start(void* uv_loop_ptr) {

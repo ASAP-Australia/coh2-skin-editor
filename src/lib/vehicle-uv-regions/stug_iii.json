@@ -1,0 +1,23 @@
+{
+  "_note": "StuG III (stug_iii) UV regions in 2048×2048 pixel units. Derived from Wikinger OstHeer German skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 1395,
+      "y": 1635,
+      "w": 330,
+      "h": 310,
+      "_source": "wikinger",
+      "_confidence": "medium (±40px)",
+      "note": "Hull right side — Wikinger OstHeer skin (German Balkenkreuz on hull). Two white crosses are visible at the bottom-right area of the 2048x2048 atlas. This rect covers the left cross of the two (right-side hull panel). Cross center estimated at approximately (1560,1790) from visual inspection of annotated PNG. Second cross is at ~(1680,1790). The StuG III hull atlas unwraps with the hull-right panel in the lower-right quadrant.",
+      "uvCore": {
+        "minU": 0.6812,
+        "maxU": 0.8423,
+        "minV": 0.7983,
+        "maxV": 0.9497
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

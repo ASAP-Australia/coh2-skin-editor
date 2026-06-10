@@ -13,6 +13,7 @@ import {
   initSteam,
   publishWorkshopItem,
   updateWorkshopItem,
+  deleteWorkshopItem,
   getMyWorkshopItems,
   resetSteamCache,
   type PublishWorkshopInput,
@@ -472,6 +473,13 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // Never throttle the renderer (or its Web Workers) when the window is
+      // occluded/unfocused. Without this, an occluded window starves the BC
+      // texture-decode worker pool — a sub-second 2048² RGT decode balloons to
+      // 20+ seconds, so clicking a vehicle leaves the viewport empty while the
+      // user waits (and an effect re-run can cancel the load before the meshes
+      // are ever added). Mirrors the audit-capture window's setting.
+      backgroundThrottling: false,
     },
   })
 
@@ -638,6 +646,9 @@ function createWindow() {
   ipcMain.handle('steam:workshop:get-mine', async () => {
     return await getMyWorkshopItems()
   })
+  ipcMain.handle('steam:workshop:delete', async (_e, workshopId: string) => {
+    return await deleteWorkshopItem(workshopId)
+  })
 
   // ── Workshop content staging dir ────────────────────────────────────
   // Creates a fresh temporary directory for staging Workshop content before
@@ -743,6 +754,13 @@ function createWindow() {
   if (process.env.HEADLESS_SCREENSHOT) {
     const outPath = process.env.HEADLESS_SCREENSHOT
     const delayMs = Number(process.env.HEADLESS_DELAY_MS ?? '6000')
+    if (process.env.HEADLESS_FORWARD_CONSOLE) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mainWindow.webContents.on('console-message', (...args: any[]) => {
+        const msg = typeof args[2] === 'string' ? args[2] : (args[0]?.message ?? '')
+        if (msg) console.log('[renderer]', msg)
+      })
+    }
     const grab = async () => {
       console.log('[screenshot] grabbing...')
       try {
@@ -907,11 +925,20 @@ if (process.env.AUDIT_REAL === '1') {
   })
 } else {
   app.whenReady().then(() => {
-    // Hydrate AI settings + decrypt stored keys before the renderer can
-    // call `ai:complete`. Cheap (3 file existence checks + small reads).
-    loadAiSettings()
-    for (const p of PROVIDERS) loadAiKey(p)
+    // Create the window first so the renderer can paint immediately.
+    // AI settings + key decryption (safeStorage.decryptString) are deferred
+    // to after createWindow() — on Linux with kwallet/gnome-keyring each
+    // decrypt round-trips to the daemon and can block 50–500 ms. The keys
+    // are only needed when the renderer calls `ai:complete`, not at startup.
     createWindow()
+    // Load after window creation: no IPC handler fires before the renderer
+    // is interactive, so there is no race — if ai:complete arrives before
+    // these finish (extremely unlikely in practice), it will see an empty
+    // aiKeyCache and return a "no key" error, which is correct behaviour.
+    setImmediate(() => {
+      loadAiSettings()
+      for (const p of PROVIDERS) loadAiKey(p)
+    })
   })
 }
 

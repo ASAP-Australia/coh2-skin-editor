@@ -90,6 +90,7 @@ import {
   MousePointer2,
   Palette,
   Pencil,
+  Pipette,
   Shapes,
   Slash,
   Sliders,
@@ -101,9 +102,9 @@ import {
   WholeWord,
 } from 'lucide-react'
 import { applySnap, type SnapTarget } from '@/lib/snap-guides'
+import { samplePixel } from '@/lib/brush'
 // StateIcon is now used by EditorTitlePill — no direct import needed here
 import AtlasViewPanel from '@/components/AtlasViewPanel'
-import FaceplateInGamePreview from '@/components/FaceplateInGamePreview'
 import {
   type AtlasViewMode,
   loadFaceplateViewMode,
@@ -171,6 +172,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
    *  segment and the contents of the floating options peel above it. */
   const [activeTool, setActiveTool] = useState<FaceplateToolId>('select')
   const undoStack = useRef<Coh2FaceplateProject[]>([])
+  const redoStack = useRef<Coh2FaceplateProject[]>([])
   const [exportToast, setExportToast] = useState<string | null>(null)
   /** Whether the insignia library modal is open. */
   const [insigniaOpen, setInsigniaOpen] = useState(false)
@@ -188,6 +190,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   const [publishTarget, setPublishTarget] = useState<import('@/components/PublishToWorkshopDialog').WorkshopPublishTarget | null>(null)
   const [isBuildingTarget, setIsBuildingTarget] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
   // ── Canvas view mode ──────────────────────────────────────────────────
   // Three-position visualisation switcher driven by the right-edge
   // AtlasViewPanel (mirrors the Vehicle Viewport's ScenePanel):
@@ -205,9 +208,8 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
 
   // ── Live-composed banner PNG ──────────────────────────────────────────
   // The thumbnail compose effect already builds a 624×204 PNG on every
-  // project mutation; we stash the data URL here so the in-game preview
-  // mode can render it without re-composing.
-  const [bannerPngUrl, setBannerPngUrl] = useState<string | null>(null)
+  // project mutation; we stash the data URL here for the thumbnail updater.
+  const [_bannerPngUrl, setBannerPngUrl] = useState<string | null>(null)
   /** Active faction filter in the insignia picker (null = All). */
   const [insigniaFilter, setInsigniaFilter] = useState<InsigniaEntry['faction'] | null>(null)
 
@@ -222,6 +224,9 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   /** Erase mode: when true the paint stroke uses destination-out compositing
    *  to erase pixels rather than paint them. Component-local, not persisted. */
   const [brushErase, setBrushErase] = useState(false)
+  /** Eyedropper mode: one-shot — next click samples the pixel under the cursor
+   *  and sets it as the brush colour, then snaps back to paint mode. */
+  const [eyedropperActive, setEyedropperActive] = useState(false)
   /** The offscreen canvas used for live stroke rendering (in-progress). */
   const liveStrokeCanvasRef = useRef<HTMLCanvasElement | null>(null)
   /** Whether a stroke is currently in progress. */
@@ -297,6 +302,8 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         if (undoable) {
           undoStack.current.push(prev)
           if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift()
+          // New undoable action invalidates the redo future.
+          redoStack.current = []
         }
         const next = fn(prev)
         // Immediate persist — every mutation = one synchronous localStorage
@@ -318,8 +325,27 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   const undo = useCallback(() => {
     const prev = undoStack.current.pop()
     if (!prev) return
-    setProject(prev)
-    persistFaceplate(prev)
+    // Push current project onto redo stack so the user can re-apply.
+    setProject(current => {
+      redoStack.current.push(current)
+      if (redoStack.current.length > UNDO_LIMIT) redoStack.current.shift()
+      persistFaceplate(prev)
+      scheduleLiveSync('faceplate', prev)
+      return prev
+    })
+  }, [])
+
+  /** Re-apply the most recently undone action. Bound to Cmd/Ctrl-Shift-Z and Ctrl+Y. */
+  const redo = useCallback(() => {
+    const next = redoStack.current.pop()
+    if (!next) return
+    setProject(current => {
+      undoStack.current.push(current)
+      if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift()
+      persistFaceplate(next)
+      scheduleLiveSync('faceplate', next)
+      return next
+    })
   }, [])
 
   // ── Image import ───────────────────────────────────────────────────────
@@ -422,6 +448,12 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         undo()
         return
       }
+      // Redo: Cmd/Ctrl+Shift+Z or Ctrl+Y
+      if ((meta && ev.shiftKey && ev.key.toLowerCase() === 'z') || (ev.ctrlKey && ev.key.toLowerCase() === 'y')) {
+        ev.preventDefault()
+        redo()
+        return
+      }
       if (meta && ev.key.toLowerCase() === 'd') {
         ev.preventDefault()
         if (selectedId) duplicateLayer(selectedId)
@@ -471,7 +503,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedId, multiSelectedIds, mutate, undo, duplicateLayer])
+  }, [selectedId, multiSelectedIds, mutate, undo, redo, duplicateLayer])
 
   // ── Copy / paste (Cmd-C / Cmd-V) ──────────────────────────────────────
   useEffect(() => {
@@ -572,12 +604,30 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   // The wrapper grid centres it inside the canvas section, and the
   // section grows to fill the viewport below the topbar.
   //
-  // Because the canvas IS the in-game pixel grid, viewScale is always 1
-  // and we no longer need a ResizeObserver / DOMRect read on every paint.
-  // Layer coordinates are stored in canvas-space pixels, so they map
-  // 1:1 to screen pixels here.
+  // ── Zoom state ──────────────────────────────────────────────────────────
+  // Persisted per-project so reopening preserves the user's zoom level.
+  const [zoom, setZoom] = useState(initialProject.editorZoom ?? 1.75)
+  const viewScale = zoom
+
+  // Persist zoom into project (non-undoable so it doesn't spam undo history).
+  useEffect(() => {
+    mutate(p => ({ ...p, editorZoom: zoom }), { undoable: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only runs when zoom changes
+  }, [zoom])
+
   const canvasRef = useRef<HTMLDivElement>(null)
-  const viewScale = 1
+
+  // Scroll-to-zoom: non-passive so we can preventDefault (avoids Chrome warning).
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      setZoom(z => Math.max(0.5, Math.min(8, +(z + (e.deltaY < 0 ? 0.15 : -0.15)).toFixed(2))))
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [])
 
   const selectedLayer = useMemo(
     () => project.layers.find(l => l.id === selectedId) ?? null,
@@ -628,15 +678,29 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
       const atlasRgba = atlasCtx
         ? atlasCtx.getImageData(0, 0, ATLAS_WIDTH, ATLAS_HEIGHT).data
         : new Uint8ClampedArray(ATLAS_WIDTH * ATLAS_HEIGHT * 4)
-      const guid = generateGuid()
-      const result = await buildFaceplateMod({ project, atlasRgba, guid })
+      // Reuse the project's STABLE mod-identity GUID so every rebuild produces
+      // the same internal mod identity (attrib pbgid, .gfx + .dds asset paths).
+      // CoH2 registers a faceplate by that pbgid — a fresh GUID per build
+      // orphaned the previous registration, so the faceplate silently failed
+      // to show up in-game. Legacy projects are migrated to carry a guid, but
+      // we generate-and-persist one here as a defensive fallback so the build
+      // is never run with an unstable identity.
+      let projectForBuild = project
+      let guid = project.guid
+      if (!guid) {
+        guid = generateGuid()
+        projectForBuild = { ...project, guid }
+        setProject(projectForBuild)
+        persistFaceplate(projectForBuild)
+      }
+      const result = await buildFaceplateMod({ project: projectForBuild, atlasRgba, guid })
       const target = makeFaceplatePublishTarget(
-        project,
+        projectForBuild,
         result.sga,
         result.sgaFilename,
         bannerCanvas,
         workshopId => {
-          const next = { ...project, workshopId }
+          const next = { ...projectForBuild, workshopId }
           setProject(next)
           persistFaceplate(next)
         },
@@ -678,16 +742,27 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           {
             position: 'absolute',
             inset: 0,
-            display: 'grid',
-            placeItems: 'center',
-            // Generous padding so the canvas never bumps the floating
-            // chrome. The home button sits at top-left (12,12) and the
-            // bottom pill at bottom-center — 80px clears both sides.
-            padding: '80px 80px 200px 80px',
+            // overflow:hidden clips the OOB red zone to the work area so it
+            // never bleeds onto toolbars/sidebars.
+            overflow: 'hidden',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            // Symmetric vertical padding so the canvas stays centred both axes
+            // while clearing the bottom floating toolbar (~150px).
+            paddingTop: 150,
+            paddingBottom: 150,
+            paddingLeft: 80,
+            paddingRight: 80,
             // Make absolutely sure the canvas area is not part of the
             // window-drag strip (the strip's z-[1] would otherwise eat
             // pointer-down on the canvas margins).
             WebkitAppRegion: 'no-drag',
+            // No explicit backdrop — the editor's normal background shows in the
+            // outside-bounds (OOB) region. The red OOB shade is a filtered
+            // DUPLICATE of the layer content (see the ghost overlay below) whose
+            // transparent areas contribute nothing, so empty margins keep the
+            // normal background and only spilled content reads red.
           } as CSSProperties
         }
         onPointerDown={(ev: React.PointerEvent<HTMLDivElement>) => {
@@ -725,6 +800,18 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                     const rect = canvasRef.current!.getBoundingClientRect()
                     const x = (ev.clientX - rect.left) / viewScale
                     const y = (ev.clientY - rect.top) / viewScale
+
+                    // ── Eyedropper: one-shot colour sample from the composited canvas ──
+                    if (eyedropperActive) {
+                      void composeFaceplateCanvas(project).then(c => {
+                        const ctx = c.getContext('2d')
+                        if (!ctx) return
+                        const sampled = samplePixel(ctx, Math.round(x), Math.round(y))
+                        setBrushColor(sampled)
+                      })
+                      setEyedropperActive(false)
+                      return
+                    }
 
                     // Capture mirror flags at stroke start so mid-stroke toggles don't corrupt geometry.
                     const snapMirrorX = mirrorX
@@ -1025,8 +1112,8 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                   : undefined
           }
           style={{
-            width: FACEPLATE_BANNER_W,
-            height: FACEPLATE_BANNER_H,
+            width: FACEPLATE_BANNER_W * viewScale,
+            height: FACEPLATE_BANNER_H * viewScale,
             position: 'relative',
             background: previewTransparent ? '#ffffff' : (project.backgroundColor ?? 'transparent'),
             backgroundImage: previewTransparent
@@ -1054,7 +1141,9 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             `,
             outline: dragOver ? '2px dashed rgba(120,180,255,0.6)' : 'none',
             outlineOffset: -8,
-            overflow: 'hidden',
+            // overflow:visible so layers dragged past the canvas edge remain
+            // visible above the red OOB zone (clipping is on the outer wrapper).
+            overflow: 'visible',
             flexShrink: 0,
           }}
         >
@@ -1464,6 +1553,182 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             )
           })}
 
+          {/* Out-of-bounds red shade (deterministic — no blend modes).
+              A non-interactive, red-tinted DUPLICATE of the layer visuals,
+              clipped to the region OUTSIDE the canvas bins. CSS `filter`
+              respects source alpha, so transparent/empty areas contribute
+              nothing: the black work-area backdrop shows through (NO red when
+              nothing spills out of bounds). Only opaque content pixels that
+              extend past the canvas edge receive the red shade.
+
+              Placed in DOM *after* the real layers (so outside the bins it
+              paints over the full-colour originals) but *before* the selection
+              handles (so handles stay un-tinted; pointerEvents:none keeps them
+              interactive even where the ghost overlaps them).
+
+              NOTE: geometry here mirrors the interactive layer render above —
+              keep the two in sync if layer positioning changes. */}
+          {/* Red-tint colour matrix: maps any pixel to a luminance-shaded RED
+              while preserving alpha (CSS sepia+hue-rotate drifted to orange).
+              R ≈ 0.45·luma + 0.28, G/B ≈ 0.05·luma → clearly red, still shows
+              the content's shape via luminance. */}
+          <svg width={0} height={0} style={{ position: 'absolute' }} aria-hidden focusable={false}>
+            <filter id="oob-red-tint" colorInterpolationFilters="sRGB">
+              <feColorMatrix
+                type="matrix"
+                values="0.45 0.45 0.45 0 0.28
+                        0.05 0.05 0.05 0 0
+                        0.05 0.05 0.05 0 0
+                        0    0    0    1 0"
+              />
+            </filter>
+          </svg>
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              inset: 0,
+              overflow: 'visible',
+              pointerEvents: 'none',
+              opacity: 1,
+              // Recolour visible content to a red shade; a no-op on transparent
+              // pixels, so empty areas keep the editor's normal background.
+              filter: 'url(#oob-red-tint)',
+              // Donut clip: reveal everything OUTSIDE the bins rect, hide the
+              // inside. Coords are in this overlay's own box space; the box is
+              // inset:0 so it coincides with the canvas bins (0,0)–(W,H).
+              clipPath: `polygon(evenodd, -9999px -9999px, 9999px -9999px, 9999px 9999px, -9999px 9999px, -9999px -9999px, 0px 0px, ${FACEPLATE_BANNER_W * viewScale}px 0px, ${FACEPLATE_BANNER_W * viewScale}px ${FACEPLATE_BANNER_H * viewScale}px, 0px ${FACEPLATE_BANNER_H * viewScale}px, 0px 0px)`,
+            }}
+          >
+            {project.layers.map(layer => {
+              if (!layer.visible) return null
+              if (layer.kind === 'text') {
+                const cx = layer.x * viewScale
+                const cy = layer.y * viewScale
+                const scaledFont = layer.fontSize * layer.scale * viewScale
+                return (
+                  <div
+                    key={layer.id}
+                    style={{
+                      position: 'absolute',
+                      left: cx,
+                      top: cy,
+                      transform: `translate(-50%, -50%) rotate(${layer.rotation}deg)`,
+                      transformOrigin: '50% 50%',
+                      opacity: layer.opacity,
+                      fontFamily: layer.fontFamily,
+                      fontSize: scaledFont,
+                      fontWeight: layer.fontWeight,
+                      fontStyle: layer.fontStyle,
+                      color: layer.color,
+                      textAlign: layer.align,
+                      whiteSpace: 'pre',
+                      lineHeight: layer.lineHeight ?? 1.2,
+                      letterSpacing: `${layer.letterSpacing ?? 0}px`,
+                      WebkitTextStroke:
+                        layer.strokeWidth > 0 && layer.strokeColor
+                          ? `${layer.strokeWidth * layer.scale * viewScale}px ${layer.strokeColor}`
+                          : undefined,
+                      paintOrder: layer.strokeWidth > 0 ? 'stroke fill' : undefined,
+                      width: 'max-content',
+                    }}
+                  >
+                    {layer.text.split('\n').map((line, i) => (
+                      <div key={i} style={{ display: 'block' }}>
+                        {line || '\u00a0'}
+                      </div>
+                    ))}
+                  </div>
+                )
+              }
+              if (layer.kind === 'shape') {
+                const cx = layer.x * viewScale
+                const cy = layer.y * viewScale
+                const svgW = layer.width * layer.scale * viewScale
+                const svgH = layer.height * layer.scale * viewScale
+                const strokeWidth = layer.stroke ? layer.stroke.width * viewScale : 0
+                const strokeColor = layer.stroke?.color ?? 'none'
+                return (
+                  <div
+                    key={layer.id}
+                    style={{
+                      position: 'absolute',
+                      left: cx,
+                      top: cy,
+                      transform: `translate(-50%, -50%) rotate(${layer.rotation}deg)`,
+                      transformOrigin: '50% 50%',
+                      opacity: layer.opacity,
+                    }}
+                  >
+                    <svg
+                      width={svgW}
+                      height={svgH}
+                      viewBox="0 0 100 100"
+                      style={{ display: 'block', overflow: 'visible' }}
+                    >
+                      {shapeToSvgElement(layer.shapeType, layer.fillColor, strokeColor, strokeWidth)}
+                    </svg>
+                  </div>
+                )
+              }
+              if (layer.kind === 'paint') {
+                return (
+                  <img
+                    key={layer.id}
+                    src={layer.dataUrl}
+                    alt=""
+                    draggable={false}
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      width: FACEPLATE_BANNER_W,
+                      height: FACEPLATE_BANNER_H,
+                      opacity: layer.opacity,
+                    }}
+                  />
+                )
+              }
+              if (layer.kind !== 'image') return null
+              const img = project.images[layer.imageId]
+              if (!img) return null
+              const scaleX = layer.scale
+              const scaleY = layer.scaleY ?? layer.scale
+              const baseW = img.width * scaleX * viewScale
+              const baseH = img.height * scaleY * viewScale
+              const cx = layer.x * viewScale
+              const cy = layer.y * viewScale
+              const sx = layer.flipH ? -1 : 1
+              const sy = layer.flipV ? -1 : 1
+              return (
+                <div
+                  key={layer.id}
+                  style={{
+                    position: 'absolute',
+                    left: cx,
+                    top: cy,
+                    width: baseW,
+                    height: baseH,
+                    transform: `translate(-50%, -50%) rotate(${layer.rotation}deg) scale(${sx}, ${sy})`,
+                    transformOrigin: '50% 50%',
+                    opacity: layer.opacity,
+                  }}
+                >
+                  <img
+                    src={img.dataUrl}
+                    alt=""
+                    draggable={false}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      filter: imageFilterCss(layer.filters),
+                    }}
+                  />
+                </div>
+              )
+            })}
+          </div>
+
           {/* Selection handles (resize at corners, rotate above) */}
           {selectedLayer &&
             (() => {
@@ -1551,15 +1816,22 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           2. BottomToolPill + ToolOptionsPeel — bottom-centre.
           ───────────────────────────────────────────────────────────── */}
 
-      <EditorHomeButton
-        onClick={onBack}
+      {/* ── Home button — top-left ───────────────────────────────────────
+          Undo/Redo buttons removed (still available via Ctrl+Z / Ctrl+Shift+Z).
+          Pending a better home in the toolbar. */}
+      <div
         style={{
           position: 'fixed',
           top: 'calc(12px + var(--app-top-inset, 0px))',
           left: 12,
           zIndex: 50,
-        }}
-      />
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+        } as React.CSSProperties}
+      >
+        <EditorHomeButton onClick={onBack} />
+      </div>
 
       {/* ── Centered project title pill — top center of viewport ────────
           Extracted to EditorTitlePill; mirrors DecalPackEditor and TopBar
@@ -1575,6 +1847,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         onAcknowledge={() => mutate(p => ({ ...p, titleAcknowledged: true }), { undoable: false })}
         onToggle={() => setPackNameEditOpen(v => !v)}
         popoverOpen={packNameEditOpen}
+        publishError={publishError}
         popoverContent={
           <PackIdentityPopover
             open={packNameEditOpen}
@@ -1619,6 +1892,10 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                 onRequestBuild={handleRequestBuild}
                 onUploadStart={() => setIsUploading(true)}
                 onUploadEnd={() => setIsUploading(false)}
+                onPublishError={(msg) => {
+                  setPublishError(msg)
+                  setTimeout(() => setPublishError(null), 8000)
+                }}
               />
             }
             locked={isUploading || isBuildingTarget}
@@ -2083,41 +2360,10 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           )
         })()}
 
-      {/* Canvas view-mode picker — right-edge vertical stack of three
-       *  icon buttons. Mirrors the Vehicle Viewport's ScenePanel so the
-       *  three editor surfaces feel unified. Hidden in `in_game` mode is
-       *  NOT desired — the user needs the switcher visible at all times
-       *  so they can flip back from the in-game overlay to editing. */}
+      {/* Canvas view-mode picker — right-edge vertical stack of icon buttons.
+       *  Mirrors the Vehicle Viewport's ScenePanel so the editor surfaces
+       *  feel unified. `in_game` mode has been removed from the order. */}
       <AtlasViewPanel mode={viewMode} setMode={setViewMode} ariaLabel="Faceplate view mode" />
-
-      {/* In-game preview overlay — only rendered when viewMode === 'in_game'.
-       *  Centred over the canvas surface; `pointerEvents: 'auto'` so it
-       *  intercepts clicks (preventing accidental layer drags while the
-       *  preview is visible). The user switches back via the view-mode
-       *  panel to resume editing. */}
-      {viewMode === 'in_game' && (
-        <div
-          data-testid="faceplate-in-game-overlay"
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 25,
-            display: 'grid',
-            placeItems: 'center',
-            background: 'rgba(10,11,14,0.92)',
-            backdropFilter: 'blur(12px) saturate(140%)',
-            padding: '80px 80px 200px 80px',
-            pointerEvents: 'auto',
-          }}
-        >
-          <div style={{ maxWidth: 360, width: '100%' }}>
-            <FaceplateInGamePreview
-              bannerPngUrl={bannerPngUrl}
-              playerName={project.packName ?? 'Faceplate preview'}
-            />
-          </div>
-        </div>
-      )}
 
       {/* Bottom tool surface — top row holds the tool-options peel on the
        *  LEFT and the Live Sync status badge on the RIGHT (mirror of the
@@ -2174,7 +2420,10 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             key={activeTool}
             activeId={
               activeTool === 'select'
-                ? null
+                ? // Show select peel only when a positionable (non-paint, non-group) layer is selected.
+                  selectedLayer && selectedLayer.kind !== 'paint' && selectedLayer.kind !== 'group'
+                  ? 'select'
+                  : null
                 : // v1.0: hide the entire peel for the text tool until the
                   // user actually has a text layer to act on. Previously we
                   // showed an empty-state hint ("Click on the canvas to
@@ -2184,6 +2433,10 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                   // entirely in that empty state. The peel re-mounts the
                   // moment a text layer is selected or being edited.
                   activeTool === 'text' && selectedLayer?.kind !== 'text' && editingTextId === null
+                  ? null
+                  : (activeTool === 'align' || activeTool === 'shadow') && !selectedLayer
+                  ? null
+                  : activeTool === 'mask' && !(selectedLayer?.kind === 'image' || selectedLayer?.kind === 'paint')
                   ? null
                   : activeTool
             }
@@ -2207,6 +2460,8 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
               setBrushOpacity={setBrushOpacity}
               brushErase={brushErase}
               setBrushErase={setBrushErase}
+              eyedropperActive={eyedropperActive}
+              setEyedropperActive={setEyedropperActive}
               mirrorX={mirrorX}
               setMirrorX={setMirrorX}
               mirrorY={mirrorY}
@@ -2266,6 +2521,9 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           onSelect={setActiveTool}
         />
       </div>
+
+      {/* Zoom %/Fit/1:1 readout pill removed per design — scroll-to-zoom
+          still works; the on-screen control was redundant chrome. */}
 
       {/* Curves / Tone Presets modal */}
       {curvesOpen && selectedLayer?.kind === 'image' && (
@@ -2435,6 +2693,8 @@ function FaceplateToolPeelBody({
   setBrushOpacity,
   brushErase,
   setBrushErase,
+  eyedropperActive,
+  setEyedropperActive,
   mirrorX,
   setMirrorX,
   mirrorY,
@@ -2465,6 +2725,8 @@ function FaceplateToolPeelBody({
   setBrushOpacity: (v: number) => void
   brushErase: boolean
   setBrushErase: (v: boolean) => void
+  eyedropperActive: boolean
+  setEyedropperActive: (v: boolean) => void
   mirrorX: boolean
   setMirrorX: (v: boolean) => void
   mirrorY: boolean
@@ -2497,9 +2759,78 @@ function FaceplateToolPeelBody({
   })
 
   if (tool === 'select') {
-    // Select tool has no peel body — the Adjust Image panel (top-right)
-    // handles image-layer controls when a layer is selected.
-    return null
+    // Show numeric X/Y position inputs for the selected positionable layer.
+    // PaintLayer (kind='paint') is full-canvas and non-movable — skip it.
+    // GroupLayer has no numeric x/y — skip it too.
+    const posLayer =
+      selectedLayer &&
+      selectedLayer.kind !== 'paint' &&
+      selectedLayer.kind !== 'group'
+        ? (selectedLayer as ImageLayer | TextLayer | ShapeLayer)
+        : null
+    if (!posLayer) return null
+
+    const numInputStyle: React.CSSProperties = {
+      width: 56,
+      height: 28,
+      background: 'rgba(255,255,255,0.05)',
+      border: '0.5px solid rgba(255,255,255,0.12)',
+      borderRadius: 5,
+      color: EDITOR_TEXT_2,
+      fontSize: 11,
+      padding: '0 6px',
+      outline: 'none',
+      appearance: 'textfield',
+      MozAppearance: 'textfield',
+    }
+
+    const labelStyle: React.CSSProperties = {
+      fontSize: 10,
+      fontWeight: 600,
+      letterSpacing: '0.10em',
+      textTransform: 'uppercase',
+      color: EDITOR_TEXT_4,
+      flexShrink: 0,
+    }
+
+    return (
+      <>
+        {/* X position */}
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          <span style={labelStyle}>X</span>
+          <input
+            type="number"
+            style={numInputStyle}
+            value={Math.round(posLayer.x)}
+            min={-FACEPLATE_BANNER_W}
+            max={FACEPLATE_BANNER_W * 2}
+            step={1}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) mutateLayer(l => ({ ...l, x: v }))
+            }}
+            onClick={e => (e.target as HTMLInputElement).select()}
+          />
+        </label>
+        {/* Y position */}
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          <span style={labelStyle}>Y</span>
+          <input
+            type="number"
+            style={numInputStyle}
+            value={Math.round(posLayer.y)}
+            min={-FACEPLATE_BANNER_H}
+            max={FACEPLATE_BANNER_H * 2}
+            step={1}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) mutateLayer(l => ({ ...l, y: v }))
+            }}
+            onClick={e => (e.target as HTMLInputElement).select()}
+          />
+        </label>
+      </>
+    )
   }
 
   if (tool === 'text') {
@@ -2843,7 +3174,7 @@ function FaceplateToolPeelBody({
           onChange={setBrushSize}
         />
         {/* Brush colour — visually muted when in erase mode (colour is irrelevant). */}
-        <div style={{ opacity: brushErase ? 0.4 : 1, pointerEvents: brushErase ? 'none' : 'auto' }}>
+        <div style={{ opacity: brushErase ? 0.4 : 1, pointerEvents: brushErase ? 'none' : 'auto', display: 'inline-flex', alignItems: 'center' }}>
           <HexColorInput
             value={brushColor}
             onChange={setBrushColor}
@@ -2862,6 +3193,20 @@ function FaceplateToolPeelBody({
           format={v => `${Math.round(v * 100)}%`}
           onChange={setBrushOpacity}
         />
+        {/* Eyedropper — one-shot colour picker from the composited canvas. */}
+        <button
+          title="Eyedropper — click the canvas to sample a colour (Faceplate composited view)"
+          aria-pressed={eyedropperActive}
+          aria-label="Eyedropper"
+          onClick={() => {
+            setEyedropperActive(!eyedropperActive)
+            // Turn off erase mode when entering eyedropper mode.
+            if (!eyedropperActive) setBrushErase(false)
+          }}
+          style={toggleBtnStyle(eyedropperActive)}
+        >
+          <Pipette size={14} />
+        </button>
         {/* Erase toggle — switches stroke to destination-out (pixel eraser). */}
         <button
           title={brushErase ? 'Erase mode ON (click to switch to paint)' : 'Switch to erase mode'}

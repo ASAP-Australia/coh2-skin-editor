@@ -9,18 +9,10 @@ DEFS_Debug := \
 	'-DV8_DEPRECATION_WARNINGS=1' \
 	'-D_GLIBCXX_USE_CXX11_ABI=1' \
 	'-D_FILE_OFFSET_BITS=64' \
-	'-DELECTRON_ENSURE_CONFIG_GYPI' \
 	'-D_LARGEFILE_SOURCE' \
-	'-DUSING_ELECTRON_CONFIG_GYPI' \
-	'-DV8_COMPRESS_POINTERS' \
-	'-DV8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES' \
-	'-DV8_31BIT_SMIS_ON_64BIT_ARCH' \
-	'-DV8_ENABLE_SANDBOX' \
-	'-DV8_EXTERNAL_CODE_SPACE' \
 	'-D__STDC_FORMAT_MACROS' \
 	'-DOPENSSL_NO_PINSHARED' \
 	'-DOPENSSL_THREADS' \
-	'-DOPENSSL_NO_ASM' \
 	'-DNAPI_VERSION=8' \
 	'-DNODE_ADDON_API_DISABLE_DEPRECATED' \
 	'-DBUILDING_NODE_EXTENSION' \
@@ -51,16 +43,15 @@ CFLAGS_CC_Debug := \
 	-fvisibility=hidden
 
 INCS_Debug := \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/include/node \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/src \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/deps/openssl/config \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/deps/openssl/openssl/include \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/deps/uv/include \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/deps/zlib \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/deps/v8/include \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/include/node \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/src \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/deps/openssl/config \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/deps/openssl/openssl/include \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/deps/uv/include \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/deps/zlib \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/deps/v8/include \
 	-I/var/home/jflessenkemper/dev/coh2-skin-editor/node_modules/node-addon-api \
-	-I/var/home/jflessenkemper/.nvm/versions/node/v24.14.0/include/node \
-	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/include/node
+	-I/var/home/jflessenkemper/.nvm/versions/node/v24.14.0/include/node
 
 DEFS_Release := \
 	'-DNODE_GYP_MODULE_NAME=coh2_workshop' \
@@ -69,18 +60,10 @@ DEFS_Release := \
 	'-DV8_DEPRECATION_WARNINGS=1' \
 	'-D_GLIBCXX_USE_CXX11_ABI=1' \
 	'-D_FILE_OFFSET_BITS=64' \
-	'-DELECTRON_ENSURE_CONFIG_GYPI' \
 	'-D_LARGEFILE_SOURCE' \
-	'-DUSING_ELECTRON_CONFIG_GYPI' \
-	'-DV8_COMPRESS_POINTERS' \
-	'-DV8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES' \
-	'-DV8_31BIT_SMIS_ON_64BIT_ARCH' \
-	'-DV8_ENABLE_SANDBOX' \
-	'-DV8_EXTERNAL_CODE_SPACE' \
 	'-D__STDC_FORMAT_MACROS' \
 	'-DOPENSSL_NO_PINSHARED' \
 	'-DOPENSSL_THREADS' \
-	'-DOPENSSL_NO_ASM' \
 	'-DNAPI_VERSION=8' \
 	'-DNODE_ADDON_API_DISABLE_DEPRECATED' \
 	'-DBUILDING_NODE_EXTENSION'
@@ -109,21 +92,21 @@ CFLAGS_CC_Release := \
 	-fvisibility=hidden
 
 INCS_Release := \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/include/node \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/src \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/deps/openssl/config \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/deps/openssl/openssl/include \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/deps/uv/include \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/deps/zlib \
-	-I/home/jflessenkemper/.electron-gyp/41.5.0/deps/v8/include \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/include/node \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/src \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/deps/openssl/config \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/deps/openssl/openssl/include \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/deps/uv/include \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/deps/zlib \
+	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/deps/v8/include \
 	-I/var/home/jflessenkemper/dev/coh2-skin-editor/node_modules/node-addon-api \
-	-I/var/home/jflessenkemper/.nvm/versions/node/v24.14.0/include/node \
-	-I/home/jflessenkemper/.cache/node-gyp/24.14.0/include/node
+	-I/var/home/jflessenkemper/.nvm/versions/node/v24.14.0/include/node
 
 OBJS := \
 	$(obj).target/$(TARGET)/src/workshop_addon.o \
 	$(obj).target/$(TARGET)/src/workshop_publish.o \
 	$(obj).target/$(TARGET)/src/workshop_update.o \
+	$(obj).target/$(TARGET)/src/workshop_delete.o \
 	$(obj).target/$(TARGET)/src/callback_bridge.o \
 	$(obj).target/$(TARGET)/src/steam_loop.o
 
@@ -154,17 +137,17 @@ $(obj).$(TOOLSET)/$(TARGET)/%.o: $(obj)/%.cpp FORCE_DO_CMD
 LDFLAGS_Debug := \
 	-pthread \
 	-rdynamic \
-	-Wl,-rpath,$ORIGIN/../../../node_modules/steamworks.js/dist/linux64 \
-	-Wl,-rpath,$ORIGIN/../../../../node_modules/steamworks.js/dist/linux64 \
-	-Wl,-rpath,$ORIGIN/../../../../../node_modules/steamworks.js/dist/linux64 \
+	-Wl,-rpath,\$$ORIGIN/../../../node_modules/steamworks.js/dist/linux64 \
+	-Wl,-rpath,\$$ORIGIN/../../../../node_modules/steamworks.js/dist/linux64 \
+	-Wl,-rpath,\$$ORIGIN/../../../../../node_modules/steamworks.js/dist/linux64 \
 	-m64
 
 LDFLAGS_Release := \
 	-pthread \
 	-rdynamic \
-	-Wl,-rpath,$ORIGIN/../../../node_modules/steamworks.js/dist/linux64 \
-	-Wl,-rpath,$ORIGIN/../../../../node_modules/steamworks.js/dist/linux64 \
-	-Wl,-rpath,$ORIGIN/../../../../../node_modules/steamworks.js/dist/linux64 \
+	-Wl,-rpath,\$$ORIGIN/../../../node_modules/steamworks.js/dist/linux64 \
+	-Wl,-rpath,\$$ORIGIN/../../../../node_modules/steamworks.js/dist/linux64 \
+	-Wl,-rpath,\$$ORIGIN/../../../../../node_modules/steamworks.js/dist/linux64 \
 	-m64
 
 LIBS := \

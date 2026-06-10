@@ -260,7 +260,7 @@ function tryParseTrimBody(
   numInput: number,
   payloadRemaining: number,
 ): { inputLayout: InputElt[]; numVerts: number; stride: number; vbuf: Uint8Array; indices: Uint16Array } | null {
-  if (numInput === 0 || numInput > 32) { console.log('[tryParse] fail: numInput', numInput); return null }
+  if (numInput === 0 || numInput > 32) return null
   const inputLayout: InputElt[] = []
   try {
     for (let i = 0; i < numInput; i++) {
@@ -269,18 +269,16 @@ function tryParseTrimBody(
       const format = r.u32()
       inputLayout.push({ semantic, format, size: formatSize(format) })
     }
-  } catch(e) {
-    console.log('[tryParse] fail: inputElt exception', e)
+  } catch {
     return null
   }
   const computedStride = inputLayout.reduce((s, e) => s + e.size, 0)
   const numVerts = r.u32()
   const stride = r.u32()
-  console.log('[tryParse] numInput=', numInput, 'computed=', computedStride, 'numVerts=', numVerts, 'stride=', stride)
   // Stride must match the computed layout and vertex count must be plausible
-  if (stride !== computedStride || numVerts === 0 || numVerts > 1_000_000) { console.log('[tryParse] fail: stride/verts'); return null }
+  if (stride !== computedStride || numVerts === 0 || numVerts > 1_000_000) return null
   const vbufBytes = numVerts * stride
-  if (vbufBytes > payloadRemaining) { console.log('[tryParse] fail: vbuf overflow', vbufBytes, '>', payloadRemaining); return null }
+  if (vbufBytes > payloadRemaining) return null
   const vbuf = r.bytes(vbufBytes)
   // Tiger-style TRIM has a 3-u32 preamble before numIdx:
   //   u32=0 (reserved), u32=numIdx, u32=numIdx/3 (numTris)
@@ -297,7 +295,7 @@ function tryParseTrimBody(
       numIdx = peek0
     }
   }
-  if (numIdx === 0 || numIdx > 10_000_000) { console.log('[tryParse] fail: numIdx', numIdx); return null }
+  if (numIdx === 0 || numIdx > 10_000_000) return null
   const indices = new Uint16Array(numIdx)
   for (let k = 0; k < numIdx; k++) indices[k] = r.u16()
   return { inputLayout, numVerts, stride, vbuf, indices }

@@ -1,0 +1,23 @@
+{
+  "_note": "Cromwell (cromwell) UV regions in 2048×2048 pixel units. Derived from Wikinger British skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger_british",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 1610,
+      "y": 1360,
+      "w": 260,
+      "h": 260,
+      "_source": "wikinger_british",
+      "_confidence": "high (±30px)",
+      "note": "Hull right side — Wikinger British skin (4a167bb423654fd6be7a0d8c6b7f9f25) shows a prominent white Allied five-pointed star inside a circle at this atlas location. Star clearly centered within the rect. Bottom-right quadrant of atlas. Verified via annotated PNG at artifacts/badge-rects/cromwell.png.",
+      "uvCore": {
+        "minU": 0.7861,
+        "maxU": 0.9131,
+        "minV": 0.6641,
+        "maxV": 0.7910
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

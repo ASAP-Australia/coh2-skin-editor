@@ -1,0 +1,23 @@
+{
+  "_note": "Panzerwerfer (panzerwerfer) UV regions in 2048×2048 pixel units. Derived from Wikinger OKW skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 220,
+      "y": 930,
+      "w": 310,
+      "h": 310,
+      "_source": "wikinger",
+      "_confidence": "medium (±40px)",
+      "note": "Hull side — Wikinger OKW skin (German Balkenkreuz on hull). Two white '+' cross shapes are visible in the center-left area of the atlas (hull body panel). This rect covers the left cross centered at approximately (375,1085). The Panzerwerfer's main hull panel occupies the left-center of the atlas; both crosses are on this panel.",
+      "uvCore": {
+        "minU": 0.1074,
+        "maxU": 0.2588,
+        "minV": 0.4541,
+        "maxV": 0.6055
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

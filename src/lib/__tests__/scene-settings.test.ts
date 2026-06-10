@@ -155,7 +155,7 @@ describe('showcase preset', () => {
     expect(p.toneMapping).toBe('neutral')
   })
 
-  it('has a black (#000000) background', () => {
+  it('has a true-black background', () => {
     expect(p.background).toEqual({ kind: 'color', hex: 0x000000 })
   })
 

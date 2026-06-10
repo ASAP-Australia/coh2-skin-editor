@@ -1,0 +1,23 @@
+{
+  "_note": "Sherman Firefly (sherman_firefly) UV regions in 2048×2048 pixel units. Derived from Wikinger British skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 45,
+      "y": 380,
+      "w": 280,
+      "h": 260,
+      "_source": "wikinger",
+      "_confidence": "high (±30px)",
+      "note": "Hull side — Wikinger British skin shows a white Allied 5-pointed star on the upper-left panel of the atlas. Two stars are visible in the atlas; the left star (this rect, centered at ~185,510) is at the upper-left corner of the diffuse. The star body is clearly visible inside this rect in the annotated PNG. British vehicles use a white star-of-David-style Allied recognition marking.",
+      "uvCore": {
+        "minU": 0.0220,
+        "maxU": 0.1592,
+        "minV": 0.1855,
+        "maxV": 0.3125
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

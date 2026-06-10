@@ -1,0 +1,23 @@
+{
+  "_note": "SU-85 (su85) UV regions in 2048×2048 pixel units. Derived from Wikinger OKW skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 951,
+      "y": 1256,
+      "w": 340,
+      "h": 320,
+      "_source": "wikinger",
+      "_confidence": "high (±30px)",
+      "note": "Hull right side — Wikinger OKW skin (German Balkenkreuz cross painted on hull) confirmed at atlas center (1121,1416). The cross shape is clearly visible inside this rect in the annotated PNG. The OKW Wikinger skin paints a white Balkenkreuz on the SU-85 hull side. Two crosses are present in the atlas; this rect covers the left (hull-right-side) cross.",
+      "uvCore": {
+        "minU": 0.4643,
+        "maxU": 0.6309,
+        "minV": 0.6133,
+        "maxV": 0.7695
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

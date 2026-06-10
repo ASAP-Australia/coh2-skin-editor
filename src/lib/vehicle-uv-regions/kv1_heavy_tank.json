@@ -1,0 +1,23 @@
+{
+  "_note": "KV-1 Heavy Tank (kv1_heavy_tank) UV regions in 2048×2048 pixel units. Derived from Wikinger Soviet skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger_soviet",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 1200,
+      "y": 1370,
+      "w": 280,
+      "h": 280,
+      "_source": "wikinger_soviet",
+      "_confidence": "medium (±40px)",
+      "note": "Hull right side — Wikinger Soviet skin (00fb732f48ee4f66ab79d8f52cd98e14) shows white Soviet star + Cyrillic regiment text on right hull side. Pixel centroid at (1351,1535), bbox=(1312-1383, 1391-1699). The tall vertical extent suggests the star+text column; the rect is centered around the star top portion. The star itself is at ~(1347,1450) with text extending below. Pass 2 found this star at center luminance=36.4 (too dark), but the Soviet-specific Wikinger skin has a brighter rendering. Annotated PNG at artifacts/badge-rects/kv1_heavy_tank.png.",
+      "uvCore": {
+        "minU": 0.5859,
+        "maxU": 0.7227,
+        "minV": 0.6689,
+        "maxV": 0.8057
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

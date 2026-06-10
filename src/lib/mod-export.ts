@@ -306,6 +306,9 @@ export const OUTPUT_BASENAME: Record<string, string> = {
   centaur:                   'centaur_aa',
   t_34_85:                   't_34_85',        // folder = t34_85, basename = t_34_85
   valentine:                 'valentine_command',
+  // Non-standard diffuse basenames (verified from CoH2 SGAs 2026-06):
+  sherman_m4a3:              'sherman_page',
+  aec_armoured_car:          'aec_armouredcar_page',
 }
 
 /** Returns the canonical output basename for a vehicle id (write-side, single value). */

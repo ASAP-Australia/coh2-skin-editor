@@ -33,7 +33,7 @@
  * ArtHigh) by our Python implementation.
  */
 
-import { inflateRaw, inflate } from 'pako'
+import { inflateOffThread } from './inflate-pool'
 
 export interface SgaFile {
   /** Full path inside the archive, slash-separated. */
@@ -317,20 +317,52 @@ export class SgaArchive {
     return out
   }
 
-  /** Read a single file by full path. Returns null if not found. */
-  async readByPath(path: string): Promise<Uint8Array | null> {
-    const target = path.replace(/\\/g, '/').replace(/^\/+/, '')
+  /** Lazily-built path → file index. Building it once turns readByPath from
+   *  O(files × folders) per call into an O(1) Map lookup — critical because the
+   *  editor warmup issues hundreds of readByPath calls across 61 vehicles, and
+   *  the old per-read folder scan blocked the main thread for ~9.5s. */
+  private pathIndex: Map<string, FileDef> | null = null
+  /** Memoized leaf-folder name per file index (shared by list() and the path
+   *  index build so the O(files × folders) folder scan runs at most once). */
+  private folderNameCache: string[] | null = null
+
+  private buildPathIndex(): Map<string, FileDef> {
+    if (this.pathIndex) return this.pathIndex
+    const idx = new Map<string, FileDef>()
     for (let i = 0; i < this.files.length; i++) {
       const f = this.files[i]
       const fname = this.nameAtOffset.get(f.namePos) ?? ''
       const folderName = this.folderForFile(i)
-      const full = (folderName ? folderName + '/' : '') + fname
-      if (full.replace(/\\/g, '/') === target) return this.readFile(f)
+      const full = ((folderName ? folderName + '/' : '') + fname)
+        .replace(/\\/g, '/')
+        .replace(/^\/+/, '')
+      // First writer wins, matching the old "return first match" semantics.
+      if (!idx.has(full)) idx.set(full, f)
     }
-    return null
+    this.pathIndex = idx
+    return idx
+  }
+
+  /** Read a single file by full path. Returns null if not found. */
+  async readByPath(path: string): Promise<Uint8Array | null> {
+    const target = path.replace(/\\/g, '/').replace(/^\/+/, '')
+    const f = this.buildPathIndex().get(target)
+    return f ? this.readFile(f) : null
   }
 
   private folderForFile(fileIndex: number): string {
+    // Memoize: the underlying folder scan is O(folders) per file, so without a
+    // cache callers that walk every file (list(), buildPathIndex) become
+    // O(files × folders). Compute every file's leaf folder once, then reuse.
+    let cache = this.folderNameCache
+    if (!cache) {
+      cache = this.folderNameCache = new Array<string>(this.files.length)
+      for (let k = 0; k < this.files.length; k++) cache[k] = this.computeFolderForFile(k)
+    }
+    return cache[fileIndex] ?? ''
+  }
+
+  private computeFolderForFile(fileIndex: number): string {
     // SGA folders form a hierarchy; root/drive folders cover the whole file
     // range and child folders cover subranges. We want the SMALLEST range
     // (= most specific = leaf folder), not the first match. Picking the
@@ -356,12 +388,14 @@ export class SgaArchive {
     const raw = new Uint8Array(await this.file.slice(start, end).arrayBuffer())
     if (f.storage === 0) return raw
     if (f.storage === 1 || f.storage === 2) {
-      // Relic uses zlib (deflate with header) — pako.inflate handles either
-      try {
-        return inflate(raw)
-      } catch {
-        return inflateRaw(raw)
-      }
+      // Relic uses zlib (deflate with header) — inflate off the main thread
+      // so CSS animations (spinner, BorderBeam) stay smooth during preloading.
+      // We copy into an owned ArrayBuffer before transferring to the worker so
+      // we don't neuter the slice-result buffer (which may be shared internally
+      // by some Blob/File implementations). The copy is ~zero cost compared to
+      // the inflate itself.
+      const owned = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer
+      return inflateOffThread(owned)
     }
     throw new Error(`Unknown storage type ${f.storage}`)
   }

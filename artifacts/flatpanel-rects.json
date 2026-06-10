@@ -1,0 +1,1102 @@
+{
+  "generated": "2026-06-09T06:50:15.175Z",
+  "groundTruth": {
+    "king_tiger_sdkfz_182": {
+      "x": 896,
+      "y": 1152,
+      "w": 512,
+      "h": 512
+    }
+  },
+  "summary": {
+    "total": 61,
+    "flatPanel": 53,
+    "bboxFallback": 0,
+    "noRect": 8,
+    "loadFailed": 0,
+    "degenerateRects": 0
+  },
+  "kingTigerValidation": {
+    "path": "flat_panel",
+    "rect": {
+      "x": 102,
+      "y": 110,
+      "w": 1836,
+      "h": 1829
+    },
+    "groundTruth": {
+      "x": 896,
+      "y": 1152,
+      "w": 512,
+      "h": 512
+    },
+    "errorPct": {
+      "x": -88.61607142857143,
+      "y": -90.45138888888889,
+      "w": 258.59375,
+      "h": 257.2265625
+    },
+    "qualifyingTris": 519,
+    "hullMesh": "merged material-[king_tiger_sdkfz_182,king_tiger_sdkfz_182]"
+  },
+  "vehicles": [
+    {
+      "vehicleId": "tiger",
+      "displayName": "Tiger I",
+      "faction": "german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 658,
+        "y": 169,
+        "w": 1287,
+        "h": 1460
+      },
+      "qualifyingTris": 20,
+      "hullMeshName": "geo_Body_Goblins",
+      "hullVertCount": 1266,
+      "meshCount": 75,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "elefant",
+      "displayName": "Elefant",
+      "faction": "german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 257,
+        "y": 125,
+        "w": 1583,
+        "h": 1814
+      },
+      "qualifyingTris": 369,
+      "hullMeshName": "merged material-[elefant,Elefant_Tank]",
+      "hullVertCount": 8576,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "brummbar",
+      "displayName": "Brummbär",
+      "faction": "german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 109,
+        "y": 117,
+        "w": 1814,
+        "h": 1822
+      },
+      "qualifyingTris": 398,
+      "hullMeshName": "merged material-[brummbar,Brummbar_Body]",
+      "hullVertCount": 9222,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "stug_iii",
+      "displayName": "StuG III",
+      "faction": "german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 117,
+        "y": 117,
+        "w": 1822,
+        "h": 1822
+      },
+      "qualifyingTris": 391,
+      "hullMeshName": "merged material-[stug_iii,stug_iii]",
+      "hullVertCount": 6769,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "ostwind_flak_panzer",
+      "displayName": "Ostwind",
+      "faction": "german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 109,
+        "y": 110,
+        "w": 1814,
+        "h": 1829
+      },
+      "qualifyingTris": 447,
+      "hullMeshName": "merged material-[ostwind_flak_panzer,MAT_Ostwind_Wreck]",
+      "hullVertCount": 11012,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "panzerwerfer",
+      "displayName": "Panzerwerfer",
+      "faction": "german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 133,
+        "y": 133,
+        "w": 1807,
+        "h": 1807
+      },
+      "qualifyingTris": 331,
+      "hullMeshName": "merged material-[panzerwerfer,panzerwerfer_wrecked]",
+      "hullVertCount": 8260,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "halftrack",
+      "displayName": "Sd.Kfz. 251",
+      "faction": "german",
+      "path": "no_rect",
+      "rect": null,
+      "qualifyingTris": 0,
+      "hullMeshName": null,
+      "hullVertCount": 0,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": "no hull mesh (all filtered by NON_HULL_RE or empty)"
+    },
+    {
+      "vehicleId": "sdkfz_250",
+      "displayName": "Sd.Kfz. 250",
+      "faction": "german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 106,
+        "y": 148,
+        "w": 1626,
+        "h": 1800
+      },
+      "qualifyingTris": 307,
+      "hullMeshName": "merged material-[sdkfz_250,SHW_250_Wreck]",
+      "hullVertCount": 5694,
+      "meshCount": 6,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "sdkfz_222",
+      "displayName": "Sd.Kfz. 222",
+      "faction": "german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 98,
+        "y": 125,
+        "w": 1756,
+        "h": 1814
+      },
+      "qualifyingTris": 350,
+      "hullMeshName": "merged material-[sdkfz_222,Sdkfz_222]",
+      "hullVertCount": 7707,
+      "meshCount": 2,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "opel_blitz",
+      "displayName": "Opel Blitz",
+      "faction": "german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 110,
+        "y": 132,
+        "w": 1829,
+        "h": 1800
+      },
+      "qualifyingTris": 483,
+      "hullMeshName": "merged material-[opel_blitz,Opel_Blitz]",
+      "hullVertCount": 7400,
+      "meshCount": 2,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "king_tiger_sdkfz_182",
+      "displayName": "King Tiger",
+      "faction": "west_german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 110,
+        "w": 1836,
+        "h": 1829
+      },
+      "qualifyingTris": 519,
+      "hullMeshName": "merged material-[king_tiger_sdkfz_182,king_tiger_sdkfz_182]",
+      "hullVertCount": 10138,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "jagdtiger",
+      "displayName": "Jagdtiger",
+      "faction": "west_german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 110,
+        "w": 1836,
+        "h": 1829
+      },
+      "qualifyingTris": 547,
+      "hullMeshName": "merged material-[jagdtiger,jagdtiger]",
+      "hullVertCount": 10976,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "sturmtiger",
+      "displayName": "Sturmtiger",
+      "faction": "west_german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 125,
+        "y": 133,
+        "w": 1814,
+        "h": 1807
+      },
+      "qualifyingTris": 665,
+      "hullMeshName": "merged material-[sturmtiger,sturmtiger]",
+      "hullVertCount": 11565,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "panther_ausf_g",
+      "displayName": "Panther",
+      "faction": "west_german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 127,
+        "y": 125,
+        "w": 1706,
+        "h": 1814
+      },
+      "qualifyingTris": 242,
+      "hullMeshName": "merged material-[panther_ausf_g,Panther_body]",
+      "hullVertCount": 7601,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "jagdpanzer_iv_sdkfz_162",
+      "displayName": "Jagdpanzer IV",
+      "faction": "west_german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 110,
+        "w": 1836,
+        "h": 1836
+      },
+      "qualifyingTris": 587,
+      "hullMeshName": "merged material-[jagdpanzer_iv_sdkfz_162,jagdpanzer_iv_sdkfz_162]",
+      "hullVertCount": 13478,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "panzer_iv_sdkfz_ausf_i",
+      "displayName": "Panzer IV",
+      "faction": "west_german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 110,
+        "y": 118,
+        "w": 1829,
+        "h": 1829
+      },
+      "qualifyingTris": 674,
+      "hullMeshName": "merged material-[panzer_iv_sdkfz_ausf_i,panzer_iv_sdkfz_ausf_i]",
+      "hullVertCount": 13742,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "hetzer",
+      "displayName": "Hetzer",
+      "faction": "west_german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 110,
+        "y": 117,
+        "w": 1829,
+        "h": 1822
+      },
+      "qualifyingTris": 684,
+      "hullMeshName": "merged material-[hetzer,hetzer]",
+      "hullVertCount": 18975,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "puma_sdkfz_234",
+      "displayName": "Puma",
+      "faction": "west_german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 100,
+        "y": 118,
+        "w": 1800,
+        "h": 1829
+      },
+      "qualifyingTris": 470,
+      "hullMeshName": "merged material-[puma_sdkfz_234,puma_234_healthy]",
+      "hullVertCount": 9981,
+      "meshCount": 2,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "panzer_ii_luchs_sdkfz_123",
+      "displayName": "Luchs",
+      "faction": "west_german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 110,
+        "y": 110,
+        "w": 1829,
+        "h": 1829
+      },
+      "qualifyingTris": 724,
+      "hullMeshName": "merged material-[panzer_ii_luchs_sdkfz_123,panzer_ii_luchs_sdkfz_123]",
+      "hullVertCount": 11989,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "kubelwagen",
+      "displayName": "Kübelwagen",
+      "faction": "west_german",
+      "path": "flat_panel",
+      "rect": {
+        "x": 110,
+        "y": 118,
+        "w": 1829,
+        "h": 1829
+      },
+      "qualifyingTris": 390,
+      "hullMeshName": "merged material-[kubelwagen,kubelwagen]",
+      "hullVertCount": 7221,
+      "meshCount": 2,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "halftrack_sdkfz_251",
+      "displayName": "Sd.Kfz. 251",
+      "faction": "west_german",
+      "path": "no_rect",
+      "rect": null,
+      "qualifyingTris": 0,
+      "hullMeshName": null,
+      "hullVertCount": 0,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": "no hull mesh (all filtered by NON_HULL_RE or empty)"
+    },
+    {
+      "vehicleId": "halftrack_sdkfz_251_flak",
+      "displayName": "Sd.Kfz. 251 Flak",
+      "faction": "west_german",
+      "path": "no_rect",
+      "rect": null,
+      "qualifyingTris": 0,
+      "hullMeshName": null,
+      "hullVertCount": 0,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": "no hull mesh (all filtered by NON_HULL_RE or empty)"
+    },
+    {
+      "vehicleId": "halftrack_sdkfz_251_infrared",
+      "displayName": "Sd.Kfz. 251 IR",
+      "faction": "west_german",
+      "path": "no_rect",
+      "rect": null,
+      "qualifyingTris": 0,
+      "hullMeshName": null,
+      "hullVertCount": 0,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": "no hull mesh (all filtered by NON_HULL_RE or empty)"
+    },
+    {
+      "vehicleId": "is2m_heavy_tank",
+      "displayName": "IS-2",
+      "faction": "soviet",
+      "path": "flat_panel",
+      "rect": {
+        "x": 106,
+        "y": 117,
+        "w": 1764,
+        "h": 1822
+      },
+      "qualifyingTris": 453,
+      "hullMeshName": "merged material-[is2m_heavy_tank,is2m_heavy_tank]",
+      "hullVertCount": 9053,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "isu152",
+      "displayName": "ISU-152",
+      "faction": "soviet",
+      "path": "flat_panel",
+      "rect": {
+        "x": 114,
+        "y": 116,
+        "w": 1756,
+        "h": 1793
+      },
+      "qualifyingTris": 468,
+      "hullMeshName": "merged material-[isu152,ISU152_Healthy]",
+      "hullVertCount": 8341,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "kv1_heavy_tank",
+      "displayName": "KV-1",
+      "faction": "soviet",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 110,
+        "w": 1836,
+        "h": 1829
+      },
+      "qualifyingTris": 511,
+      "hullMeshName": "merged material-[kv1_heavy_tank,Material_KV1_Healthy]",
+      "hullVertCount": 8831,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "kv2_heavy_tank",
+      "displayName": "KV-2",
+      "faction": "soviet",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 109,
+        "w": 1836,
+        "h": 1822
+      },
+      "qualifyingTris": 588,
+      "hullMeshName": "merged material-[kv2_heavy_tank,Material_KV2_Healthy]",
+      "hullVertCount": 9664,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "t34_76",
+      "displayName": "T-34/76",
+      "faction": "soviet",
+      "path": "flat_panel",
+      "rect": {
+        "x": 125,
+        "y": 140,
+        "w": 1814,
+        "h": 1800
+      },
+      "qualifyingTris": 554,
+      "hullMeshName": "merged material-[t34_76,T34_76_Healthy]",
+      "hullVertCount": 7309,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "t_34_85",
+      "displayName": "T-34/85",
+      "faction": "soviet",
+      "path": "flat_panel",
+      "rect": {
+        "x": 125,
+        "y": 163,
+        "w": 1814,
+        "h": 1778
+      },
+      "qualifyingTris": 589,
+      "hullMeshName": "merged material-[t34_85,Soviet_T34-85_Heavy_Tank]",
+      "hullVertCount": 7927,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "t70m_light_tank",
+      "displayName": "T-70",
+      "faction": "soviet",
+      "path": "flat_panel",
+      "rect": {
+        "x": 107,
+        "y": 118,
+        "w": 1785,
+        "h": 1829
+      },
+      "qualifyingTris": 290,
+      "hullMeshName": "merged material-[t70m_light_tank,Soviet_T70_M_Light_Tank]",
+      "hullVertCount": 7063,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "su85",
+      "displayName": "SU-85",
+      "faction": "soviet",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 147,
+        "w": 1836,
+        "h": 1785
+      },
+      "qualifyingTris": 530,
+      "hullMeshName": "merged material-[su85,Soviet_SU_85]",
+      "hullVertCount": 7826,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "su-76m",
+      "displayName": "SU-76M",
+      "faction": "soviet",
+      "path": "flat_panel",
+      "rect": {
+        "x": 154,
+        "y": 125,
+        "w": 1764,
+        "h": 1814
+      },
+      "qualifyingTris": 354,
+      "hullMeshName": "merged material-[su-76m,su_76m]",
+      "hullVertCount": 7898,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m3a1_scout_car",
+      "displayName": "M3A1 Scout",
+      "faction": "soviet",
+      "path": "flat_panel",
+      "rect": {
+        "x": 109,
+        "y": 117,
+        "w": 1822,
+        "h": 1822
+      },
+      "qualifyingTris": 523,
+      "hullMeshName": "merged material-[m3a1_scout_car,mat_M3A1_ScoutCar]",
+      "hullVertCount": 7294,
+      "meshCount": 2,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "halftrack",
+      "displayName": "Lend-Lease Truck",
+      "faction": "soviet",
+      "path": "no_rect",
+      "rect": null,
+      "qualifyingTris": 0,
+      "hullMeshName": null,
+      "hullVertCount": 0,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": "no hull mesh (all filtered by NON_HULL_RE or empty)"
+    },
+    {
+      "vehicleId": "us6_truck",
+      "displayName": "US6 Studebaker",
+      "faction": "soviet",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 116,
+        "w": 1829,
+        "h": 1807
+      },
+      "qualifyingTris": 651,
+      "hullMeshName": "merged material-[us6_truck,us6_truck]",
+      "hullVertCount": 9755,
+      "meshCount": 3,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m26_pershing",
+      "displayName": "Pershing",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 108,
+        "y": 110,
+        "w": 1807,
+        "h": 1836
+      },
+      "qualifyingTris": 1028,
+      "hullMeshName": "merged material-[m26_pershing,m26_pershing]",
+      "hullVertCount": 15399,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m4a3e8_sherman_easy_8",
+      "displayName": "Easy 8",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 92,
+        "y": 118,
+        "w": 1648,
+        "h": 1829
+      },
+      "qualifyingTris": 326,
+      "hullMeshName": "GEO_chassis_shaker",
+      "hullVertCount": 7862,
+      "meshCount": 65,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m4a3_sherman_76mm",
+      "displayName": "Sherman 76mm",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 110,
+        "w": 1836,
+        "h": 1836
+      },
+      "qualifyingTris": 611,
+      "hullMeshName": "merged material-[m4a3_sherman_76mm,m4a3_sherman_76mm]",
+      "hullVertCount": 13036,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m4a1_sherman_calliope",
+      "displayName": "Calliope",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 110,
+        "w": 1836,
+        "h": 1836
+      },
+      "qualifyingTris": 795,
+      "hullMeshName": "merged material-[m4a1_sherman_calliope,sherman_page]",
+      "hullVertCount": 17412,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m10_tank_destroyer",
+      "displayName": "M10 Wolverine",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 117,
+        "y": 194,
+        "w": 1822,
+        "h": 1756
+      },
+      "qualifyingTris": 779,
+      "hullMeshName": "merged material-[m10_tank_destroyer,m10_tank_destroyer]",
+      "hullVertCount": 14242,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m36_tank_destroyer",
+      "displayName": "M36 Jackson",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 117,
+        "y": 156,
+        "w": 1822,
+        "h": 1793
+      },
+      "qualifyingTris": 701,
+      "hullMeshName": "merged material-[m36_tank_destroyer,m36_tank_destroyer]",
+      "hullVertCount": 15342,
+      "meshCount": 6,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m5a1_stuart",
+      "displayName": "M5 Stuart",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 119,
+        "y": 238,
+        "w": 1713,
+        "h": 1684
+      },
+      "qualifyingTris": 131,
+      "hullMeshName": "GEO_chassis_shaker",
+      "hullVertCount": 3440,
+      "meshCount": 59,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m8_greyhound",
+      "displayName": "Greyhound",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 110,
+        "y": 110,
+        "w": 1829,
+        "h": 1836
+      },
+      "qualifyingTris": 563,
+      "hullMeshName": "merged material-[m8_greyhound,m8_greyhound]",
+      "hullVertCount": 11211,
+      "meshCount": 2,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m7b1_priest",
+      "displayName": "Priest",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 118,
+        "w": 1836,
+        "h": 1829
+      },
+      "qualifyingTris": 831,
+      "hullMeshName": "merged material-[m7b1_priest,m7b1_priest]",
+      "hullVertCount": 15970,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m3_halftrack",
+      "displayName": "M3 Halftrack",
+      "faction": "aef",
+      "path": "no_rect",
+      "rect": null,
+      "qualifyingTris": 0,
+      "hullMeshName": null,
+      "hullVertCount": 0,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": "no hull mesh (all filtered by NON_HULL_RE or empty)"
+    },
+    {
+      "vehicleId": "m15a1_aa_halftrack",
+      "displayName": "AA Halftrack",
+      "faction": "aef",
+      "path": "no_rect",
+      "rect": null,
+      "qualifyingTris": 0,
+      "hullMeshName": null,
+      "hullVertCount": 0,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": "no hull mesh (all filtered by NON_HULL_RE or empty)"
+    },
+    {
+      "vehicleId": "m8a1_hmc",
+      "displayName": "M8 Scott",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 119,
+        "y": 236,
+        "w": 1713,
+        "h": 1648
+      },
+      "qualifyingTris": 325,
+      "hullMeshName": "merged material-[m8a1_hmc,m8a1_hmc]",
+      "hullVertCount": 10393,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m20_utility_car",
+      "displayName": "M20",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 107,
+        "y": 110,
+        "w": 1785,
+        "h": 1836
+      },
+      "qualifyingTris": 551,
+      "hullMeshName": "merged material-[m20_utility_car,m20_greyhound]",
+      "hullVertCount": 10006,
+      "meshCount": 2,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "m21_mortar_halftrack",
+      "displayName": "M21 Mortar HT",
+      "faction": "aef",
+      "path": "no_rect",
+      "rect": null,
+      "qualifyingTris": 0,
+      "hullMeshName": null,
+      "hullVertCount": 0,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": "no hull mesh (all filtered by NON_HULL_RE or empty)"
+    },
+    {
+      "vehicleId": "dodge_wc51",
+      "displayName": "Dodge WC51",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 108,
+        "y": 106,
+        "w": 1834,
+        "h": 1797
+      },
+      "qualifyingTris": 409,
+      "hullMeshName": "merged material-[dodge_wc51,dodge_wc51]",
+      "hullVertCount": 9367,
+      "meshCount": 2,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "dodge_wc54_ambulance",
+      "displayName": "WC54 Ambulance",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 101,
+        "y": 118,
+        "w": 1822,
+        "h": 1829
+      },
+      "qualifyingTris": 369,
+      "hullMeshName": "merged material-[dodge_wc54_ambulance,wc54_ambulance]",
+      "hullVertCount": 7825,
+      "meshCount": 2,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "sherman_m4a3",
+      "displayName": "M4A3 Sherman",
+      "faction": "aef",
+      "path": "flat_panel",
+      "rect": {
+        "x": 92,
+        "y": 308,
+        "w": 1648,
+        "h": 1648
+      },
+      "qualifyingTris": 330,
+      "hullMeshName": "WRK_Body",
+      "hullVertCount": 8799,
+      "meshCount": 88,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "churchill",
+      "displayName": "Churchill",
+      "faction": "british",
+      "path": "flat_panel",
+      "rect": {
+        "x": 86,
+        "y": 364,
+        "w": 1554,
+        "h": 1496
+      },
+      "qualifyingTris": 353,
+      "hullMeshName": "GEO_chassis_shaker",
+      "hullVertCount": 4544,
+      "meshCount": 101,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "comet",
+      "displayName": "Comet",
+      "faction": "british",
+      "path": "flat_panel",
+      "rect": {
+        "x": 110,
+        "y": 109,
+        "w": 1829,
+        "h": 1814
+      },
+      "qualifyingTris": 1071,
+      "hullMeshName": "merged material-[comet,comet]",
+      "hullVertCount": 19869,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "cromwell",
+      "displayName": "Cromwell",
+      "faction": "british",
+      "path": "flat_panel",
+      "rect": {
+        "x": 110,
+        "y": 116,
+        "w": 1829,
+        "h": 1807
+      },
+      "qualifyingTris": 863,
+      "hullMeshName": "merged material-[cromwell,cromwell]",
+      "hullVertCount": 14017,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "centaur",
+      "displayName": "Centaur AA",
+      "faction": "british",
+      "path": "flat_panel",
+      "rect": {
+        "x": 110,
+        "y": 109,
+        "w": 1829,
+        "h": 1814
+      },
+      "qualifyingTris": 783,
+      "hullMeshName": "merged material-[centaur_aa,centaur_aa]",
+      "hullVertCount": 13198,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "sherman_firefly",
+      "displayName": "Firefly",
+      "faction": "british",
+      "path": "flat_panel",
+      "rect": {
+        "x": 101,
+        "y": 141,
+        "w": 1822,
+        "h": 1807
+      },
+      "qualifyingTris": 1233,
+      "hullMeshName": "merged material-[sherman_firefly,sherman_page]",
+      "hullVertCount": 21112,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "valentine",
+      "displayName": "Valentine",
+      "faction": "british",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 110,
+        "w": 1836,
+        "h": 1836
+      },
+      "qualifyingTris": 983,
+      "hullMeshName": "merged material-[valentine_command,valentine_command]",
+      "hullVertCount": 21794,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "sexton",
+      "displayName": "Sexton SPG",
+      "faction": "british",
+      "path": "flat_panel",
+      "rect": {
+        "x": 124,
+        "y": 109,
+        "w": 1807,
+        "h": 1670
+      },
+      "qualifyingTris": 1068,
+      "hullMeshName": "merged material-[sexton,sexton]",
+      "hullVertCount": 18444,
+      "meshCount": 5,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "aec_armoured_car",
+      "displayName": "AEC Armoured Car",
+      "faction": "british",
+      "path": "flat_panel",
+      "rect": {
+        "x": 117,
+        "y": 110,
+        "w": 1822,
+        "h": 1836
+      },
+      "qualifyingTris": 847,
+      "hullMeshName": "merged material-[aec_armoured_car,aec_amouredcar_page]",
+      "hullVertCount": 10460,
+      "meshCount": 2,
+      "degenerate": false,
+      "failReason": null
+    },
+    {
+      "vehicleId": "bren_carrier",
+      "displayName": "Universal Carrier",
+      "faction": "british",
+      "path": "flat_panel",
+      "rect": {
+        "x": 102,
+        "y": 110,
+        "w": 1836,
+        "h": 1836
+      },
+      "qualifyingTris": 1202,
+      "hullMeshName": "merged material-[bren_carrier,bren_healthy_mat]",
+      "hullVertCount": 19739,
+      "meshCount": 4,
+      "degenerate": false,
+      "failReason": null
+    }
+  ]
+}

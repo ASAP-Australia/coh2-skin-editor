@@ -456,6 +456,23 @@ export interface Coh2FaceplateProject {
    *  PublishToWorkshopDialog. Absent / undefined = not yet published.
    *  ≤5×10⁹ = real Workshop ID; ≥1×10¹⁵ = fake locally-generated ID. */
   workshopId?: string
+  /** Stable 32-hex-char mod-identity GUID. Generated ONCE when the project is
+   *  created and reused on every export/publish so the built SGA keeps the
+   *  SAME internal mod identity (attrib pbgid, `.gfx` + `.dds` asset paths)
+   *  across rebuilds.
+   *
+   *  WHY THIS MATTERS: CoH2 registers a faceplate in its in-game customisation
+   *  pool by the attribute pbgid, which `faceplate-mod-build` derives
+   *  deterministically from this GUID. A previous bug generated a FRESH random
+   *  GUID on every build, so each republish produced a different pbgid — the
+   *  engine treated it as a brand-new attribute, orphaning the prior
+   *  registration, and the faceplate silently failed to appear in-game.
+   *  Pinning the GUID to the project makes every rebuild a true in-place
+   *  update of one stable faceplate.
+   *
+   *  Optional only for backwards-compat with pre-GUID projects —
+   *  `migrateFaceplateProject` backfills one on load. */
+  guid?: string
   /** Schema version.
    *  - v1: original 600×170 canvas.
    *  - v2: canvas resized to 624×204; layer x/y migrated by (1.04, 1.20).
@@ -516,6 +533,8 @@ export interface Coh2FaceplateProject {
    *   treated as `true` (no beam for pre-existing faceplates).
    */
   titleAcknowledged?: boolean
+  /** Persisted editor zoom level (0.5–8). Absent = default 1.75. */
+  editorZoom?: number
   /** ISO timestamp of the last save — drives the recent-projects ordering. */
   modifiedAt: string
 }
@@ -525,11 +544,28 @@ const PROJECT_KEY_PREFIX = 'coh2.faceplate.'
 const RECENT_KEY = 'coh2.recentFaceplates'
 const RECENT_MAX = 12
 
+/** Generate a stable 32-hex-char mod-identity GUID for a faceplate project.
+ *  Mirrors `generateGuid()` in faceplate-mod-build.ts but is kept inline here
+ *  so the lightweight project model never has to pull in the heavy build
+ *  module (bc-encode, sga-writer, pako) just to mint an id at creation time. */
+export function freshFaceplateGuid(): string {
+  const bytes = new Uint8Array(16)
+  const g = globalThis as { crypto?: Crypto }
+  if (g.crypto?.getRandomValues) g.crypto.getRandomValues(bytes)
+  else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256)
+  let out = ''
+  for (let i = 0; i < 16; i++) out += bytes[i].toString(16).padStart(2, '0')
+  return out
+}
+
 export function newFaceplateProject(packName = 'My Faceplate'): Coh2FaceplateProject {
   return {
     magic: 'coh2-faceplate-project',
     version: 7,
     id: 'fp_' + Math.random().toString(36).slice(2, 12),
+    // Stable mod identity — minted once, reused on every build so the
+    // in-game attribute pbgid never churns (see the `guid` field docs).
+    guid: freshFaceplateGuid(),
     packName,
     packDescription: 'A custom CoH2 player faceplate made with the community modding tool.',
     author: 'Anonymous',
@@ -802,6 +838,18 @@ function migrateFaceplateProject(raw: unknown): Coh2FaceplateProject {
   // fall back to banner downsample. No structural migration needed.
   ;(p as { version: number }).version = 7
 
+  // Backfill a stable mod-identity GUID for any project saved before the
+  // `guid` field existed (or with a malformed value). From this load onward
+  // the project keeps ONE identity, so every rebuild is a true in-place
+  // update and the in-game attribute pbgid stops churning. Pre-existing
+  // projects that were previously published with the old random-GUID-per-build
+  // behaviour are re-pinned here; the user's next publish lands as a clean,
+  // stable faceplate.
+  const guidHolder = p as { guid?: unknown }
+  if (typeof guidHolder.guid !== 'string' || !/^[0-9a-f]{32}$/.test(guidHolder.guid)) {
+    guidHolder.guid = freshFaceplateGuid()
+  }
+
   return p as unknown as Coh2FaceplateProject
 }
 
@@ -908,6 +956,23 @@ export function listAllFaceplates(): RecentFaceplateEntry[] {
   }
   entries.sort((a, b) => b.lastEditedAt - a.lastEditedAt)
   return entries
+}
+
+/** Clear the workshopId from a faceplate project in localStorage without
+ *  otherwise mutating the project or affecting the recent registry. Used
+ *  by the "Delete from Workshop" affordance after a successful Workshop
+ *  deletion — the project stays local but is treated as unpublished. */
+export function clearFaceplateWorkshopId(id: string): void {
+  try {
+    const raw = localStorage.getItem(PROJECT_KEY_PREFIX + id)
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (parsed?.magic !== 'coh2-faceplate-project') return
+    delete parsed.workshopId
+    localStorage.setItem(PROJECT_KEY_PREFIX + id, JSON.stringify(parsed))
+  } catch {
+    /* swallow — non-critical */
+  }
 }
 
 /** Remove a faceplate project from the recent-faceplates registry AND

@@ -1,0 +1,21 @@
+import { WebSocket } from 'ws'
+import { writeFileSync } from 'fs'
+const BASE='http://localhost:9223'
+const t=await fetch(`${BASE}/json`).then(r=>r.json())
+const page=t.find(x=>x.type==='page'&&x.webSocketDebuggerUrl)
+const ws=new WebSocket(page.webSocketDebuggerUrl)
+let id=1;const pend=new Map()
+const send=(m,p={})=>new Promise((res,rej)=>{const i=id++;pend.set(i,{res,rej});ws.send(JSON.stringify({id:i,method:m,params:p}))})
+ws.on('message',r=>{const m=JSON.parse(r.toString());if(m.id&&pend.has(m.id)){const{res,rej}=pend.get(m.id);pend.delete(m.id);m.error?rej(new Error(m.error.message)):res(m.result)}})
+await new Promise(r=>ws.on('open',r))
+await send('Runtime.enable')
+const ev=e=>send('Runtime.evaluate',{expression:e,returnByValue:true,awaitPromise:true}).then(r=>r?.result?.value)
+const sleep=ms=>new Promise(r=>setTimeout(r,ms))
+const pick=l=>ev(`(()=>{const w=${JSON.stringify(l)}.toLowerCase();const els=[...document.querySelectorAll('button,[title],[aria-label]')];const el=els.find(e=>((e.getAttribute('title')||'').toLowerCase()===w))||els.find(e=>((e.textContent||'').trim().toLowerCase().includes(w)));if(el){(el.closest('button')||el).click();return true}return false})()`)
+// switch to StuG then back to Tiger (now pinned -> warmed cache hit)
+await pick('StuG III');await sleep(2500)
+await pick('Tiger I');await sleep(2500)
+const r=await send('Page.captureScreenshot',{format:'png'})
+writeFileSync('/tmp/coh2-b2/warmed-tiger.png',Buffer.from(r.data,'base64'))
+console.log('saved warmed-tiger.png')
+ws.close();process.exit(0)

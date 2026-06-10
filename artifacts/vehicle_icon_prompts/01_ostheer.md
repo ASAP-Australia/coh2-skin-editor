@@ -1,0 +1,42 @@
+Create a single flat 2D line-art icon sheet of 10 World War II German Wehrmacht (OstHeer) military vehicles, all in ONE identical minimalist UI-icon style.
+
+STYLE (identical on every icon):
+- Pure outline line art like Lucide / Feather UI icons. Uniform thin stroke (about 1.5px at 24px scale), exactly the same weight on every icon. Rounded stroke caps and rounded joins.
+- NO fill, NO shading, NO gradients, NO color. Pure white (#FFFFFF) strokes only.
+- Background: solid PURE BLACK (#000000), perfectly flat and uniform across the entire image — no vignette, no gradient, no noise. (The black is keyed out afterward by luminance, so it must stay even and the strokes must be pure white.)
+- Clean LEFT-FACING side profile of each vehicle (gun/front pointing LEFT), simplified to an icon but HISTORICALLY ACCURATE in proportion and distinguishing features. Must stay readable at small size.
+- Every icon the SAME visual size: scale each vehicle to fill the same cell, centered, with equal padding and equal gutters between cells.
+
+ACCURACY RULES (these make each icon correct and mutually distinguishable):
+- HULL FRONT: draw a flat vertical front vs a sloped glacis exactly as specified per vehicle.
+- RUNNING GEAR: this is the #1 identifier — draw the EXACT wheel arrangement stated for each vehicle (interleaved overlapping wheels vs separated bogies with gaps vs wheels-front-track-rear halftrack vs plain road wheels). Do not default every tracked vehicle to the same suspension.
+- TURRET/SUPERSTRUCTURE + GUN: the shape (boxy / rounded / octagonal / none) and gun (long thin AT gun vs short fat howitzer stub vs thin AA autocannon) are the primary identifiers — match the stated barrel-length-to-hull ratio.
+- SIGNATURE FEATURE: include the one or two named standout features that set each vehicle apart from its neighbours.
+
+LAYOUT: one image, a uniform grid of 5 columns x 2 rows, equal cells and gutters, filled left-to-right top-to-bottom in the listed order.
+
+ABSOLUTE RULES: NO text, letters, numbers, labels, or captions anywhere. NO national insignia, flags, crosses, or stars. NO drop shadow, NO 3D, NO perspective, NO background scenery beyond the flat black fill. Identical thin white stroke weight on every icon. NO external stowage boxes, bins, baskets, racks, jerry cans, crates, tools or spare track links on the turret or hull — keep every vehicle a clean plain silhouette.
+
+THE 10 VEHICLES (left-facing line-art side profiles):
+
+1. Tiger I — Large, heavy tank. Long slab-sided hull with a near-VERTICAL flat front plate (about 80 degrees), length-to-height roughly 3.5:1. Boxy rectangular fully-enclosed turret centered on the hull with a near-flat roof. RUNNING GEAR: a dense cluster of LARGE INTERLEAVED/OVERLAPPING road wheels completely filling the lower hull with NO gaps — the wheels are so big they nearly reach hull-top; this overlapping mass is the signature. GUN: long thin 88mm barrel projecting roughly 0.9x the hull length forward of the turret face, only a small muzzle tip (no big muzzle brake). Signature: overlapping wheel mass + very long thin centered gun. (2nd-largest vehicle here.)
+
+2. Elefant — The LARGEST vehicle here. Long heavy hull with a flat sloped EMPTY nose at the front that carries NO gun. The tall boxy fighting casemate is mounted at the REAR (over the back ~40% of the hull), flush with the hull rear, no rotating turret. RUNNING GEAR: SIX large road wheels per side in clearly SEPARATED PAIRED BOGIES with visible GAPS between them — NOT the interleaved overlapping wheels of the Tiger (draw distinct gaps). GUN: an extremely long thin 88mm barrel projecting from the FRONT FACE of the rear casemate and reaching ~1.2x the hull length forward — the LONGEST barrel of any vehicle in this set. Signature: empty sloped front nose + rear casemate + the longest gun on the sheet + separated bogie wheels with gaps.
+
+3. Brummbär — Medium assault gun on a Panzer IV chassis. The hull is topped by a large, TALL, nearly SQUARE boxy casemate that covers the whole hull top; its front plate is flat with a small ROUNDED MANTLET BUMP where the gun exits. RUNNING GEAR: eight SMALL evenly-spaced road wheels per side (Panzer IV type), with small gaps and return rollers along the top — NOT overlapping. GUN: a 150mm howitzer that is extremely SHORT and FAT, projecting only about 0.15–0.2x the hull length past the casemate face — a stubby fat stub, the shortest barrel here. No turret. Signature: tall near-square casemate + tiny fat stub barrel + small rounded mantlet bump.
+
+4. StuG III — Assault gun, the LOWEST silhouette in the set: the whole vehicle is a long flat wedge (length-to-height about 4:1), sitting close to the ground with NO turret. Low boxy superstructure flush with the hull top, sloped glacis front, gun mounted toward the right-front of the superstructure. RUNNING GEAR: SIX small evenly-spaced road wheels per side with clear gaps (Panzer III type), NOT overlapping. GUN: medium 75mm barrel about 0.7x hull length, thin, with a PROMINENT double-baffle MUZZLE BRAKE at the tip. Signature: extremely low flat turretless wedge + prominent muzzle brake.
+
+5. Ostwind — Anti-aircraft tank on a Panzer IV hull. Standard Panzer IV hull with eight small paired road wheels (gaps, not overlapping). On top sits a tall OPEN-TOP turret that is OCTAGONAL (eight flat faceted sides) — in side profile it reads as an angular multi-faceted box taller than it is wide, with no roof. GUN: a single thin 37mm autocannon barrel angled steeply UPWARD (near-vertical, ~80+ degrees, anti-aircraft elevation). Signature: tall faceted octagonal open-top turret with a thin gun pointing almost straight up.
+
+6. Panzerwerfer — Rocket-launcher HALFTRACK (Opel Maultier, Sd.Kfz. 4/1). FRONT: two ordinary truck wheels under an enclosed boxy armored driver cab. REAR: a short tracked unit (about 4–5 small road wheels under the track). On the flatbed BEHIND the cab sits a rectangular rocket-launcher block of 10 tubes arranged as TWO ROWS OF FIVE — the tube ends read as a grid of stacked circles, the block rising to about cab-roof height. Signature: wheels-at-front / short-track-at-rear hybrid + boxed 2x5 rocket-tube array behind the cab. (No conventional gun.)
+
+7. Sd.Kfz. 251 — The LARGE German halftrack. FRONT: two steering wheels under an angled armored nose. REAR: a long tracked unit showing FOUR interleaved road wheels under the track skirt. Body is a long open-topped armored troop compartment with a distinctly ANGLED/SLOPED front glacis plate and slightly outward-sloping sides; length-to-height about 3:1. A thin pintle MG may sit at the front lip. Signature: longer/taller open troop bay + 4 road wheels under the skirt + sharply angled front plate. (Bigger than the 250.)
+
+8. Sd.Kfz. 250 — The SMALL German halftrack. Same wheels-front / track-rear layout and same sloped-nose open-top body shape as the 251, but distinctly SHORTER and LOWER (length-to-height about 2.5:1). KEY DIFFERENCE: the rear track shows only THREE interleaved road wheels under the skirt (one fewer than the 251), and the whole vehicle is visibly more compact. Signature: clearly shorter/smaller than #7 with a 3-wheel (not 4-wheel) track run.
+
+9. Sd.Kfz. 222 — Small four-WHEELED armored car (NO tracks at all — the only wheeled armored vehicle here). Low boxy hull on FOUR large fully-visible road wheels (two axles), with a sloped engine hood at the front. On top sits a small OPEN-TOP FACETED turret (many-sided polygonal shape) carrying a short thin 20mm autocannon; a flat WIRE-MESH anti-grenade screen sits over the open turret top, visible in profile as a thin flat lid line above the turret. Signature: four exposed wheels (no tracks) + faceted open-top turret + thin flat mesh screen over the turret.
+
+10. Opel Blitz — Conventional 2-axle cargo TRUCK (no tracks, no armor). FRONT: a bonneted engine hood, then a short upright cab with a flat near-vertical windshield; the cab roof is the tallest point. REAR: a long flat cargo bed with low slatted stake sides. WHEELS: large exposed truck tyres — two single front wheels and doubled rear wheels (reads as a slightly thicker rear wheel). The cab is roughly one-third of the total length. Signature: plain truck silhouette — bonnet + cab + long flat stake-side cargo bed — completely unarmed and unarmored.
+
+Final reminder: identical thin white line-art stroke on every icon, flat pure-black background, NO text anywhere, each vehicle's wheel arrangement drawn exactly as specified.

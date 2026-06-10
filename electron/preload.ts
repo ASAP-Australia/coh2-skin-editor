@@ -177,6 +177,11 @@ interface MyWorkshopItem {
   url: string
 }
 
+interface DeleteWorkshopResult {
+  ok: true
+  workshopId: string
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -312,6 +317,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ): Promise<UpdateWorkshopResult> =>
         ipcRenderer.invoke('steam:workshop:update', workshopId, input),
       getMine: (): Promise<MyWorkshopItem[]> => ipcRenderer.invoke('steam:workshop:get-mine'),
+      delete: (workshopId: string): Promise<DeleteWorkshopResult> =>
+        ipcRenderer.invoke('steam:workshop:delete', workshopId),
     },
   },
 })

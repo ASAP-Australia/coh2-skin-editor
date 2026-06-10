@@ -55,6 +55,17 @@ export interface PublishResult {
 export function publishNewItem(input: PublishInput): Promise<PublishResult>
 
 /**
+ * Deletes an existing Workshop item via the legacy ISteamRemoteStorage API.
+ *
+ * Uses ISteamRemoteStorage::DeletePublishedFile.
+ * The item must have been originally published by the current user.
+ *
+ * Resolves with { publishedFileId } on success.
+ * Rejects with an Error on Steam failure (not owner, item not found, etc.).
+ */
+export function deletePublishedItem(publishedFileId: bigint): Promise<{ publishedFileId: bigint }>
+
+/**
  * Updates an EXISTING Workshop item via the legacy ISteamRemoteStorage API.
  *
  * IMPORTANT: Only items previously published via publishNewItem can be updated.

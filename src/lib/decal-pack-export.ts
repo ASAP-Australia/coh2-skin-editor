@@ -45,13 +45,33 @@ export interface DecalPackExportResult {
  * Bake every visible decal in the project into a PNG and assemble them into a
  * single ZIP archive. Throws if no visible decals exist (the caller should
  * gate the export button on this condition).
+ *
+ * v6: exports shared layers for each part, PLUS per-faction override layers
+ * when they exist (allowing per-faction decal customisation to ship in the
+ * ZIP). Each faction cell is exported as a separate folder-like path:
+ * `part<N>_<faction>/<index>_<slug>.png`.
+ * v5 fallback: use decals[] directly (unchanged behaviour).
  */
 export async function exportDecalPackZip(p: Coh2DecalPackProject): Promise<DecalPackExportResult> {
-  // v6: flatten all shared layers from all parts.
+  // v6: collect visible layers from ALL (part,faction) cells.
   // v5 fallback: use decals[] directly (unchanged behaviour).
-  const visible: import('@/lib/decal-pack-project').Decal[] = p.parts
-    ? p.parts.flatMap(part => part.shared.filter(d => d.visible))
-    : p.decals.filter(d => d.visible)
+  const visible: Decal[] = (() => {
+    if (!p.parts) return p.decals.filter(d => d.visible)
+    const results: Decal[] = []
+    for (const part of p.parts) {
+      // shared layers
+      results.push(...part.shared.filter(d => d.visible))
+      // per-faction override layers
+      if (part.overrides) {
+        const overrides = part.overrides as Record<string, Decal[]>
+        for (const faction of Object.keys(overrides)) {
+          const overrideLayers: Decal[] = overrides[faction] ?? []
+          results.push(...overrideLayers.filter((d: Decal) => d.visible))
+        }
+      }
+    }
+    return results
+  })()
 
   if (visible.length === 0) {
     throw new Error('No visible decals to export. Add at least one decal first.')
@@ -113,6 +133,16 @@ export interface RasteriseDecalOptions {
    * decal still exports as an independent texture (no mask bake).
    */
   maskEl?: HTMLImageElement | null
+  /**
+   * Integer supersample factor (default 1). When >1 the decal is rendered into
+   * a `DECAL_PACK_SIZE * supersample` canvas via a global `ctx.scale`, so all
+   * 128-space transforms (x/y/rotation/scale) map up automatically. Callers
+   * that bake the result into a large atlas rect (e.g. the vehicle-editor decal
+   * preview baking a 128 tile into a ~320-512px hull rect) should pass 4 so the
+   * bake DOWNscales a crisp 512 source instead of UPscaling a soft 128 source.
+   * The grid/thumbnail preview leaves this at 1 for performance.
+   */
+  supersample?: number
 }
 
 /**
@@ -130,12 +160,25 @@ export function rasteriseDecal(
   bitmap: ImageBitmap | HTMLImageElement | HTMLCanvasElement,
   options: RasteriseDecalOptions = {},
 ): OffscreenCanvas | HTMLCanvasElement {
-  const canvas = makeCanvas(DECAL_PACK_SIZE, DECAL_PACK_SIZE)
+  // Supersample factor: render into a larger canvas so callers baking into a
+  // big atlas rect get a crisp (downscaled) source instead of an upscaled-soft
+  // 128 tile. S===1 keeps the original byte-identical 128 path.
+  const S = Math.max(1, Math.round(options.supersample ?? 1))
+  const SIZE = DECAL_PACK_SIZE * S
+  const canvas = makeCanvas(SIZE, SIZE)
   const ctx = canvas.getContext('2d') as
     | CanvasRenderingContext2D
     | OffscreenCanvasRenderingContext2D
     | null
   if (!ctx) throw new Error('Failed to acquire 2D context for decal rasteriser')
+
+  // Scale the whole coordinate system up by S. Every subsequent draw is
+  // expressed in 128-space (decal.x/y, translate/rotate/scale, the 0..128
+  // mask/clip fills) and maps to device pixels automatically. getImageData /
+  // putImageData ignore the transform and must use device size (SIZE).
+  if (S !== 1) ctx.scale(S, S)
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
 
   // Transparent base — CoH2 decals are alpha-bearing PNGs/DDS over the
   // diffuse, NOT opaque tiles. Don't fill a background.
@@ -205,7 +248,8 @@ export function rasteriseDecal(
   if (decal.tint && decal.tint.strength > 0) {
     const { strength, color } = decal.tint
     const { r: tintR, g: tintG, b: tintB } = parseCssHexColor(color)
-    const imageData = ctx.getImageData(0, 0, DECAL_PACK_SIZE, DECAL_PACK_SIZE)
+    // Device-space read: spans the full SIZE×SIZE canvas (ignores the S scale).
+    const imageData = ctx.getImageData(0, 0, SIZE, SIZE)
     const data = imageData.data
     for (let i = 0; i < data.length; i += 4) {
       if (data[i + 3] > 0) {

@@ -303,10 +303,9 @@ describe('TemplatePicker — sections', () => {
     expect(stock!.textContent).toContain('ArtBritish')
   })
 
-  it('always hides the Workshop section (unimplemented — TODO wired in a future iteration)', () => {
-    // Workshop options are intentionally dropped by the picker so users
-    // don't see a broken affordance.  Even when the caller passes a
-    // workshop option the section must not appear.
+  it('shows the Workshop section when at least one workshop option is provided', () => {
+    // Workshop options ARE rendered by the picker — the section appears whenever
+    // the caller passes at least one option with kind: 'workshop'.
     const el = render(
       createElement(TemplatePicker, {
         value: 'blank',
@@ -316,10 +315,11 @@ describe('TemplatePicker — sections', () => {
       }),
     )
     const workshop = el.querySelector('[data-testid="template-picker-section-workshop"]')
-    expect(workshop).toBeNull()
+    expect(workshop).not.toBeNull()
+    expect(workshop!.textContent).toContain('Workshop #1234567890')
   })
 
-  it('renders sections in the order: blank → saved → stock (workshop suppressed)', () => {
+  it('renders sections in the order: blank → saved → stock → workshop', () => {
     const el = render(
       createElement(TemplatePicker, {
         value: 'blank',
@@ -333,7 +333,7 @@ describe('TemplatePicker — sections', () => {
     const sectionKinds = Array.from(sections).map(s =>
       s.getAttribute('data-testid')!.replace('template-picker-section-', ''),
     )
-    expect(sectionKinds).toEqual(['blank', 'saved', 'stock'])
+    expect(sectionKinds).toEqual(['blank', 'saved', 'stock', 'workshop'])
   })
 
   it('renders all options under their sections in the given order', () => {
@@ -496,8 +496,7 @@ describe('TemplatePicker — hover preview', () => {
       createElement(TemplatePicker, {
         value: 'blank',
         onChange: () => {},
-        // Workshop option intentionally included to confirm it is silently
-        // dropped and does not break badge rendering for the other kinds.
+        // Workshop option included — the picker renders it and we assert its badge.
         options: [BLANK, SAVED_A, STOCK_A, WORKSHOP_A],
         initialOpen: true,
       }),
@@ -522,7 +521,18 @@ describe('TemplatePicker — hover preview', () => {
     expect(el.querySelector('[data-testid="template-picker-preview"]')!.textContent).toContain(
       'Game files',
     )
-    // Workshop option is suppressed — no DOM node exists for it, so no
-    // badge assertion needed.
+    // Workshop option is rendered — verify its badge too.
+    act(() => {
+      stockOpt.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
+    })
+    const workshopOpt = el.querySelector(
+      `[data-testid="template-picker-option-${WORKSHOP_A.id}"]`,
+    )!
+    act(() => {
+      workshopOpt.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    })
+    expect(el.querySelector('[data-testid="template-picker-preview"]')!.textContent).toContain(
+      'Workshop',
+    )
   })
 })

@@ -25,19 +25,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Eye,
-  Paintbrush2,
-  Brush,
-  Boxes,
-  Palette,
-  Cloud,
-  Book,
   FileUp,
   ChevronDown,
   LogOut,
   Star,
   Lock,
-  Home,
   AlertTriangle,
   FlipHorizontal2,
   FlipVertical2,
@@ -53,9 +45,7 @@ import {
   type Decal,
   type DecalType,
 } from '@/lib/project'
-import { VEHICLES, type Faction } from '@/lib/vehicles'
 import type { VehicleSpec } from '@/lib/vehicles'
-import { FACTION_ICON_SRC, FACTION_LABELS } from '@/lib/factions'
 import ImageLibrary from './ImageLibrary'
 import SkinPackInGamePreview from './SkinPackInGamePreview'
 import { defaultModsPath, detectOS } from '@/lib/ux'
@@ -72,12 +62,13 @@ import { generateValidCoh2Texture } from '@/lib/ai/valid-coh2-texture'
 import { rewriteAdjustment } from '@/lib/ai/rewrite-adjustment'
 import { VoiceInput } from '@/components/VoiceInput'
 import type { DiffusionStatus } from '@/lib/ai/types'
-import LiveSyncBadge from '@/components/LiveSyncBadge'
 import PublishToWorkshopDialog, { makeSkinPublishTarget } from '@/components/PublishToWorkshopDialog'
 import type { WorkshopPublishTarget } from '@/components/PublishToWorkshopDialog'
 import { PublishSection } from '@/components/PublishSection'
 import { PackIdentityPopover } from '@/components/PackIdentityPopover'
 import EditorTitlePill from '@/components/editor-primitives/EditorTitlePill'
+import { SlotIconGrid } from '@/components/SlotIconGrid'
+import { EditorHomeButton } from '@/components/editor-primitives'
 import { useLiveSync } from '@/lib/live-sync'
 
 type PanelId = 'view' | 'decals' | 'reference' | 'export' | 'parts' | 'camo' | 'scene' | 'brush'
@@ -121,6 +112,11 @@ interface Props {
   pendingImageId: string | null
   setPendingImageId: (id: string | null) => void
   installRoot: FileSystemDirectoryHandle
+  /** A6: open the full-screen per-slot icon editor for the given global
+   *  export-slot index. Wired by Editor to its `setSlotIconEditingIdx`, so
+   *  the summer/winter icon grid inside the title popover can launch the
+   *  icon editor. Without this the season icons couldn't be set at all. */
+  onEditSlotIcon?: (idx: number) => void
   parts: string[]
   selectedPart: string | null
   setSelectedPart: (p: string | null) => void
@@ -170,67 +166,10 @@ interface Props {
   clearBrushPaint: () => void
 }
 
-/** Per-panel metadata. Used both inside the panel header (sub-tab pills)
- *  and as the source of truth for sub-tab labels/icons. */
-const PANEL_META: Record<PanelId, { label: string; icon: React.ReactNode }> = {
-  view: { label: 'Project', icon: <Eye size={14} /> },
-  brush: { label: 'Brush', icon: <Brush size={14} /> },
-  decals: { label: 'Decals', icon: <Paintbrush2 size={14} /> },
-  parts: { label: 'Parts', icon: <Boxes size={14} /> },
-  camo: { label: 'Camo', icon: <Palette size={14} /> },
-  scene: { label: 'Scene', icon: <Cloud size={14} /> },
-  reference: { label: 'Reference', icon: <Book size={14} /> },
-  export: { label: 'Export', icon: <FileUp size={14} /> },
-}
-
-/** The 7 panels regrouped into 3 task-driven clusters. Each cluster owns a
- *  primary button in the top bar; the panel dropdown then surfaces the
- *  cluster's child panels as a row of sub-tab pills, so the user steps
- *  Cluster → sub-tab → control instead of scanning a flat 7-button row.
- *
- *    Paint   — surface authoring (where pixels actually land)
- *    Compose — model composition + visual reference material
- *    Publish — pack metadata + outbound mod export
- *
- * v1.0 UX trim: `camo` (text-to-camo generator) and `parts` (Explode view)
- * are temporarily hidden — the underlying panels still exist for future
- * use, but they're omitted from the chrome until the AI-camo pipeline and
- * the exploded-part picker are wired into the v1.0 flow. Users called the
- * generate / explode controls confusing in their current state. The
- * components are kept in the file (and in tests) so re-enabling them is a
- * one-line change to the panels arrays below.
- */
-type ClusterId = 'paint' | 'compose' | 'publish'
-const CLUSTERS: { id: ClusterId; label: string; icon: React.ReactNode; panels: PanelId[] }[] = [
-  {
-    id: 'paint',
-    label: 'Paint',
-    icon: <Paintbrush2 size={16} />,
-    // v1.0: 'camo' (Generate) removed — see header comment.
-    panels: ['brush', 'decals', 'scene'],
-  },
-  // v1.0: 'parts' (Explode view) removed — see header comment.
-  { id: 'compose', label: 'Compose', icon: <Boxes size={16} />, panels: ['reference'] },
-  { id: 'publish', label: 'Publish', icon: <FileUp size={16} />, panels: ['view', 'export'] },
-]
-
-/** Reverse lookup: which cluster does a given panel id belong to? */
-const PANEL_TO_CLUSTER: Record<PanelId, ClusterId> = (() => {
-  const out: Partial<Record<PanelId, ClusterId>> = {}
-  for (const c of CLUSTERS) for (const p of c.panels) out[p] = c.id
-  return out as Record<PanelId, ClusterId>
-})()
-
-const FACTIONS: Faction[] = ['german', 'west_german', 'soviet', 'aef', 'british']
-
 export default function TopBar(p: Props) {
   const veh = getOrInitVehicle(p.project, p.vehicle.id)
   const activeDecal =
     p.activeDecalId != null ? (veh.decals.find(d => d.id === p.activeDecalId) ?? null) : null
-
-  // Faction-picker dropdown state
-  const [factionOpen, setFactionOpen] = useState(false)
-  const factionRef = useRef<HTMLDivElement>(null)
 
   // ── Centered title pill state ─────────────────────────────────────────
   const sync = useLiveSync()
@@ -244,6 +183,7 @@ export default function TopBar(p: Props) {
   const [pillPublishTarget, setPillPublishTarget] = useState<WorkshopPublishTarget | null>(null)
   const [isBuildingTarget, setIsBuildingTarget] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
 
   const handlePillRequestBuild = useCallback(async () => {
     setIsBuildingTarget(true)
@@ -274,72 +214,6 @@ export default function TopBar(p: Props) {
     }
   }, [p])
 
-  /** Per-cluster memory of the last sub-tab the user opened. Lets clicking
-   *  a cluster button restore the user's last context within that cluster
-   *  instead of always reverting to the first child. */
-  const lastPanelByCluster = useRef<Record<ClusterId, PanelId>>({
-    paint: 'brush',
-    // v1.0: compose now only contains 'reference' since 'parts' (Explode)
-    // was removed from the chrome. Falling back to 'reference' keeps the
-    // cluster button functional rather than opening to a no-longer-listed
-    // panel.
-    compose: 'reference',
-    publish: 'view',
-  })
-
-  // Whenever the active panel changes, remember it as the last-used child
-  // of its cluster.
-  useEffect(() => {
-    if (!p.activePanel) return
-    const cluster = PANEL_TO_CLUSTER[p.activePanel]
-    lastPanelByCluster.current[cluster] = p.activePanel
-  }, [p.activePanel])
-
-  /** Click handler for a cluster button. If any panel in the cluster is
-   *  already active, close it. Otherwise, open the last-used child of
-   *  that cluster (or the first child on first open). */
-  const onClickCluster = (cluster: ClusterId) => {
-    const inThisCluster = p.activePanel != null && PANEL_TO_CLUSTER[p.activePanel] === cluster
-    if (inThisCluster) {
-      p.setActivePanel(null)
-      return
-    }
-    p.setActivePanel(lastPanelByCluster.current[cluster])
-  }
-
-  // Close faction dropdown on click-outside / Escape
-  useEffect(() => {
-    if (!factionOpen) return
-    const onClick = (e: MouseEvent) => {
-      if (factionRef.current && !factionRef.current.contains(e.target as Node))
-        setFactionOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setFactionOpen(false)
-    }
-    document.addEventListener('mousedown', onClick)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onClick)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [factionOpen])
-
-  const pickFaction = (fac: Faction) => {
-    // Locked while editing an existing pack: the pack's faction is fixed at
-    // creation time (in NewProjectForm). Switching here would orphan the
-    // pack's vehicles. Use Close pack to exit and start a new one instead.
-    if (p.factionLocked) return
-    setFactionOpen(false)
-    if (fac === p.vehicle.faction) return
-    const first = VEHICLES.find(v => v.faction === fac)
-    if (first) {
-      p.setVehicleId(first.id)
-      p.setActiveDecalId(null)
-      p.setActivePanel(null)
-    }
-  }
-
   return (
     <>
     {/* ── Centered glass title pill — matches decal & faceplate editors ── */}
@@ -349,9 +223,15 @@ export default function TopBar(p: Props) {
       syncState={sync.state}
       liveSyncTitle={liveSyncTitle}
       liveSyncAriaLabel={liveSyncAriaLabel}
-      titleAcknowledged={undefined}
+      titleAcknowledged={p.project.titleAcknowledged}
+      onAcknowledge={() => {
+        const next = { ...p.project, titleAcknowledged: true }
+        p.setProject(next)
+        persistActive(next)
+      }}
       onToggle={() => setPackNameEditOpen(v => !v)}
       popoverOpen={packNameEditOpen}
+      publishError={publishError}
       popoverContent={
         <PackIdentityPopover
           open={packNameEditOpen}
@@ -372,6 +252,37 @@ export default function TopBar(p: Props) {
             p.setProject(next)
             persistActive(next)
           }}
+          extraSection={
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {/* Template selection has moved to the bottom-bar TemplateDecalPills
+                  pill so the centre-title popover no longer duplicates it. */}
+              {p.onEditSlotIcon && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      letterSpacing: '0.08em',
+                      textTransform: 'uppercase',
+                      color: 'rgba(255,255,255,0.5)',
+                    }}
+                  >
+                    Season icons
+                  </div>
+                  <SlotIconGrid
+                    project={p.project}
+                    installRoot={p.installRoot}
+                    onSlotClick={idx => {
+                      // Close the popover so the full-screen icon editor isn't
+                      // hidden behind it, then open the editor for that slot.
+                      setPackNameEditOpen(false)
+                      p.onEditSlotIcon?.(idx)
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          }
           publishSection={
             <PublishSection
               target={pillPublishTarget}
@@ -379,263 +290,41 @@ export default function TopBar(p: Props) {
               onRequestBuild={handlePillRequestBuild}
               onUploadStart={() => setIsUploading(true)}
               onUploadEnd={() => setIsUploading(false)}
+              onPublishError={(msg) => {
+                setPublishError(msg)
+                setTimeout(() => setPublishError(null), 8000)
+              }}
             />
           }
           locked={isUploading || isBuildingTarget}
         />
       }
     />
-    {/* Left-aligned floating chrome bar. Reads --app-top-inset so the
-        DemoBanner can push the chrome down out of its own footprint. The
-        variable is set in App.tsx via the DemoBanner effect (52px when
-        visible, 0 otherwise). Plain Tailwind top-3 can't read CSS vars,
-        so we override via inline style. */}
+    {/* Home button — fixed top-left, returns user to StartScreen. Only
+        rendered when the multi-stage flow plumbed `onClosePack`. Styled
+        identically to the DecalPackEditor / FaceplateEditor home button. */}
+    {p.onClosePack && (
+      <EditorHomeButton
+        onClick={p.onClosePack}
+        style={{
+          position: 'fixed',
+          top: 'calc(12px + var(--app-top-inset, 0px))',
+          left: 12,
+          zIndex: 30,
+        }}
+      />
+    )}
+    {/* Panel content — floats below the home button when a panel is active */}
     <div
       className="absolute left-3 z-30 flex flex-col items-start gap-2"
       style={{ top: 'calc(0.75rem + var(--app-top-inset, 0px))' }}
     >
-      {/* Top row: home button + faction lobby icon + menu buttons */}
-      <div
-        className="flex items-center gap-2 px-2 py-2 rounded-2xl"
-        style={{
-          background: 'rgba(20, 22, 28, 0.62)',
-          backdropFilter: 'blur(28px) saturate(180%)',
-          border: '0.5px solid rgba(255,255,255,0.10)',
-          boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
-        }}
-      >
-        {/* Home — quick exit back to the StartScreen ("new skin menu") so the
-            user can pick a different pack, load a .coh2skin, or start a new
-            one. Same effect as Project panel → Close pack, surfaced here so
-            it's discoverable from any view. Only rendered when the multi-
-            stage flow plumbed `onClosePack` (i.e. not in headless / demo
-            modes that bypass the start screen). */}
-        {p.onClosePack && (
-          <>
-            <button
-              onClick={p.onClosePack}
-              className="w-9 h-9 rounded-xl flex items-center justify-center text-[var(--color-text-2)]
-                         hover:text-white hover:bg-white/10 active:scale-95 transition-all duration-150"
-              title="Back to start — close this pack and return to the new-skin menu"
-              aria-label="Back to start screen"
-            >
-              <Home size={16} strokeWidth={2} aria-hidden />
-            </button>
-            <div className="w-px h-8 bg-white/10 mx-0.5" />
-          </>
-        )}
-
-        {/* Faction lobby icon. While the pack is locked the badge is purely
-            decorative — no dropdown, no lock overlay, no chevron. Switching
-            faction requires closing the pack (Home → start screen, or Project
-            panel → Close pack), which the user discovers via either path
-            rather than the badge. */}
-        <div ref={factionRef} className="relative">
-          <button
-            onClick={p.factionLocked ? undefined : () => setFactionOpen(o => !o)}
-            disabled={p.factionLocked}
-            className={`relative w-10 h-10 rounded-full transition-transform duration-200 flex items-center justify-center text-white ${
-              p.factionLocked ? 'cursor-default' : 'hover:scale-105 active:scale-95'
-            }`}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              overflow: 'visible',
-            }}
-            title={
-              p.factionLocked
-                ? FACTION_LABELS[p.vehicle.faction]
-                : `${FACTION_LABELS[p.vehicle.faction]} — click to switch faction`
-            }
-          >
-            {/* Lobby badge — intentionally oversized so it spills outside the
-                40-px button (the user wants the "breaks the UI" feel that the
-                in-game army-select screen has). Drop shadow gives it weight
-                and separates it from whatever is behind the bar. */}
-            <img
-              src={FACTION_ICON_SRC[p.vehicle.faction]}
-              alt=""
-              draggable={false}
-              style={{
-                position: 'absolute',
-                width: '160%',
-                height: '160%',
-                left: '50%',
-                top: '50%',
-                transform: 'translate(-50%, -50%)',
-                objectFit: 'contain',
-                userSelect: 'none',
-                pointerEvents: 'none',
-                filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.55))',
-              }}
-            />
-            {/* Chevron only when the picker is interactive. Locked packs
-                show a bare badge — no lock-icon clutter, no chevron that
-                hints at a dropdown that isn't there. */}
-            {!p.factionLocked && (
-              <ChevronDown
-                size={10}
-                strokeWidth={3}
-                className={`absolute -bottom-0.5 -right-0.5 text-white bg-black/70 rounded-full p-0.5 transition-transform duration-200 ${factionOpen ? 'rotate-180' : ''}`}
-                style={{ width: 14, height: 14, zIndex: 2 }}
-              />
-            )}
-          </button>
-
-          {/* Dropdown: 5 faction circles laid out vertically. Only renders
-              while the pack is unlocked (i.e. during the new-project flow);
-              once a pack is committed, faction is bound to it and the
-              picker disappears. Close pack lives in the Project panel. */}
-          {factionOpen && !p.factionLocked && (
-            <div
-              className="absolute top-full left-0 mt-2 p-2 pl-3 rounded-2xl flex flex-col gap-2 z-40"
-              style={{
-                background: 'rgba(20, 22, 28, 0.78)',
-                backdropFilter: 'blur(28px) saturate(180%)',
-                border: '0.5px solid rgba(255,255,255,0.12)',
-                boxShadow: '0 16px 40px rgba(0,0,0,0.55), inset 0 0.5px 0 rgba(255,255,255,0.10)',
-                overflow: 'visible',
-              }}
-            >
-              {FACTIONS.map((fac, i) => (
-                <button
-                  key={fac}
-                  onClick={() => pickFaction(fac)}
-                  className="relative flex items-center gap-3 pl-1 pr-3 py-1 rounded-full transition-all duration-150 hover:bg-white/10 active:scale-95"
-                  style={{
-                    animation: `fadeSlideIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1) ${i * 25}ms backwards`,
-                    opacity: 1,
-                    overflow: 'visible',
-                  }}
-                  title={FACTION_LABELS[fac]}
-                >
-                  <div
-                    className="relative w-8 h-8 flex items-center justify-center text-white flex-shrink-0"
-                    style={{ overflow: 'visible' }}
-                  >
-                    {/* Bare emblem — no tinted disc. Selected faction gets
-                        a slight scale to read as "current" without bringing
-                        a colored ring back in. */}
-                    <img
-                      src={FACTION_ICON_SRC[fac]}
-                      alt=""
-                      draggable={false}
-                      style={{
-                        position: 'absolute',
-                        width: p.vehicle.faction === fac ? '170%' : '155%',
-                        height: p.vehicle.faction === fac ? '170%' : '155%',
-                        left: '50%',
-                        top: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        objectFit: 'contain',
-                        userSelect: 'none',
-                        pointerEvents: 'none',
-                        filter: 'drop-shadow(0 1.5px 3px rgba(0,0,0,0.5))',
-                        transition: 'width 160ms ease-out, height 160ms ease-out',
-                      }}
-                    />
-                  </div>
-                  <span className="flex flex-col items-start relative z-[1]">
-                    <span className="text-[11px] font-medium text-white/90 whitespace-nowrap leading-tight">
-                      {FACTION_LABELS[fac]}
-                    </span>
-                  </span>
-                </button>
-              ))}
-
-              <style>{`
-                @keyframes fadeSlideIn {
-                  from { opacity: 0; transform: translateY(-4px); }
-                  to   { opacity: 1; transform: translateY(0); }
-                }
-              `}</style>
-            </div>
-          )}
-        </div>
-
-        {/* Divider */}
-        <div className="w-px h-8 bg-white/10 mx-0.5" />
-
-        {/* Cluster buttons — 3 task-grouped pills. Sub-panel selection
-            lives inside the dropdown panel as a row of tab pills, so the
-            top bar stays compact. */}
-        <div className="flex items-center gap-1">
-          {CLUSTERS.map(cluster => {
-            const active = p.activePanel != null && PANEL_TO_CLUSTER[p.activePanel] === cluster.id
-            return (
-              <button
-                key={cluster.id}
-                onClick={() => onClickCluster(cluster.id)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all duration-150 ${
-                  active
-                    ? 'bg-white/95 text-black shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_2px_8px_rgba(0,0,0,0.25)]'
-                    : 'text-[var(--color-text-2)] hover:bg-white/10 hover:text-white'
-                }`}
-                title={`${cluster.label} · ${cluster.panels.map(id => PANEL_META[id].label).join(' · ')}`}
-              >
-                <span className="flex items-center justify-center">{cluster.icon}</span>
-                <span>{cluster.label}</span>
-              </button>
-            )
-          })}
-
-          {/* Divider + Live Sync status badge — icon-only with hover
-              tooltip, click to toggle enabled/disabled. */}
-          <div className="w-px h-5 bg-white/10 mx-0.5" />
-          <LiveSyncBadge variant="inline" />
-        </div>
-      </div>
-
-      {/* Panel content (dropdown below bar) */}
       {p.activePanel && (
         <div
-          className="w-[320px] max-h-[calc(100dvh-7rem)] overflow-y-auto rounded-2xl px-4 py-4"
-          style={{
-            background: 'rgba(20, 22, 28, 0.72)',
-            backdropFilter: 'blur(28px) saturate(180%)',
-            border: '0.5px solid rgba(255,255,255,0.10)',
-            boxShadow: '0 16px 40px rgba(0,0,0,0.5), inset 0 0.5px 0 rgba(255,255,255,0.08)',
-            animation: 'panelSlideIn 200ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-          }}
+          className="glass-pop w-[320px] max-h-[calc(100dvh-7rem)] overflow-y-auto rounded-2xl px-4 py-4 mt-12"
+          style={{ animation: 'panelSlideIn 200ms cubic-bezier(0.2, 0.8, 0.2, 1)' }}
         >
           <div className="flex flex-col gap-4">
-            {/* Sub-tab pills — only render when the active cluster has more
-                than one child panel. Single-child clusters skip the row to
-                avoid a useless mono-tab. */}
-            {(() => {
-              if (!p.activePanel) return null
-              const cluster = CLUSTERS.find(c => c.id === PANEL_TO_CLUSTER[p.activePanel!])
-              if (!cluster || cluster.panels.length < 2) return null
-              return (
-                <div
-                  className="flex items-center gap-1 p-1 rounded-xl"
-                  style={{ background: 'var(--color-glass-1, rgba(255,255,255,0.04))' }}
-                  role="tablist"
-                  aria-label={`${cluster.label} sub-panels`}
-                >
-                  {cluster.panels.map(pid => {
-                    const meta = PANEL_META[pid]
-                    const isActive = p.activePanel === pid
-                    return (
-                      <button
-                        key={pid}
-                        role="tab"
-                        aria-selected={isActive}
-                        onClick={() => p.setActivePanel(pid)}
-                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150 flex-1 justify-center ${
-                          isActive
-                            ? 'bg-white/95 text-black shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_1px_4px_rgba(0,0,0,0.20)]'
-                            : 'text-[var(--color-text-2)] hover:bg-white/10 hover:text-white'
-                        }`}
-                      >
-                        <span className="flex items-center justify-center">{meta.icon}</span>
-                        <span>{meta.label}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              )
-            })()}
 
             {p.activePanel === 'view' && <ViewPanel {...p} />}
             {p.activePanel === 'brush' && (

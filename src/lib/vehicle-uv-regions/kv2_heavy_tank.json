@@ -1,0 +1,23 @@
+{
+  "_note": "KV-2 (kv2_heavy_tank) UV regions in 2048×2048 pixel units. Derived from Wikinger OKW skin visual inspection.",
+  "_coordinateSystem": "Essence engine LH Y-up: +X = tank RIGHT side, UV V=0 is TOP of the 2048×2048 PNG texture.",
+  "_source": "wikinger",
+  "semanticRegions": {
+    "hullSideRight": {
+      "x": 1235,
+      "y": 1300,
+      "w": 320,
+      "h": 310,
+      "_source": "wikinger",
+      "_confidence": "medium (±40px)",
+      "note": "Hull right side — Wikinger OKW skin (German Balkenkreuz cross painted on hull). Two white cross shapes are visible in the bottom-right area of the atlas. This rect covers the left cross (hull-right panel) centered at approximately (1395,1455). The KV-2 in CoH2 can be skinned; the OKW Wikinger pack provides a trophy/captured-tank skin with German markings.",
+      "uvCore": {
+        "minU": 0.6030,
+        "maxU": 0.7617,
+        "minV": 0.6348,
+        "maxV": 0.7861
+      },
+      "wikingerGroundTruth": true
+    }
+  }
+}

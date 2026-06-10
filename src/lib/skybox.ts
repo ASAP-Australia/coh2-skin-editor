@@ -117,7 +117,7 @@ export function filterEnvsBySeason(
 
 /** Three.js CubeTexture face order: px, nx, py, ny, pz, nz
  *  Maps to the CoH2 side-wrap strip order: right, left, top, bottom, front, back
- *  Strip layout (left→right): front | right | back | left */
+ *  Strip layout (left→right): right | back | left | front  (East-clockwise, CoH2 convention) */
 
 async function loadRgtCanvas(archive: SgaArchive, path: string): Promise<HTMLCanvasElement | null> {
   const bytes = await archive.readByPath(path)
@@ -131,10 +131,15 @@ async function loadRgtCanvas(archive: SgaArchive, path: string): Promise<HTMLCan
   }
 }
 
-function sliceCanvas(src: HTMLCanvasElement, x: number, y: number, w: number, h: number): HTMLCanvasElement {
+/** Slice a region of `src` and scale it into a square `size`×`size` canvas.
+ *  CubeTexture requires all six faces to share identical square dimensions —
+ *  any mismatch makes the GPU upload fail and the whole cube render black. */
+function sliceCanvasSquare(
+  src: HTMLCanvasElement, x: number, y: number, w: number, h: number, size: number,
+): HTMLCanvasElement {
   const dst = document.createElement('canvas')
-  dst.width = w; dst.height = h
-  dst.getContext('2d')!.drawImage(src, x, y, w, h, 0, 0, w, h)
+  dst.width = dst.height = size
+  dst.getContext('2d')!.drawImage(src, x, y, w, h, 0, 0, size, size)
   return dst
 }
 
@@ -144,12 +149,6 @@ function solidCanvas(size: number, color: string): HTMLCanvasElement {
   const ctx = c.getContext('2d')!
   ctx.fillStyle = color; ctx.fillRect(0, 0, size, size)
   return c
-}
-
-function canvasToTexture(canvas: HTMLCanvasElement): THREE.Texture {
-  const t = new THREE.CanvasTexture(canvas)
-  t.colorSpace = THREE.SRGBColorSpace
-  return t
 }
 
 // ---------------------------------------------------------------------------
@@ -184,16 +183,7 @@ function proceduralSkyFace(
   grad.addColorStop(1,    ground)
   ctx.fillStyle = grad
   ctx.fillRect(0, 0, size, size)
-  // Soft cloud streaks for atmosphere
-  ctx.globalAlpha = 0.18
-  ctx.fillStyle = '#ffffff'
-  for (let i = 0; i < 6; i++) {
-    const y = Math.random() * size * 0.5
-    const w = size * (0.3 + Math.random() * 0.5)
-    const h = 4 + Math.random() * 8
-    ctx.fillRect(Math.random() * size - w / 2, y, w, h)
-  }
-  ctx.globalAlpha = 1
+  // Cloud streaks removed — plain sunny sky with no visible streaks.
   return c
 }
 
@@ -318,26 +308,48 @@ export async function loadSkybox(archive: SgaArchive, envName: string): Promise<
     return null
   }
 
-  // Side strip is 4 panels wide. Slice: front(0), right(1), back(2), left(3)
+  // Side strip is 4 panels wide.
+  // Real CoH2 _side_dif.rgt strip layout (East-clockwise): right | back | left | front
+  // This maps directly to Three.js CubeTexture face order:   px  |  nz  |  nx  |  pz
+  // NOTE: This reorder is the best hypothesis from CoH2 engine docs. If seams
+  // are still visible after this change, try reversing to the original order
+  // (front|right|back|left) — the real layout depends on which direction Relic
+  // winds their panoramic side strip.
+  // Every face is normalised to a uniform square `FACE` size — CubeTexture
+  // demands all six faces be identical square dimensions, else the GPU upload
+  // fails (mismatched levels → glCopySubTextureCHROMIUM errors) and the cube
+  // renders BLACK. A fixed 512px square is plenty for a background sky and is
+  // a clean power-of-two for sampling.
+  const FACE = 512
   const panelW = Math.floor(sideCanvas.width / 4)
   const panelH = sideCanvas.height
-  const front  = sliceCanvas(sideCanvas, 0,          0, panelW, panelH)
-  const right  = sliceCanvas(sideCanvas, panelW,     0, panelW, panelH)
-  const back   = sliceCanvas(sideCanvas, panelW * 2, 0, panelW, panelH)
-  const left   = sliceCanvas(sideCanvas, panelW * 3, 0, panelW, panelH)
+  // Strip layout: right(+X) | back(-Z) | left(-X) | front(+Z)
+  const px = sliceCanvasSquare(sideCanvas, 0,          0, panelW, panelH, FACE)  // right (+X)
+  const nz = sliceCanvasSquare(sideCanvas, panelW,     0, panelW, panelH, FACE)  // back  (-Z)
+  const nx = sliceCanvasSquare(sideCanvas, panelW * 2, 0, panelW, panelH, FACE)  // left  (-X)
+  const pz = sliceCanvasSquare(sideCanvas, panelW * 3, 0, panelW, panelH, FACE)  // front (+Z)
+  const top = topCanvas
+    ? sliceCanvasSquare(topCanvas, 0, 0, topCanvas.width, topCanvas.height, FACE)
+    : solidCanvas(FACE, '#c8c8d8')
+  // No game asset has a bottom face.  Use a sky-blue solid matching the
+  // upper hemisphere so looking down at the top of the tank shows sky, not
+  // the original grey-brown (#5a5040) that clashed with the scenery colour.
+  const bot = solidCanvas(FACE, '#87CEEB')
 
-  const fallback = solidCanvas(panelW, '#c8c8d8')
-  const top = topCanvas ?? fallback
-  // No game asset has a bottom face — use grey-brown solid (camera never looks straight down)
-  const bot = solidCanvas(panelW, '#5a5040')
-
-  // CubeTexture face order: px(right), nx(left), py(top), ny(bottom), pz(front), nz(back)
-  const cubeTex = new THREE.CubeTexture([
-    right, left, top, bot, front, back,
-  ].map(c => c as unknown as HTMLImageElement))
+  // CubeTextures MUST be backed by real HTMLImageElements, not canvases —
+  // canvas-backed cube faces silently upload as black on many drivers (the
+  // proceduralSkybox path learned this; loadSkybox previously passed raw
+  // canvases here, which was the root cause of the persistent black skybox).
+  // CubeTexture face order: px(+X/right), nx(-X/left), py(+Y/top), ny(-Y/bottom), pz(+Z/front), nz(-Z/back)
+  const faceImages = await Promise.all(
+    [px, nx, top, bot, pz, nz].map(canvasToImage),
+  )
+  const cubeTex = new THREE.CubeTexture(faceImages)
   cubeTex.colorSpace = THREE.SRGBColorSpace
+  cubeTex.generateMipmaps = false
+  cubeTex.minFilter = THREE.LinearFilter
+  cubeTex.magFilter = THREE.LinearFilter
   cubeTex.needsUpdate = true
-  void canvasToTexture  // keep import used
   return cubeTex
 }
 

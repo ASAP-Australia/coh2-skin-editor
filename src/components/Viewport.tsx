@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   WebGLRenderer,
   Scene,
@@ -13,8 +13,10 @@ import {
   Mesh,
   CylinderGeometry,
   PlaneGeometry,
+  SphereGeometry,
   MeshStandardMaterial,
   MeshPhysicalMaterial,
+  ShaderMaterial,
   CanvasTexture,
   CubeTexture,
   PMREMGenerator,
@@ -24,6 +26,7 @@ import {
   NoColorSpace,
   RepeatWrapping,
   DoubleSide,
+  BackSide,
   ACESFilmicToneMapping,
   NeutralToneMapping,
   ReinhardToneMapping,
@@ -40,11 +43,12 @@ import {
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { locateArchives } from '@/lib/coh2-fs'
-import { getPreloadedArchive, cacheArchive, getPreloadedBytes, cacheBytes } from '@/lib/preload'
+import { getPreloadedArchive, cacheArchive, getPreloadedBytes, cacheBytes, prefetchedTextures } from '@/lib/preload'
 import { SgaArchive } from '@/lib/sga'
 import { parseRgm, type RgmModel } from '@/lib/rgm'
-import { decodeRgt, rgtToCompressedTexture } from '@/lib/rgt'
+import { decodeRgt, parseRgtHeader, rgtToCompressedTexture } from '@/lib/rgt'
 import { bcToCanvas } from '@/lib/bc-decode'
+import { decodeRgtFullOffThread } from '@/lib/decode-pool'
 import { rgmPath, type VehicleSpec } from '@/lib/vehicles'
 import {
   type ScenePreset,
@@ -60,7 +64,7 @@ import { loadSkybox, proceduralSkybox, listAvailableEnvs, filterEnvsBySeason } f
 // "obviously repeating". Darkened at the material via a low color multiplier.
 import dirtTextureUrl from '@/assets/textures/brown_mud_dry_2k.jpg'
 import { loadStructure } from '@/lib/structure-loader'
-import { computeExplodeDirection } from '@/lib/explode-direction'
+import { computeExplodeDirection, computeExplodeOffset } from '@/lib/explode-direction'
 // PMREM IBL is active for the in_game_field preset — the scene
 // `environment` is baked from the real CoH2 skybox CubeTexture
 // (`ArtEnvironment.sga`) at ~0.3 intensity, with a per-vehicle
@@ -145,6 +149,27 @@ interface Props {
     rotationY: number
     scale: number
   }>
+  /** Ref that receives the `buildVehicleIntoCache` function once Viewport
+   *  mounts. Editor uses this to trigger faction-first preloads without
+   *  touching the active vehicle state. */
+  preloadRef?: React.MutableRefObject<((spec: VehicleSpec, season: 'summer' | 'winter', eager?: boolean, cpuOnly?: boolean) => Promise<void>) | null>
+  /** Ref that receives a `faceDecalSide` function once Viewport mounts.
+   *  Calling it snaps the orbit camera to a right-side view of the vehicle
+   *  (positive-X world direction) so a hull-right decal is immediately
+   *  visible without the user having to orbit manually.  The snap is
+   *  instantaneous and only fires once per call; the user can still orbit
+   *  freely afterwards.  Ignored in demo mode / when no model is loaded. */
+  faceDecalRef?: React.MutableRefObject<(() => void) | null>
+  /** When true the Viewport operates in headless warm-up mode:
+   *  - Creates renderer + camera so `buildVehicleIntoCache` (wired via
+   *    `preloadRef`) works correctly.
+   *  - Does NOT auto-load/render a default vehicle.
+   *  - Skips UI-only effects (post-processing, season ground slab, etc.).
+   *  All warm builds run with `cpuOnly=true` so GPU compile steps are
+   *  deferred to the editor's own renderer (they don't transfer across
+   *  WebGL contexts anyway). Normal Viewport usage is byte-for-byte
+   *  unchanged — this flag has no effect when false (the default). */
+  warmupOnly?: boolean
 }
 
 // Map our preset tone-mapping enum to Three.js constants.
@@ -260,9 +285,48 @@ const DESTROYED_PATTERNS = [
   /crushed(?![a-z])/i,
   /orphans?(?![a-z])/i,
   /body_chunks?(?![a-z])/i,
+  // High-detail "hero" RGMs (Tiger, Churchill, Easy 8, M5 Stuart, M4A3
+  // Sherman) ship their wreck/crush state baked into the SAME file as named
+  // `WRK_*` (wrecked gun barrel / turret / body) and `CRS_*` (crushed body /
+  // turret / orphan) parts. Previously NOTHING matched these abbreviations,
+  // so every hero model rendered a wrecked gun barrel + crushed body panels
+  // overlapping the pristine tank. Match the `WRK`/`CRS` token at any
+  // separator boundary (covers `WRK_maingun_barrel`, `CRS_body_01`,
+  // `CRS_Orphan_03`). `(?![a-z])` so we only match the standalone prefix,
+  // never a longer word that merely starts with those letters.
+  /(?:^|[_\W])wrk(?![a-z])/i,
+  /(?:^|[_\W])crs(?![a-z])/i,
 ]
 function isDestroyedMesh(name: string): boolean {
   return DESTROYED_PATTERNS.some(re => re.test(name))
+}
+
+/**
+ * Gameplay-VARIANT overlay meshes — alternate weapon/upgrade geometry that a
+ * single RGM stacks on top of the base model so the engine can swap kit per
+ * upgrade. The Churchill is the worst offender: its file carries the AVRE
+ * Petard mortar turret (`GEO_turret_vert_mortar`, `GEO_avre_projectile`) and
+ * the Crocodile flamethrower kit (`GEO_hull_mg_01_vert_flamethrower`,
+ * `GEO_chassis_shaker_croctank`) layered over the standard 75mm Churchill.
+ * Rendering them all at once is the "shows the mortar Churchill as well" bug.
+ * We hide variants so the editor shows the BASE vehicle only.
+ *
+ * Scoped to Churchill-unique tokens on purpose — a bare `/mortar/` would also
+ * hide the M21 Mortar Halftrack's PRIMARY weapon (`m1_81mm_mortar`), which is
+ * the whole point of that vehicle. `turret_vert_mortar` is the variant turret;
+ * `avre`/`flamethrower`/`croctank` never appear except as Churchill upgrades.
+ * `goblins` is Relic's term for the little crew figures baked into hero RGMs
+ * (Tiger) — never wanted in a skin-preview, always safe to drop.
+ */
+const VARIANT_PATTERNS: RegExp[] = [
+  /turret_vert_mortar/i,
+  /(?:^|[_\W])avre(?![a-z])/i,
+  /flamethrower/i,
+  /croctank/i,
+  /goblins?(?![a-z])/i,
+]
+function isVariantMesh(name: string): boolean {
+  return VARIANT_PATTERNS.some(re => re.test(name))
 }
 
 /**
@@ -341,6 +405,64 @@ function dedupeByGeometry<
     out.push(m)
   }
   return out
+}
+
+/**
+ * Triangle-area-weighted centroid of a vehicle group's BODY meshes (those
+ * whose material carries the `__usesBodyDiffuse` flag), in group-local
+ * pre-scale space. Returns (0,0,0) when no body mesh is present so callers
+ * can fall back to a bbox centre.
+ *
+ * Why area-weighted: a long gun barrel (Tiger, Elefant) or any thin outlying
+ * attachment (antenna, tow cable, spare track) drags a bounding-box centre to
+ * one side, leaving the hull visibly off-pad while the barrel overhangs the
+ * edge. Surface-area weighting makes thin/small parts contribute almost
+ * nothing, so the heavy hull+turret mass lands dead-centre. Shared by the
+ * live build path (run) and the warmup builder (buildVehicleIntoCache) so the
+ * pre-built cache-hit copies centre identically to freshly-built ones.
+ */
+function computeBodyCentroidLocal(group: Group): Vector3 {
+  const bodyMeshes = group.children.filter(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- custom flag set on Three.js materials
+    c => (c as any).material && (c as any).material.__usesBodyDiffuse,
+  ) as Mesh[]
+  const centroid = new Vector3()
+  if (bodyMeshes.length === 0) return centroid
+  const sum = new Vector3()
+  let totalArea = 0
+  const a = new Vector3(),
+    b = new Vector3(),
+    c = new Vector3()
+  const ab = new Vector3(),
+    ac = new Vector3(),
+    cross = new Vector3()
+  for (const m of bodyMeshes) {
+    const geom = m.geometry
+    const pos = geom.attributes.position as BufferAttribute | undefined
+    const idx = geom.index
+    if (!pos || !idx) continue
+    const idxArr = idx.array as Uint16Array | Uint32Array
+    const posArr = pos.array as Float32Array
+    for (let i = 0; i < idxArr.length; i += 3) {
+      const ia = idxArr[i] * 3,
+        ib = idxArr[i + 1] * 3,
+        ic = idxArr[i + 2] * 3
+      a.set(posArr[ia], posArr[ia + 1], posArr[ia + 2])
+      b.set(posArr[ib], posArr[ib + 1], posArr[ib + 2])
+      c.set(posArr[ic], posArr[ic + 1], posArr[ic + 2])
+      ab.subVectors(b, a)
+      ac.subVectors(c, a)
+      cross.crossVectors(ab, ac)
+      const area = cross.length() * 0.5
+      if (area <= 0) continue
+      sum.x += ((a.x + b.x + c.x) / 3) * area
+      sum.y += ((a.y + b.y + c.y) / 3) * area
+      sum.z += ((a.z + b.z + c.z) / 3) * area
+      totalArea += area
+    }
+  }
+  if (totalArea > 0) centroid.copy(sum).divideScalar(totalArea)
+  return centroid
 }
 
 /**
@@ -431,6 +553,14 @@ function createGroundTexture(): Texture {
  */
 const MAX_ANISO = 16
 
+// Base radius (scene units) of the circular ground "slab" the vehicle sits
+// on. The geometry is built at this radius once; the per-vehicle load effect
+// then SCALES the slab in X/Z so the pad hugs each vehicle's footprint (a
+// fixed pad looked far too large around small cars). 4.2 ≈ half the King
+// Tiger's footprint diagonal, so scale ≈1 for the biggest vehicle and <1
+// for everything smaller.
+const SLAB_BASE_RADIUS = 4.2
+
 function clamp8(v: number): number {
   return v < 0 ? 0 : v > 255 ? 255 : v
 }
@@ -504,6 +634,73 @@ function makeSnowVariant(source: HTMLCanvasElement): HTMLCanvasElement {
   return out
 }
 
+// ── PMREM cache ───────────────────────────────────────────────────────────────
+// Keyed by "presetId:season". Each entry is ~3 MB. With 2 presets × 2 seasons
+// = 4 entries ≈ 12 MB — negligible. Cached textures are NEVER disposed on
+// vehicle or season switch — only on full page reload.
+const pmremCache = new Map<string, Texture>()
+
+// ── Vehicle group LRU cache ───────────────────────────────────────────────────
+const MAX_CACHED_VEHICLES = 4
+
+interface CachedVehicleGroup {
+  group: Group
+  // The base diffuse CanvasTexture at time of cache insertion.
+  // This is REPLACED on every swap-in with the current project's diffuse.
+  baseDiffuse: Texture | null
+  normalTex: Texture | null
+  // Store model + diffuseCanvas so the fast path can replay onModelLoaded.
+  model: import('@/lib/rgm').RgmModel | null
+  diffuseCanvas: HTMLCanvasElement | null
+  // submeshMap needed so the fast path can restore part-list + explode state.
+  submeshMap: Map<string, Mesh> | null
+  lastUsed: number
+}
+
+const vehicleGroupCache = new Map<string, CachedVehicleGroup>()
+
+// ── Pinned vehicle cache ──────────────────────────────────────────────────────
+// Holds faction-first vehicles (≤5). Never evicted — these stay warm for the
+// lifetime of the page so switching factions is instant.
+const pinnedVehicleCache = new Map<string, CachedVehicleGroup>()
+
+function disposeVehicleGroup(entry: CachedVehicleGroup): void {
+  entry.group.traverse(obj => {
+    const mesh = obj as Mesh
+    if (!mesh.isMesh) return
+    mesh.geometry.dispose()
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    mats.forEach(m => {
+      const mat = m as MeshStandardMaterial
+      // Dispose all texture slots EXCEPT the body diffuse CanvasTexture —
+      // that is managed by baseTextureRef / overlayTexRef and may still be
+      // referenced by the active overlay. Disposing it here would break the
+      // overlay compositor.
+      ;[(mat as MeshPhysicalMaterial).normalMap,
+        (mat as MeshPhysicalMaterial).roughnessMap,
+        (mat as MeshPhysicalMaterial).metalnessMap]
+        .forEach(t => t?.dispose())
+      // DO NOT dispose mat.map — it is the body diffuse CanvasTexture owned by baseTextureRef.
+      m.dispose()
+    })
+  })
+}
+
+function evictLruEntry(): void {
+  if (vehicleGroupCache.size <= MAX_CACHED_VEHICLES) return
+  let oldest = Infinity
+  let oldestKey = ''
+  vehicleGroupCache.forEach((entry, key) => {
+    if (entry.lastUsed < oldest) { oldest = entry.lastUsed; oldestKey = key }
+  })
+  if (!oldestKey) return
+  const entry = vehicleGroupCache.get(oldestKey)!
+  // Never dispose a group still referenced by the pinned cache.
+  const isPinned = Array.from(pinnedVehicleCache.values()).some(e => e.group === entry.group)
+  if (!isPinned) disposeVehicleGroup(entry)
+  vehicleGroupCache.delete(oldestKey)
+}
+
 export default function Viewport({
   root,
   vehicle,
@@ -528,6 +725,9 @@ export default function Viewport({
   controlsEnabled = true,
   fog = null,
   demoProps,
+  preloadRef,
+  faceDecalRef,
+  warmupOnly = false,
 }: Props) {
   // Latest preset — held in a ref so the once-only render loop (defined
   // in the init useEffect) can read fresh values without being re-created on
@@ -566,14 +766,6 @@ export default function Viewport({
   const vehicleApparentLengthRef = useRef<number>(5)
   const [vehicleReadyTick, setVehicleReadyTick] = useState(0)
   const baseTextureRef = useRef<Texture | null>(null)
-  /** Per-vehicle helper that re-runs ONLY the body-diffuse RGT search for
-   *  a different season and rebinds the resulting texture in-place. Set
-   *  by the heavy model-load effect after the model + initial diffuse
-   *  finish loading; cleared when the vehicle changes. The season effect
-   *  below calls this so toggling Summer ↔ Winter doesn't tear down the
-   *  whole mesh group + materials + cubemap (which made the ground colour
-   *  visibly lead the tank texture). */
-  const seasonReloadRef = useRef<((season: 'summer' | 'winter') => Promise<void>) | null>(null)
   const overlayTexRef = useRef<CanvasTexture | null>(null)
   /** Set whenever the overlay canvas is repainted (decal place, camo apply,
    *  base diffuse swap). The animation loop reads + clears this so we only
@@ -588,6 +780,16 @@ export default function Viewport({
    *  short-circuits before `renderer.render()`, freeing the GPU for the
    *  rest of the page (and letting laptops actually idle). */
   const needsRenderRef = useRef(true)
+  /** Timestamp (performance.now()) of the last camera interaction — set by
+   *  OrbitControls 'change' and the damping tail in the tick. Background
+   *  vehicle preloads poll this and defer their heavy GPU work until the
+   *  user has been idle for a beat, so orbiting never janks. */
+  const lastInteractionRef = useRef(0)
+  /** Cached result of `locateArchives(root)`. Keyed by the `root` handle's
+   *  identity so a reconnect (new root) triggers a fresh resolve while
+   *  vehicle-switches within the same session reuse the cached handle,
+   *  eliminating up to 4 IPC round-trips per switch. */
+  const archivesHandleRef = useRef<{ root: FileSystemDirectoryHandle; archives: FileSystemDirectoryHandle | null } | null>(null)
   const raycasterRef = useRef(new Raycaster())
   const pointerRef = useRef(new Vector2())
   /** All preset-managed lights live in this group. The preset effect tears
@@ -597,6 +799,10 @@ export default function Viewport({
   const sceneGridRef = useRef<GridHelper | null>(null)
   const groundMeshRef = useRef<Mesh | null>(null)
   const groundMatRef = useRef<MeshStandardMaterial | null>(null)
+  /** Set true once the camera has been framed on the FIRST vehicle of the
+   *  session. After that, vehicle switches must NOT move the camera or the
+   *  orbit pivot — the user keeps their current view/zoom across switches. */
+  const cameraFramedRef = useRef(false)
   /** Cached slab textures, one per season. Both are built once when the
    *  grass RGT loads — the winter variant is a canvas-filter derivative of
    *  the summer grass (heavy desaturate + brighten + cool blue overlay) so
@@ -605,8 +811,8 @@ export default function Viewport({
   const slabSummerTexRef = useRef<Texture | null>(null)
   const slabWinterTexRef = useRef<Texture | null>(null)
   /** Atomic season swap for the slab top material — set inside the slab
-   *  build effect, called by `seasonReloadRef` so ground + chassis flip on
-   *  the same render frame. */
+   *  build effect, called by the season useEffect (applySeasonToGroup) so
+   *  ground + chassis flip on the same render frame. */
   const slabSeasonSwapRef = useRef<((season: 'summer' | 'winter') => void) | null>(null)
   /** Latest season prop — held in a ref so the slab build effect can read
    *  the current value at mount without re-running on every toggle. */
@@ -627,6 +833,10 @@ export default function Viewport({
    *  surface. Updated when the cropped terrain is built. */
   const terrainGroundYRef = useRef<number>(0)
   const rendererRef = useRef<WebGLRenderer | null>(null)
+  /** Seamless gradient sky sphere (large inverted sphere, BackSide, no seams).
+   *  Replaces scene.background = cubemap so the visible sky is seamless while
+   *  scene.environment (PMREM IBL) is kept for correct vehicle lighting. */
+  const skyMeshRef = useRef<Mesh | null>(null)
   /** Cached CoH2 cubemap for the in-game preset (loaded lazily on first use). */
   const cubemapRef = useRef<CubeTexture | null>(null)
   const cubemapLoadingRef = useRef<Promise<CubeTexture | null> | null>(null)
@@ -658,6 +868,11 @@ export default function Viewport({
   const hoveredPartRef = useRef<string | null>(null)
   /** Last raw pixel position sampled for hover throttling (explode mode). */
   const hoverLastPxRef = useRef<{ x: number; y: number } | null>(null)
+  // Previous hover/selection state — used in the RAF tick to gate the
+  // unconditional needsRenderRef + shadowDirty so we don't re-render
+  // every frame at 60 fps just because explode mode is active.
+  const prevHoveredPartRef = useRef<string | null>(null)
+  const prevSelectedPartRef = useRef<string | null>(null)
   /** World-space centre of the currently-isolated part (for controls.target lerp). */
   const isolateTargetRef = useRef<Vector3 | null>(null)
   /** controls.target saved just before entering isolate mode so we can restore it. */
@@ -712,13 +927,27 @@ export default function Viewport({
     //     dark-spot problem we deliberately fixed.
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = PCFSoftShadowMap
+    // Manual shadow updates. By default Three.js re-renders the shadow
+    // map (a full-scene depth pass from the light's POV) on EVERY
+    // renderer.render() — including every frame of a camera orbit, even
+    // though orbiting moves only the camera while the model and light
+    // stay put, so the shadow is pixel-identical frame to frame. We
+    // disable auto-update and flag needsUpdate in the render loop only
+    // when something that actually changes the shadow happens (model
+    // swap, explode/upgrade visibility, preset/light/season change).
+    // Net effect: ~one fewer full-scene pass per orbit frame, shadows
+    // visually unchanged. needsUpdate is true now for the first draw.
+    renderer.shadowMap.autoUpdate = false
+    renderer.shadowMap.needsUpdate = true
     // Tone mapping + exposure — the preset effect writes the real values
     // immediately after init; these are just the boot fallback.
     const initial = presetRef.current
     renderer.toneMapping = toneMappingFromMode(initial.toneMapping)
     renderer.toneMappingExposure = initial.exposure
     const scene = new Scene()
-    scene.background = new Color(0x0c0d10)
+    // Boot fallback — preset effect overwrites this immediately on mount;
+    // use neutral dark grey so non-cubemap presets never flash pitch-black.
+    scene.background = new Color(0x404448)
     sceneRef.current = scene
     // Dev-only: expose the scene + camera on window so manual probes can
     // walk the tree (bounding boxes, intersection checks, etc.) without
@@ -791,6 +1020,7 @@ export default function Viewport({
         if (camera.position.y < minCamY) camera.position.y = minCamY
       }
       needsRenderRef.current = true
+      lastInteractionRef.current = performance.now()
     })
 
     // Lights live in a group owned by the preset effect — empty at boot,
@@ -826,14 +1056,95 @@ export default function Viewport({
     groundMeshRef.current = ground
     scene.add(ground)
 
+    // ── Gradient sky sphere ──────────────────────────────────────────────
+    // Large inverted sphere with a procedural GLSL gradient shader.
+    // Replaces scene.background = cubemap for the visible sky so there are:
+    //   • no cube seams / visible corners
+    //   • no gray underside (looking down at the tank shows sky, not a face)
+    //   • no clouds (plain sunny sky)
+    // scene.environment (the PMREM IBL used for vehicle lighting) is kept
+    // untouched — only the VISIBLE background changes.
+    // The sphere moves with the camera in the RAF tick so it's always centred.
+    const skyGeo = new SphereGeometry(900, 32, 16)
+    const skyMat = new ShaderMaterial({
+      side: BackSide,
+      depthWrite: false,
+      uniforms: {
+        uSunDirection: { value: new Vector3(0.4, 0.7, 0.3).normalize() },
+        // Summer defaults; the preset/season effect overwrites these per
+        // season so the VISIBLE sky actually flips with the season toggle
+        // (B1). Previously these were fixed summer-blue, so "Winter" only
+        // changed the IBL bake and the visible dome stayed summer.
+        uZenith:       { value: new Color(0x1a4a8a) },  // deep blue zenith
+        uMidSky:       { value: new Color(0x4a90d9) },  // mid-blue
+        uHorizon:      { value: new Color(0xb0cce8) },  // pale horizon haze
+        uBelow:        { value: new Color(0x87CEEB) },  // sky-blue below horizon
+        uSunGlow:      { value: 0.6 },                  // sun-disk strength
+      },
+      vertexShader: `
+        varying vec3 vWorldPos;
+        void main() {
+          vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uSunDirection;
+        uniform vec3 uZenith;
+        uniform vec3 uMidSky;
+        uniform vec3 uHorizon;
+        uniform vec3 uBelow;
+        uniform float uSunGlow;
+        varying vec3 vWorldPos;
+        void main() {
+          vec3 dir = normalize(vWorldPos);
+          // t = +1 at zenith, 0 at horizon, -1 at nadir.
+          float t = dir.y;
+          // Fully continuous vertical gradient. Both the above-horizon and
+          // below-horizon ramps use smoothstep, whose derivative is ZERO at
+          // t = 0 — so the two halves meet at uHorizon with matching slope
+          // and there is no bright ring / slope break at the horizon (B2:
+          // the old branch used pow(t,0.5) above and a linear ramp below,
+          // which produced a visible seam line where the slopes disagreed).
+          float up   = smoothstep(0.0, 0.55, t);        // horizon → zenith
+          float lift = smoothstep(0.0, 0.22, t);        // horizon → mid-sky
+          vec3  above = mix(mix(uHorizon, uMidSky, lift), uZenith, up);
+          float down  = smoothstep(0.0, -0.45, t);      // horizon → below
+          vec3  below = mix(uHorizon, uBelow, down);
+          vec3  sky   = (t >= 0.0) ? above : below;
+          // Subtle sun-glow disk (dimmed to near-zero in overcast winter).
+          float sunDot = max(0.0, dot(dir, normalize(uSunDirection)));
+          sky += vec3(1.0, 0.95, 0.85) * pow(sunDot, 64.0) * uSunGlow;
+          gl_FragColor = vec4(sky, 1.0);
+        }
+      `,
+    })
+    const skyMesh = new Mesh(skyGeo, skyMat)
+    skyMesh.name = '__skySphere'
+    skyMesh.visible = false // preset effect enables this for cubemap presets
+    skyMesh.renderOrder = -1
+    skyMeshRef.current = skyMesh
+    scene.add(skyMesh)
+
     let raf = 0
     const tick = () => {
       raf = requestAnimationFrame(tick)
+      // Anything an effect dirtied since the last frame (model load,
+      // preset/season/light swap, ground toggle, …) needs a shadow
+      // rebuild — capture it before the camera branch flips the flag.
+      const externalDirty = needsRenderRef.current
+      // Set when something that actually changes the shadow shape moves
+      // (explode lerp, explode/upgrade visibility). Pure camera motion
+      // does NOT set this, so orbits skip the shadow pass.
+      let shadowDirty = false
       // OrbitControls.update() returns true while damping is still
       // settling (i.e. camera is logically moving even after the user
       // released). Treat that as a render trigger.
       const cameraMoving = controls.update()
-      if (cameraMoving) needsRenderRef.current = true
+      if (cameraMoving) {
+        needsRenderRef.current = true
+        lastInteractionRef.current = performance.now()
+      }
 
       // Explode animation lerp — drives a render every frame while the
       // explode/implode tween is in flight, then stops.
@@ -846,6 +1157,7 @@ export default function Viewport({
           mesh.position.lerpVectors(orig, target, t)
         }
         needsRenderRef.current = true
+        shadowDirty = true // meshes moved → shadow shape changes
       }
 
       // ── Explode interactive: hover emissive + isolate visibility ──────────
@@ -853,32 +1165,46 @@ export default function Viewport({
         const hoveredPart = hoveredPartRef.current
         const selectedPart = selectedPartRef.current
 
-        for (const [name, mesh] of submeshMapsRef.current) {
-          const mat = mesh.material as MeshStandardMaterial
-          if (selectedPart) {
-            // Isolate mode: selected → highlighted + visible; others → hidden
-            if (name === selectedPart) {
+        // Only rebuild emissives + dirty the renderer when hover or selection
+        // actually changed. Previously these were set unconditionally every
+        // frame, which forced a full render + shadow pass at 60 fps even when
+        // the user wasn't hovering over anything — the main source of lag with
+        // a vehicle loaded in explode mode.
+        const hoverChanged =
+          hoveredPart !== prevHoveredPartRef.current ||
+          selectedPart !== prevSelectedPartRef.current
+        if (hoverChanged) {
+          prevHoveredPartRef.current = hoveredPart
+          prevSelectedPartRef.current = selectedPart
+
+          for (const [name, mesh] of submeshMapsRef.current) {
+            const mat = mesh.material as MeshStandardMaterial
+            if (selectedPart) {
+              // Isolate mode: selected → highlighted + visible; others → hidden
+              if (name === selectedPart) {
+                mesh.visible = true
+                mat.emissive.setHex(0x2255aa)
+                mat.emissiveIntensity = 0.3
+              } else {
+                mesh.visible = false
+                mat.emissive.setHex(0x000000)
+                mat.emissiveIntensity = 0
+              }
+            } else {
+              // Full explode: all parts visible; hover gets a warm tint
               mesh.visible = true
-              mat.emissive.setHex(0x2255aa)
-              mat.emissiveIntensity = 0.3
-            } else {
-              mesh.visible = false
-              mat.emissive.setHex(0x000000)
-              mat.emissiveIntensity = 0
-            }
-          } else {
-            // Full explode: all visible, hover gets a warm tint
-            mesh.visible = true
-            if (name === hoveredPart) {
-              mat.emissive.setHex(0xffaa00)
-              mat.emissiveIntensity = 0.18
-            } else {
-              mat.emissive.setHex(0x000000)
-              mat.emissiveIntensity = 0
+              if (name === hoveredPart) {
+                mat.emissive.setHex(0xffaa00)
+                mat.emissiveIntensity = 0.18
+              } else {
+                mat.emissive.setHex(0x000000)
+                mat.emissiveIntensity = 0
+              }
             }
           }
+          needsRenderRef.current = true
+          shadowDirty = true // part visibility may have changed → shadows
         }
-        needsRenderRef.current = true
       }
 
       // ── OrbitControls.target lerp toward isolated part (or back on deselect) ─
@@ -910,6 +1236,17 @@ export default function Viewport({
       // The RAF loop keeps spinning so we react instantly to the next
       // change, but the GPU goes quiet between interactions.
       if (!needsRenderRef.current) return
+      // Keep the sky sphere centred on the camera so it always fills the
+      // background regardless of how far the user has orbited.
+      if (skyMeshRef.current?.visible) {
+        skyMeshRef.current.position.copy(camera.position)
+      }
+      // Rebuild the shadow map only when geometry/visibility changed
+      // (shadowDirty) or an effect dirtied the scene since last frame
+      // (externalDirty). Pure camera orbits hit neither, so the shadow
+      // pass is skipped while dragging — the dominant per-frame saving.
+      // Three.js auto-resets needsUpdate to false after the draw.
+      if (shadowDirty || externalDirty) renderer.shadowMap.needsUpdate = true
       renderer.render(scene, camera)
       needsRenderRef.current = false
     }
@@ -934,20 +1271,244 @@ export default function Viewport({
   }, [])
 
   // =========================================================================
+  // Centralised season re-skinning (applySeasonToGroup)
+  //
+  // Works uniformly for live-built, warmup-built, and cache-hit mesh groups.
+  // The build paths tag every paintable material (body + turrets + panels)
+  // with `__seasonPaint`, `__seasonToken`, and `__summerMap`, and stamp the
+  // group with `__seasonFaction` / `__seasonBases` / `__seasonModel`. This
+  // helper then:
+  //   • lazily resolves the matching winter atlas PER TOKEN (so the StuG's
+  //     superstructure/turret + side skirts swap, not just the hull),
+  //     caching the decoded winter texture on the material;
+  //   • swaps each material's diffuse to the season target (winter atlas, or
+  //     the summer atlas as a fallback when no winter variant exists);
+  //   • applies a subtle cool "frost" emissive in winter so the season reads
+  //     visually even where CoH2's winter diffuse barely differs from summer;
+  //   • keeps the editable overlay base (baseTextureRef + onModelLoaded) in
+  //     sync so painted decals recomposite over the season-correct hull.
+  // Replaces the old hull-only seasonReloadRef which silently skipped the
+  // turret/panel atlases and never bound on cache-hit (warmed) vehicles.
+  // =========================================================================
+  const SEASON_SGA_CANDIDATES = [
+    'ArtHigh.sga', 'ArtHighXP1.sga', 'ArtHighXP2.sga', 'ArtArmies.sga',
+    'ArtGermanEF.sga', 'ArtSovietEF.sga', 'ArtAEF.sga', 'ArtAEFSkins.sga',
+    'ArtBritish.sga', 'ArtWestGerman.sga',
+  ]
+
+  /** Open a candidate archive, preferring the module-level preload cache and
+   *  falling back to the resolved Archives dir handle (shared back on success). */
+  const openSeasonArchive = useCallback(async (name: string): Promise<SgaArchive | null> => {
+    const pre = getPreloadedArchive(name)
+    if (pre) return pre
+    const dir = archivesHandleRef.current?.archives
+    if (!dir) return null
+    try {
+      const fh = await dir.getFileHandle(name)
+      const file = await fh.getFile()
+      const a = await SgaArchive.open(file)
+      cacheArchive(name, a)
+      return a
+    } catch { return null }
+  }, [])
+
+  /** Decode RGT bytes → diffuse CanvasTexture (mirrors decodeTextureBytes's
+   *  'diffuse' branch: sRGB, flipY, repeat wrap, max anisotropy). */
+  const decodeSeasonDiffuse = useCallback((bytes: Uint8Array): Texture | null => {
+    try {
+      const rgt = decodeRgt(bytes)
+      const cv = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
+      const t = new CanvasTexture(cv)
+      t.flipY = true
+      t.colorSpace = SRGBColorSpace
+      t.wrapS = t.wrapT = RepeatWrapping
+      t.anisotropy = MAX_ANISO
+      return t
+    } catch { return null }
+  }, [])
+
+  /** Resolve the winter variant of an atlas for a given token (''=body,
+   *  'turrets', 'panels') by TOC-scanning candidate archives for
+   *  `skins/<*winter*>/<base><suffix>_dif.rgt`, preferring the canonical
+   *  `winter` folder. Returns decodable bytes or null. */
+  const resolveWinterDiffuse = useCallback(async (
+    faction: string, bases: string[], token: string,
+  ): Promise<Uint8Array | null> => {
+    const factionLow = faction.toLowerCase()
+    const suffix = token === 'turrets' ? '_turrets' : token === 'panels' ? '_panels' : ''
+    for (const baseRaw of bases) {
+      const fname = `${String(baseRaw).toLowerCase()}${suffix}_dif.rgt`
+      const esc = fname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const skinRe = new RegExp(
+        `^art/armies/${factionLow}/vehicles/[^/]+/skins/([^/]*winter[^/]*)/${esc}$`,
+      )
+      for (const name of SEASON_SGA_CANDIDATES) {
+        const a = await openSeasonArchive(name)
+        if (!a) continue
+        const hits = a.list().map(f => f.path.toLowerCase()).filter(p => skinRe.test(p))
+        if (!hits.length) continue
+        hits.sort((p1, p2) => {
+          const f1 = p1.match(skinRe)![1], f2 = p2.match(skinRe)![1]
+          if (f1 === 'winter' && f2 !== 'winter') return -1
+          if (f2 === 'winter' && f1 !== 'winter') return 1
+          return f1.localeCompare(f2)
+        })
+        for (const p of hits) {
+          const cached = getPreloadedBytes(p)
+          if (cached) return cached
+          const b = await a.readByPath(p)
+          if (b) { cacheBytes(p, b); return b }
+        }
+      }
+    }
+    return null
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- SEASON_SGA_CANDIDATES is a stable literal recreated each render but never changes
+  }, [openSeasonArchive])
+
+  /** Re-skin a mesh group for the given season. Async (lazy winter resolve)
+   *  but commits maps synchronously once textures are ready. */
+  const applySeasonToGroup = useCallback(async (
+    group: Group | null, newSeason: 'summer' | 'winter',
+  ): Promise<void> => {
+    if (!group) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- custom season props stamped at build time
+    const g = group as any
+    const faction: string = g.__seasonFaction ?? ''
+    const bases: string[] = g.__seasonBases ?? []
+    const model: RgmModel | null = g.__seasonModel ?? null
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const paintMats: any[] = []
+    group.traverse(o => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mat = (o as Mesh).material as any
+      if (mat?.__seasonPaint) paintMats.push(mat)
+    })
+
+    // Winter: lazily resolve + cache each material's winter atlas, deduped by
+    // token so each of body/turrets/panels is fetched at most once.
+    if (newSeason === 'winter' && faction) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const byToken = new Map<string, any[]>()
+      for (const mat of paintMats) {
+        if (mat.__winterResolved) continue
+        const tok: string = mat.__seasonToken ?? ''
+        const arr = byToken.get(tok) ?? []
+        arr.push(mat)
+        byToken.set(tok, arr)
+      }
+      for (const [tok, mats] of byToken) {
+        const bytes = await resolveWinterDiffuse(faction, bases, tok)
+        const tex = bytes ? decodeSeasonDiffuse(bytes) : null
+        for (const mat of mats) {
+          mat.__winterMap = tex // null → falls back to summer atlas below
+          mat.__winterResolved = true
+        }
+      }
+    }
+
+    const overlayActive = !!overlayTexRef.current
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pick = (mat: any): Texture | null =>
+      newSeason === 'winter'
+        ? (mat.__winterMap ?? mat.__summerMap ?? null)
+        : (mat.__summerMap ?? null)
+
+    let bodyTarget: Texture | null = null
+    for (const mat of paintMats) {
+      const target = pick(mat)
+      if (mat.__usesBodyDiffuse) {
+        if (target) bodyTarget = target
+        // Body .map is the overlay canvas when an overlay is active; in that
+        // case we swap the underlying base (below) instead of the map.
+        if (!overlayActive && target) { mat.map = target; mat.needsUpdate = true }
+      } else if (target) {
+        mat.map = target
+        mat.needsUpdate = true
+      }
+      // Frost: faint cool emissive sheen in winter; restore captured baseline
+      // in summer. Cheap, uniform, and reads as "winter" even when the winter
+      // diffuse is nearly identical to summer (true for most CoH2 vehicles).
+      if (newSeason === 'winter') {
+        if (mat.__summerEmissive === undefined) {
+          mat.__summerEmissive = {
+            hex: mat.emissive?.getHex?.() ?? 0x000000,
+            intensity: mat.emissiveIntensity ?? 1,
+          }
+        }
+        mat.emissive?.setHex?.(0x3a4654)
+        mat.emissiveIntensity = 0.14
+        mat.needsUpdate = true
+      } else if (mat.__summerEmissive !== undefined) {
+        mat.emissive?.setHex?.(mat.__summerEmissive.hex)
+        mat.emissiveIntensity = mat.__summerEmissive.intensity
+        mat.needsUpdate = true
+      }
+    }
+
+    // Body base bookkeeping: point baseTextureRef at the season base and, when
+    // an overlay is active, hand the parent the season base canvas so decals
+    // recomposite over it. We never dispose here — the summer base lives in the
+    // vehicle cache and winter bases are cached on the material.
+    if (bodyTarget) {
+      baseTextureRef.current = bodyTarget
+      const img = (bodyTarget as Texture).image
+      if (overlayActive && model && img instanceof HTMLCanvasElement) {
+        onModelLoaded?.(model, img)
+      }
+    }
+
+    slabSeasonSwapRef.current?.(newSeason)
+    needsRenderRef.current = true
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onModelLoaded is a parent callback not wrapped in useCallback; including it would re-create this helper each parent render (harmless, but it's only invoked imperatively from effects so identity churn doesn't matter)
+  }, [resolveWinterDiffuse, decodeSeasonDiffuse])
+
+  // Pre-resolve + cache the winter diffuse atlas for every season-paint
+  // material in a group WITHOUT mutating the live display: it never swaps
+  // mat.map, the slab, or emissive — it only fetches+decodes each token's
+  // winter RGT once and stamps __winterMap/__winterResolved on the materials.
+  // The Connect-time warmup calls this so the FIRST Summer↔Winter toggle for
+  // ANY vehicle is a pure in-place map swap with zero async SGA read/decode —
+  // i.e. no season loading beam ever, matching "no loading except at Connect".
+  const prewarmWinterAtlases = useCallback(async (
+    group: Group | null, faction: string, bases: string[],
+  ): Promise<void> => {
+    if (!group || !faction) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const byToken = new Map<string, any[]>()
+    group.traverse(o => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mat = (o as Mesh).material as any
+      if (!mat?.__seasonPaint || mat.__winterResolved) return
+      const tok: string = mat.__seasonToken ?? ''
+      const arr = byToken.get(tok) ?? []
+      arr.push(mat)
+      byToken.set(tok, arr)
+    })
+    for (const [tok, mats] of byToken) {
+      const bytes = await resolveWinterDiffuse(faction, bases, tok)
+      const tex = bytes ? decodeSeasonDiffuse(bytes) : null
+      for (const mat of mats) {
+        mat.__winterMap = tex // null → toggle falls back to summer atlas
+        mat.__winterResolved = true
+      }
+    }
+  }, [resolveWinterDiffuse, decodeSeasonDiffuse])
+
+  // =========================================================================
   // Season change → swap diffuse + ground colour atomically
   //
-  // Calls into seasonReloadRef set by the heavy model-load effect, which
-  // captures the vehicle's archive context. The reload re-fetches just
-  // the body diffuse RGT for the new season, decodes it, and rebinds it
-  // on every body-tagged material in the same synchronous block as the
-  // ground colour change — so the user reads it as one atomic swap rather
-  // than the ground beating the tank texture. If the vehicle has no winter
-  // variant the search falls through to the summer paths (existing
-  // behaviour), but the ground tint still tracks the user's selection so
+  // Delegates to applySeasonToGroup, which re-skins every season-tagged
+  // material (hull + turret + panel atlases) on the live mesh group in place
+  // — re-fetching the winter RGT per token, rebinding the maps, applying the
+  // frost emissive, and flipping the ground slab in the same pass — so the
+  // user reads it as one atomic swap rather than the ground beating the tank
+  // texture. If the vehicle has no winter variant the per-token resolve falls
+  // back to the summer map, but the ground tint still tracks the selection so
   // the toggle feels responsive.
   //
   // Skipped on first mount — the heavy effect computes the initial season
-  // colour + diffuse together. Skipped also while seasonReloadRef is null
+  // together. Skipped also while the group isn't season-paint-ready yet
   // (between vehicle change and model finishing load).
   // =========================================================================
   const seasonInitialMountRef = useRef(true)
@@ -956,19 +1517,19 @@ export default function Viewport({
       seasonInitialMountRef.current = false
       return
     }
-    const reload = seasonReloadRef.current
-    if (!reload) {
-      // No reload helper bound yet (model still loading) — fire the
-      // ready signal anyway so the loading-border around the season
-      // toggle doesn't get stuck waiting for a callback that will
-      // never come.
+    const grp = meshGroupRef.current
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- season tag stamped at build time
+    if (!grp || !(grp as any).__seasonPaintReady) {
+      // No re-skinnable group bound yet (model still loading, or an old build
+      // without season tags) — fire the ready signal anyway so the loading-
+      // border around the season toggle doesn't get stuck waiting.
       onSeasonReady?.()
       return
     }
-    reload(season)
-      .catch(e => console.warn('[viewport] season reload failed', e))
+    applySeasonToGroup(grp, season)
+      .catch(e => console.warn('[viewport] season apply failed', e))
       .finally(() => onSeasonReady?.())
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- onSeasonReady is a parent-supplied callback not wrapped in useCallback; adding it would re-fire the season reload on every parent render
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onSeasonReady is a parent callback not wrapped in useCallback; applySeasonToGroup is stable via useCallback; only `season` should re-fire this effect
   }, [season])
 
   // =========================================================================
@@ -1023,10 +1584,6 @@ export default function Viewport({
     }
 
     let cancelled = false
-    let slabSummerTex: Texture | null = null
-    let slabWinterTex: Texture | null = null
-    let slabDirtTex: Texture | null = null
-    let slabDirtTexBot: Texture | null = null
 
     // Helper — apply the shared "single coverage, slight rotation" treatment
     // so both seasons share the same UV setup and the GPU sampling matches.
@@ -1038,8 +1595,92 @@ export default function Viewport({
       tex.anisotropy = MAX_ANISO
     }
 
+    // ── Build the slab IMMEDIATELY with a procedural fallback texture ──
+    // The CoH2 grass RGT lives in ArtEnvironment.sga, a large archive whose
+    // open+decode previously gated the ENTIRE slab construction — so the
+    // ground appeared seconds after the vehicle (or never, if the scan was
+    // slow). We now build the slab synchronously with a cheap procedural
+    // grass texture and add it to the scene on THIS frame, then load the
+    // real RGT grass + CC0 dirt asynchronously and hot-swap them into the
+    // live materials when ready. Result: the pad is always present instantly.
+    //
+    // Circular plinth. CylinderGeometry group order is: 0 = lateral side,
+    // 1 = top cap, 2 = bottom cap. The top cap gets the grass texture; the
+    // curved side + bottom get tiled dirt. Radius 4.2 (Ø8.4) circumscribes
+    // even the King Tiger (longest ≈10 native → ~7.2 units at WORLD_SCALE,
+    // half-extent 3.6) with margin so tracks/barrel don't overhang the disc.
+    const SLAB_RADIUS = SLAB_BASE_RADIUS
+    const SLAB_HEIGHT = 0.2
+    const slabGeo = new CylinderGeometry(SLAB_RADIUS, SLAB_RADIUS, SLAB_HEIGHT, 64)
+
+    // Procedural fallback grass top — no SGA dependency, builds in <1ms.
+    const fallbackTop = createGroundTexture()
+    fallbackTop.wrapS = fallbackTop.wrapT = RepeatWrapping
+    fallbackTop.repeat.set(1, 1)
+    fallbackTop.center.set(0.5, 0.5)
+    fallbackTop.rotation = Math.PI / 7
+
+    const slabMatTop = new MeshStandardMaterial({
+      map: fallbackTop,
+      roughness: 0.95,
+      metalness: 0,
+    })
+    slabMatTop.color.setHex(seasonGroundTint(slabMatTop, seasonRef.current))
+    // Edge + bottom: flat dark-earth colour now; swapped to tiled dirt once
+    // the bundled texture finishes loading below.
+    const slabMatEdge = new MeshStandardMaterial({
+      map: null,
+      color: 0x2e2418,
+      roughness: 1.0,
+      metalness: 0,
+    })
+    const slabMatBot = new MeshStandardMaterial({
+      map: null,
+      color: 0x2e2418,
+      roughness: 1.0,
+      metalness: 0,
+    })
+    // CylinderGeometry group order: 0 = side, 1 = top cap, 2 = bottom cap.
+    const slabMaterials: MeshStandardMaterial[] = [slabMatEdge, slabMatTop, slabMatBot]
+
+    const slab = new Mesh(slabGeo, slabMaterials)
+    slab.position.y = -0.1
+    slab.receiveShadow = true
+    // Mark so the preset's showGround gate treats this slab as valid terrain.
+    ;(slab as { __hasHeightmap?: boolean }).__hasHeightmap = true
+    scene.add(slab)
+    groundMeshRef.current = slab
+    groundMatRef.current = slabMatTop
+    slabSummerTexRef.current = fallbackTop
+    slabWinterTexRef.current = null
+    slab.visible = !!presetRef.current.showGround
+    needsRenderRef.current = true
+
+    // Atomic season swap — flips the slab's .map between cached summer and
+    // winter textures (when both exist). Reads the refs dynamically, so once
+    // the async loader publishes real summer/winter RGT textures below this
+    // closure automatically uses them; until then it falls back to colour-tint.
+    slabSeasonSwapRef.current = s => {
+      const mat = groundMatRef.current
+      if (!mat) return
+      const summer = slabSummerTexRef.current
+      const winter = slabWinterTexRef.current
+      if (summer && winter) {
+        mat.map = s === 'winter' ? winter : summer
+        mat.color.setHex(0xffffff)
+        mat.needsUpdate = true
+        needsRenderRef.current = true
+        return
+      }
+      mat.color.setHex(seasonGroundTint(mat, s))
+      needsRenderRef.current = true
+    }
+
+    // ── Async: load real grass RGT + CC0 dirt, hot-swap into live materials ─
     ;(async () => {
       // ── Try to load CoH2 grass RGT from ArtEnvironment.sga ───────────
+      let realSummer: Texture | null = null
+      let realWinter: Texture | null = null
       try {
         const archives = await locateArchives(root)
         if (!cancelled && archives) {
@@ -1050,81 +1691,48 @@ export default function Viewport({
           if (rgtBytes && !cancelled) {
             const rgt = decodeRgt(rgtBytes)
             const cv = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
-            // Summer: the grass canvas as-is.
             const summer = new CanvasTexture(cv)
             summer.colorSpace = SRGBColorSpace
-            // **Wrap mode MUST be Repeat, not ClampToEdge.** Rotating the
-            // UV square by 25° pushes the corners outside [0,1]; with
-            // ClampToEdge the GPU samples the edge pixel row for every
-            // out-of-range UV, producing radial "rainbow" streaks at the
-            // four corners. RepeatWrapping wraps the texture content into
-            // those corners — for a tileable grass RGT the seam is
-            // essentially invisible.
             applySlabUv(summer)
-            slabSummerTex = summer
-            // Winter: derive a snow canvas from the same grass canvas via
-            // `makeSnowVariant` (heavy desaturate + brighten + cool tint).
-            // Builds in O(canvas px) on the main thread — for a 256² RGT
-            // it's well under a millisecond, so we do it inline rather
-            // than gating on an async worker. Result: toggling Summer ↔
-            // Winter is a free texture-pointer swap, no archive scan.
+            realSummer = summer
+            // Winter: derive a snow canvas from the same grass canvas.
             const winterCv = makeSnowVariant(cv)
             const winter = new CanvasTexture(winterCv)
             winter.colorSpace = SRGBColorSpace
             applySlabUv(winter)
-            slabWinterTex = winter
+            realWinter = winter
           }
         }
       } catch (e) {
-        console.log('[viewport] slab: grass RGT unavailable, using procedural fallback', e)
+        console.log('[viewport] slab: grass RGT unavailable, keeping procedural fallback', e)
       }
 
-      // ── Load CC0 bundled dirt texture (side UV) ───────────────────────
-      // brown_mud_dry_2k.jpg is Vite-bundled and always available —
-      // no SGA dependency. Load synchronously via TextureLoader.
-      //
-      // Side UV rationale: the cylinder side maps u:0→1 around the full
-      // circumference and v:0→1 over the 0.2 m height. Square-tile repeat:
-      //   repeat.x = circumference / DIRT_TILE_M
-      //   repeat.y = height / DIRT_TILE_M
-      // DIRT_TILE_M = 1.0 m → ~18 tiles around the rim, 0.2 tiles tall.
-      // Each printed tile is square in world space → no stretch. Bumped from
-      // 0.7→1.0 m so there are fewer repeats around the rim; combined with
-      // brown_mud_dry's feature-less granular surface the tiling no longer
-      // reads as an obvious repeating pattern.
+      // ── Load CC0 bundled dirt texture (side + bottom UV) ──────────────
+      let dirtTex: Texture | null = null
+      let dirtTexBot: Texture | null = null
       if (!cancelled) {
         try {
           const loader = new TextureLoader()
-          const dirtTex = await new Promise<Texture>((resolve, reject) => {
+          const dt = await new Promise<Texture>((resolve, reject) => {
             loader.load(dirtTextureUrl, resolve, undefined, reject)
           })
           if (!cancelled) {
-            dirtTex.colorSpace = SRGBColorSpace
-            const SLAB_RADIUS = 2.9 // must match CylinderGeometry below
-            const SLAB_HEIGHT = 0.2
-            const SIDE_CIRCUMFERENCE = 2 * Math.PI * SLAB_RADIUS // ≈ 18.22 m
-            const DIRT_TILE_M = 1.0 // world size of one tile — fewer repeats, hides tiling
-            dirtTex.wrapS = dirtTex.wrapT = RepeatWrapping
-            dirtTex.repeat.set(
-              SIDE_CIRCUMFERENCE / DIRT_TILE_M, // ≈ 18.2 tiles around rim
-              SLAB_HEIGHT / DIRT_TILE_M,         // ≈ 0.2 → same world scale → no stretch
-            )
-            dirtTex.anisotropy = MAX_ANISO
-            slabDirtTex = dirtTex
-            // Bottom cap: load a second independent texture instance from
-            // the same URL so its UV (planar disc, single coverage) doesn't
-            // conflict with the side's tiled UV. Clone() shares the GPU
-            // image data (no re-upload) but gives an independent repeat/
-            // rotation state.
-            const dirtTexBot = dirtTex.clone()
-            dirtTexBot.colorSpace = SRGBColorSpace
-            dirtTexBot.wrapS = dirtTexBot.wrapT = RepeatWrapping
-            dirtTexBot.repeat.set(1, 1)
-            dirtTexBot.center.set(0.5, 0.5)
-            dirtTexBot.rotation = Math.PI / 7  // same rotation as grass top
-            dirtTexBot.anisotropy = MAX_ANISO
-            dirtTexBot.needsUpdate = true
-            slabDirtTexBot = dirtTexBot
+            dt.colorSpace = SRGBColorSpace
+            const SIDE_CIRCUMFERENCE = 2 * Math.PI * SLAB_RADIUS
+            const DIRT_TILE_M = 1.0 // world size of one tile — hides tiling
+            dt.wrapS = dt.wrapT = RepeatWrapping
+            dt.repeat.set(SIDE_CIRCUMFERENCE / DIRT_TILE_M, SLAB_HEIGHT / DIRT_TILE_M)
+            dt.anisotropy = MAX_ANISO
+            dirtTex = dt
+            const dtBot = dt.clone()
+            dtBot.colorSpace = SRGBColorSpace
+            dtBot.wrapS = dtBot.wrapT = RepeatWrapping
+            dtBot.repeat.set(1, 1)
+            dtBot.center.set(0.5, 0.5)
+            dtBot.rotation = Math.PI / 7
+            dtBot.anisotropy = MAX_ANISO
+            dtBot.needsUpdate = true
+            dirtTexBot = dtBot
           }
         } catch (e) {
           console.log('[viewport] slab: CC0 dirt texture failed to load', e)
@@ -1132,154 +1740,38 @@ export default function Viewport({
       }
 
       if (cancelled) {
-        slabSummerTex?.dispose()
-        slabWinterTex?.dispose()
-        slabDirtTex?.dispose()
-        slabDirtTexBot?.dispose()
+        realSummer?.dispose()
+        realWinter?.dispose()
+        dirtTex?.dispose()
+        dirtTexBot?.dispose()
         return
       }
 
-      // Fall back to procedural if RGT load failed or install is absent.
-      // No snow variant in the fallback path — `seasonGroundTint()` will
-      // colour-tint it via the material's .color multiplier instead.
-      if (!slabSummerTex) {
-        const fallback = createGroundTexture()
-        // Match the RGT path's UV treatment so the fallback reads the
-        // same way visually. (Same wrap-mode reasoning as above — Repeat
-        // avoids radial clamp streaks.)
-        fallback.wrapS = fallback.wrapT = RepeatWrapping
-        fallback.repeat.set(1, 1)
-        fallback.center.set(0.5, 0.5)
-        fallback.rotation = Math.PI / 7
-        slabSummerTex = fallback
+      // ── Hot-swap the real grass into the top material ─────────────────
+      if (realSummer) {
+        const oldTop = slabMatTop.map
+        slabMatTop.map =
+          seasonRef.current === 'winter' && realWinter ? realWinter : realSummer
+        if (realWinter) slabMatTop.color.setHex(0xffffff)
+        else slabMatTop.color.setHex(seasonGroundTint(slabMatTop, seasonRef.current))
+        slabMatTop.needsUpdate = true
+        // Publish for the season-swap helper. Cleanup reads these refs.
+        slabSummerTexRef.current = realSummer
+        slabWinterTexRef.current = realWinter
+        // Free the procedural fallback texture we just replaced.
+        if (oldTop && oldTop !== realSummer) oldTop.dispose()
       }
 
-      // ── Build the slab ────────────────────────────────────────────────
-      // BoxGeometry(5, 0.2, 5): 5 m square, 20 cm thick.
-      // Top face sits at Y = 0 when position.y = -0.10.
-      // Tight plinth (was 7×7, originally 10×10) — the tank is auto-scaled
-      // to a longest axis of ~5 units in editor mode, so a 5 m square
-      // hugs the vehicle's silhouette closely and reads as a "tank
-      // stand" rather than a slab the tank is parked on.
-      //
-      // Circular plinth. CylinderGeometry group order is: 0 = lateral side,
-      // 1 = top cap, 2 = bottom cap. The top cap gets the grass texture; the
-      // curved side and bottom get the dirt texture (mud_dry_02_dif.rgt) tiled
-      // with an aspect-correct repeat (see UV setup above) so each soil tile is
-      // square in world space — seamless and un-stretched on the thin 0.2 m
-      // band. Falls back to a flat dark-earth color if the RGT is unavailable.
-      //
-      // Why a separate dirt texture instead of extending the grass UVs? The
-      // grass texture's V axis collapses into a ~1% strip on the 20 cm side,
-      // producing a smeared single-colour band. A dedicated dirt tile sized to
-      // ~0.5 m/tile reads as a clean soil cross-section.
-      //
-      // Radius 2.9 (Ø5.8) circumscribes the tank's ~5-unit auto-scaled length
-      // with a small margin so tracks/barrel don't overhang the disc; 64
-      // radial segments keep the rim visually smooth. Height 0.2 matches the
-      // old slab thickness so the top still rests at Y=0 with position.y=-0.10.
-      const slabGeo = new CylinderGeometry(2.9, 2.9, 0.2, 64)
-      // Pick the season-matching texture at build time. If the winter
-      // variant is missing (procedural fallback path), the summer texture
-      // is used and `seasonGroundTint()` colour-multiplies it instead.
-      const initialSlabTex =
-        seasonRef.current === 'winter' && slabWinterTex ? slabWinterTex : slabSummerTex
-      const slabMatTop = new MeshStandardMaterial({
-        map: initialSlabTex,
-        roughness: 0.95,
-        metalness: 0,
-      })
-      // Initial color: white (no tint) when a real winter texture exists —
-      // the texture itself carries the snow look. Falls back to legacy
-      // colour-tint path when winter variant is missing (procedural slab).
-      if (slabWinterTex) {
-        slabMatTop.color.setHex(0xffffff)
-      } else {
-        slabMatTop.color.setHex(seasonGroundTint(slabMatTop, seasonRef.current))
-      }
-      // Edge / underside material — brown_mud_dry tiled with an aspect-correct
-      // repeat (square tiles, no stretch) when available, falling back to a
-      // flat dark-earth color. Color multiplier 0x584636 is a DARK warm earth
-      // tone (~34% luminance): brown_mud_dry's albedo is a fairly light tan, so
-      // multiplying it down keeps the rim reading as deep packed soil rather
-      // than a bright sandy band. roughness:1 prevents any specular highlight
-      // on the thin rim.
-      const slabMatEdge = new MeshStandardMaterial({
-        map: slabDirtTex ?? null,
-        color: slabDirtTex ? 0x584636 : 0x2e2418, // dark earth tint w/ texture, dark loam fallback
-        roughness: 1.0,
-        metalness: 0,
-      })
-      // Bottom cap: separate material + separate texture instance so the
-      // planar-disc UV (repeat 1×1, rotated) doesn't fight the side's
-      // tiled-band UV. Uses same dirt texture image but independent state.
-      const slabMatBot = new MeshStandardMaterial({
-        map: slabDirtTexBot ?? slabDirtTex ?? null,
-        color: slabDirtTexBot ? 0x584636 : 0x2e2418,
-        roughness: 1.0,
-        metalness: 0,
-      })
-      // CylinderGeometry group order: 0 = side, 1 = top cap, 2 = bottom cap.
-      const slabMaterials: MeshStandardMaterial[] = [
-        slabMatEdge, // 0: curved side — tiled dirt (aspect-correct square tiles)
-        slabMatTop,  // 1: top cap — grass (or snow)
-        slabMatBot,  // 2: bottom cap — planar dirt disc (same UV as grass top)
-      ]
-
-      const slab = new Mesh(slabGeo, slabMaterials)
-      slab.position.y = -0.1
-      slab.receiveShadow = true
-      // Mark so the preset's showGround gate treats this slab as valid
-      // terrain (same semantics as the old __hasHeightmap flag).
-      ;(slab as { __hasHeightmap?: boolean }).__hasHeightmap = true
-
-      const sceneObj = sceneRef.current
-      if (!sceneObj) {
-        slabGeo.dispose()
-        slabMatTop.dispose()
-        slabMatEdge.dispose()
-        slabMatBot.dispose()
-        slabSummerTex?.dispose()
-        slabWinterTex?.dispose()
-        slabDirtTex?.dispose()
-        slabDirtTexBot?.dispose()
-        return
-      }
-      sceneObj.add(slab)
-      groundMeshRef.current = slab
-      // groundMatRef still tracks the textured top so season-reload + the
-      // "color the ground winter-blue" path keep working unchanged.
-      groundMatRef.current = slabMatTop
-
-      // Publish both textures for the season-swap helper.
-      slabSummerTexRef.current = slabSummerTex
-      slabWinterTexRef.current = slabWinterTex
-
-      // Atomic season swap — flips the slab's .map between cached summer
-      // and winter textures (when both exist) so the ground changes on
-      // the same render frame as the chassis diffuse. No async work; the
-      // textures were built at slab-load time.
-      slabSeasonSwapRef.current = s => {
-        const mat = groundMatRef.current
-        if (!mat) return
-        const summer = slabSummerTexRef.current
-        const winter = slabWinterTexRef.current
-        // Real winter texture available → pointer swap, neutralise tint.
-        if (summer && winter) {
-          mat.map = s === 'winter' ? winter : summer
-          mat.color.setHex(0xffffff)
-          mat.needsUpdate = true
-          needsRenderRef.current = true
-          return
-        }
-        // Fallback (procedural slab — no real RGT loaded). Keep the
-        // legacy colour-tint behaviour so winter still reads as "frosted".
-        mat.color.setHex(seasonGroundTint(mat, s))
-        needsRenderRef.current = true
+      // ── Hot-swap the dirt into the edge + bottom materials ────────────
+      if (dirtTex) {
+        slabMatEdge.map = dirtTex
+        slabMatEdge.color.setHex(0x584636)
+        slabMatEdge.needsUpdate = true
+        slabMatBot.map = dirtTexBot ?? dirtTex
+        slabMatBot.color.setHex(0x584636)
+        slabMatBot.needsUpdate = true
       }
 
-      // Sync visibility with the current preset immediately.
-      slab.visible = !!presetRef.current.showGround
       needsRenderRef.current = true
     })()
 
@@ -1754,8 +2246,37 @@ export default function Viewport({
 
     // ── Background ──────────────────────────────────────────────────────
     if (preset.background.kind === 'color') {
+      // Solid-colour preset — hide sky sphere, use scene.background directly.
+      if (skyMeshRef.current) skyMeshRef.current.visible = false
       scene.background = new Color(preset.background.hex)
     } else {
+      // Cubemap preset — use the gradient sky sphere for the VISIBLE
+      // background (seamless, no cube corners, no gray underside) and keep
+      // scene.environment (PMREM) for vehicle IBL lighting.
+      if (skyMeshRef.current) {
+        skyMeshRef.current.visible = true
+        // B1: drive the visible gradient dome from the season. Summer is a
+        // clear blue CoH2 sky; winter is a cold, flat, overcast sky (pale
+        // blue-grey, near-white horizon haze, no sun disk).
+        const sm = skyMeshRef.current.material as ShaderMaterial
+        const u = sm.uniforms
+        if (u?.uZenith) {
+          if (season === 'winter') {
+            u.uZenith.value.set(0x6c7d92)   // cold grey-blue zenith
+            u.uMidSky.value.set(0x95a3b6)   // muted slate
+            u.uHorizon.value.set(0xd2dae4)  // pale near-white haze
+            u.uBelow.value.set(0xc0c9d4)    // cool grey below horizon
+            u.uSunGlow.value = 0.06          // overcast → no real sun disk
+          } else {
+            u.uZenith.value.set(0x1a4a8a)
+            u.uMidSky.value.set(0x4a90d9)
+            u.uHorizon.value.set(0xb0cce8)
+            u.uBelow.value.set(0x87ceeb)
+            u.uSunGlow.value = 0.6
+          }
+        }
+      }
+      scene.background = null  // sky sphere provides the visual background
       // Cubemap — try CoH2 ArtEnvironment.sga first, fall back to procedural
       // sky if the user hasn't connected a real install. The load is async;
       // show a procedural sky immediately so the viewport never goes black.
@@ -1884,96 +2405,114 @@ export default function Viewport({
                 /* fall through */
               }
               // Procedural fallback — always succeeds.
-              return await proceduralSkybox(season)
+              try {
+                return await proceduralSkybox(season)
+              } catch (e) {
+                console.warn('[viewport] proceduralSkybox failed, using plain colour', e)
+                return null
+              }
             })()
           }
-          const cube = await cubemapLoadingRef.current
+          let cube: CubeTexture | null
+          try {
+            cube = await cubemapLoadingRef.current
+          } finally {
+            // Always clear the loading slot so a later desired-key change
+            // can kick off a fresh load, even if the await threw.
+            cubemapLoadingRef.current = null
+          }
           // First arrival populates the ref; concurrent awaiters see it
-          // already set and skip the assignment. Clear the loading slot
-          // so a later desired-key change can kick off a fresh load.
+          // already set and skip the assignment.
           if (cube && !cubemapRef.current) {
             cubemapRef.current = cube
             cubemapKeyRef.current = desiredKey
           } else if (!cube) {
-            // Cubemap loader failed quietly — the procedural fallback in
-            // the preset effect handles the visual; no console noise on
-            // the happy path. Surfaced via the disconnected-archive toast
-            // upstream when the failure is user-actionable.
+            // Procedural fallback failed — sky sphere still provides the
+            // visual background; no scene.background needed.
+            needsRenderRef.current = true
           }
-          cubemapLoadingRef.current = null
+        }
+        // Only apply if we're still on a cubemap preset.
+        if (presetRef.current.background.kind === 'cubemap') {
+          if (!cancelled && cubemapRef.current) {
+            // scene.background stays null — the gradient sky sphere provides
+            // the visible background.  We still bake a PMREM from the
+            // cubemap so vehicle IBL / reflections use correct sky colours.
+            if (rendererRef.current) {
+              const pmremKey = `${preset.id}:${season}`
+              const cached = pmremCache.get(pmremKey)
+              if (cached) {
+                envMapRef.current = cached
+                scene.environment = cached
+                ;(scene as { environmentIntensity?: number }).environmentIntensity = 0.55
+              } else {
+                // Dispose previous env only on a cache miss (new preset/season combo).
+                if (envMapRef.current && !Array.from(pmremCache.values()).includes(envMapRef.current)) {
+                  envMapRef.current.dispose()
+                }
+                envMapRef.current = null
+                const pmrem = new PMREMGenerator(rendererRef.current)
+                try {
+                  const env = pmrem.fromCubemap(cubemapRef.current).texture
+                  pmremCache.set(pmremKey, env)
+                  envMapRef.current = env
+                  scene.environment = env
+                  // Raised from 0.3 → 0.4 to lift shadowed areas (e.g.
+                  // Ostwind flak-gun cage) without reintroducing harsh
+                  // specular. Vehicle materials clamp further down via
+                  // per-material envMapIntensity (see below).
+                  ;(scene as { environmentIntensity?: number }).environmentIntensity = 0.55
+                } catch (e) {
+                  // PMREM bake can fail on WebGL contexts that don't support
+                  // floating-point textures (some integrated GPUs). The scene
+                  // falls back to non-IBL shading which is visually acceptable;
+                  // we keep this single warn because it indicates a real
+                  // hardware limitation worth knowing about.
+                  console.warn('[viewport] PMREM bake failed, no IBL:', e)
+                } finally {
+                  pmrem.dispose()
+                }
+              }
+            }
+            needsRenderRef.current = true
+          } else if (!cubemapRef.current) {
+            // No cubemap loaded yet — sky sphere is already visible (set
+            // above before the async block); just ensure a render fires.
+            needsRenderRef.current = true
+          }
         }
         if (cancelled) return
-        // Only apply if we're still on a cubemap preset.
-        if (presetRef.current.background.kind === 'cubemap' && cubemapRef.current) {
-          scene.background = cubemapRef.current
-          // Bake an IBL environment map from the same cubemap. PMREM
-          // produces a prefiltered MIP chain so MeshStandardMaterial
-          // can sample correctly across the roughness range. Without
-          // this, the structure-loader's foliage cards (which have
-          // outward-facing leaves but rely on ambient sky pickup for
-          // the side facing away from the sun) render near-black.
+        if (presetRef.current.background.kind === 'cubemap' && !cubemapRef.current) {
           if (rendererRef.current) {
-            // Dispose previous env so successive cubemap loads don't
-            // leak GPU memory.
-            if (envMapRef.current) {
-              envMapRef.current.dispose()
+            const pmremKey = `roomenv:${season}`
+            const cached = pmremCache.get(pmremKey)
+            if (cached) {
+              envMapRef.current = cached
+              scene.environment = cached
+              ;(scene as { environmentIntensity?: number }).environmentIntensity = 0.3
+            } else {
+              if (envMapRef.current && !Array.from(pmremCache.values()).includes(envMapRef.current)) {
+                envMapRef.current.dispose()
+              }
               envMapRef.current = null
+              const pmrem = new PMREMGenerator(rendererRef.current)
+              try {
+                pmrem.compileEquirectangularShader()
+                const env = pmrem.fromScene(new RoomEnvironment()).texture
+                pmremCache.set(pmremKey, env)
+                envMapRef.current = env
+                scene.environment = env
+                ;(scene as { environmentIntensity?: number }).environmentIntensity = 0.3
+              } catch (e) {
+                console.warn('[viewport] RoomEnvironment PMREM bake failed, no IBL:', e)
+              } finally { pmrem.dispose() }
             }
-            const pmrem = new PMREMGenerator(rendererRef.current)
-            try {
-              const env = pmrem.fromCubemap(cubemapRef.current).texture
-              envMapRef.current = env
-              scene.environment = env
-              // Lowered from 0.65 → 0.3. Research into CoH2 / Essence
-              // 3.0 (KGC 2013 rendering paper + community analysis)
-              // shows CoH2 does not use prominent cubemap-based IBL
-              // on vehicles — the dominant specular contribution comes
-              // from the sun directional hitting the _spc map, with
-              // sky bounce delivered via SH/hemisphere terms. At 0.65
-              // we were stacking a strong cubemap IBL on top of the
-              // hemi, which over-brightened lit faces (giving the
-              // chrome-ball look) and added cubemap chromaticity that
-              // the game's own renderer doesn't apply. 0.3 keeps just
-              // enough environment lift for foliage / wreck props to
-              // avoid black cavities; vehicle materials clamp further
-              // down via per-material envMapIntensity (see below).
-              ;(scene as { environmentIntensity?: number }).environmentIntensity = 0.3
-            } catch (e) {
-              // PMREM bake can fail on WebGL contexts that don't support
-              // floating-point textures (some integrated GPUs). The scene
-              // falls back to non-IBL shading which is visually acceptable;
-              // we keep this single warn because it indicates a real
-              // hardware limitation worth knowing about.
-              console.warn('[viewport] PMREM bake failed, no IBL:', e)
-            } finally {
-              pmrem.dispose()
-            }
-          }
-          needsRenderRef.current = true
-        } else if (presetRef.current.background.kind === 'cubemap' && !cubemapRef.current) {
-          if (rendererRef.current) {
-            if (envMapRef.current) { envMapRef.current.dispose(); envMapRef.current = null }
-            const pmrem = new PMREMGenerator(rendererRef.current)
-            try {
-              pmrem.compileEquirectangularShader()
-              const env = pmrem.fromScene(new RoomEnvironment()).texture
-              envMapRef.current = env
-              scene.environment = env
-              ;(scene as { environmentIntensity?: number }).environmentIntensity = 0.3
-            } catch (e) {
-              console.warn('[viewport] RoomEnvironment PMREM bake failed, no IBL:', e)
-            } finally { pmrem.dispose() }
           }
           needsRenderRef.current = true
         }
       })()
-      // Immediate placeholder — grey-blue sky-ish color while the cubemap
-      // resolves; avoids a flash of the previous preset's background.
-      if (scene.background instanceof Color) {
-        // leave existing color until cubemap arrives
-      } else {
-        scene.background = new Color(0x6a7d95)
-      }
+      // scene.background is null; the gradient sky sphere (already made
+      // visible above) covers the canvas so there's no flash of black.
     }
 
     needsRenderRef.current = true
@@ -1992,16 +2531,24 @@ export default function Viewport({
   // Load vehicle model
   // =========================================================================
   useEffect(() => {
+    // warmupOnly: no vehicle to render — the headless Viewport exists solely
+    // so buildVehicleIntoCache can be driven via preloadRef.
+    if (warmupOnly) return
     if (!vehicle || !sceneRef.current) return
     let cancelled = false
-    setLoading(true)
     setErr(null)
 
     const run = async () => {
       console.log(`[viewport] heavy effect run() start — vehicle=${vehicle?.id} season=${showDestroyed}`)
       try {
-        const archives = await locateArchives(root)
-        console.log(`[viewport] locateArchives done: ${archives ? 'found' : 'null'}`)
+        // Cache the locateArchives result by root identity to avoid 4 IPC
+        // round-trips on every vehicle switch. Re-resolve only when root changes.
+        if (!archivesHandleRef.current || archivesHandleRef.current.root !== root) {
+          const resolved = await locateArchives(root)
+          archivesHandleRef.current = { root, archives: resolved }
+        }
+        const archives = archivesHandleRef.current.archives
+        console.log(`[viewport] locateArchives done: ${archives ? 'found (cached)' : 'null'}`)
         if (!archives) throw new Error('Archives folder not found.')
         // Search across every Art*.sga that ships with CoH2. Vehicle meshes
         // are usually in ArtHigh.sga but the diffuse RGTs live in faction-
@@ -2028,6 +2575,94 @@ export default function Viewport({
           const pre = getPreloadedArchive(sgaName)
           if (pre) rgmArchiveCache.set(sgaName, pre)
         }
+
+        // ── Group cache hit — fast path ──────────────────────────────────────
+        // Check pinned cache first, then LRU cache.
+        const cachedEntry = pinnedVehicleCache.get(vehicle.id) ?? vehicleGroupCache.get(vehicle.id)
+        if (cachedEntry) {
+          // Only bump lastUsed for LRU entries (pinned entries have no eviction).
+          if (!pinnedVehicleCache.has(vehicle.id)) cachedEntry.lastUsed = Date.now()
+          const fastScene = sceneRef.current!
+          const oldGroup = meshGroupRef.current
+          if (oldGroup && oldGroup !== cachedEntry.group) {
+            fastScene.remove(oldGroup)
+            // Old group stays in cache if it is a cached vehicle;
+            // only dispose if not in cache (i.e. evicted entry already cleaned up).
+            const isStillCached =
+              Array.from(vehicleGroupCache.values()).some(e => e.group === oldGroup) ||
+              Array.from(pinnedVehicleCache.values()).some(e => e.group === oldGroup)
+            if (!isStillCached) {
+              disposeVehicleGroup({ group: oldGroup, baseDiffuse: null, normalTex: null,
+                model: null, diffuseCanvas: null, submeshMap: null, lastUsed: 0 })
+            }
+          }
+          fastScene.add(cachedEntry.group)
+          meshGroupRef.current = cachedEntry.group
+          if (cachedEntry.submeshMap) submeshMapsRef.current = cachedEntry.submeshMap
+          // Restore baseDiffuse so the overlay-binding useEffect can rebind correctly.
+          if (cachedEntry.baseDiffuse) {
+            if (baseTextureRef.current && baseTextureRef.current !== cachedEntry.baseDiffuse) {
+              baseTextureRef.current.dispose()
+            }
+            baseTextureRef.current = cachedEntry.baseDiffuse
+          }
+          onPartsLoaded?.(Array.from(cachedEntry.submeshMap?.keys() ?? []))
+          if (cachedEntry.model) onModelLoaded?.(cachedEntry.model, cachedEntry.diffuseCanvas)
+          setModelTick(t => t + 1)
+
+          // On a vehicle SWITCH the pad and camera are intentionally left
+          // UNTOUCHED: the ground pad stays a constant size for every vehicle
+          // and the camera keeps the user's current orbit/zoom — switching
+          // must not resize the pad or move the view. Both are set ONCE, on the
+          // first vehicle, in the build path below. We only frame here in the
+          // unlikely case the very first vehicle of the session landed in this
+          // cache-hit path before the build path ever ran.
+          {
+            const cbox = new Box3().setFromObject(cachedEntry.group)
+            const csize = cbox.getSize(new Vector3())
+            vehicleSizeRef.current = csize.clone()
+            if (!cameraFramedRef.current) {
+              const ccenter = cbox.getCenter(new Vector3())
+              // Group is centred by its area-weighted body centroid at X/Z=0,
+              // so the orbit pivot is (0, midHeight, 0) — not the world bbox
+              // centre (a long gun barrel offsets that toward the muzzle).
+              const cTarget = new Vector3(0, ccenter.y, 0)
+              if (controlsRef.current) {
+                controlsRef.current.target.copy(cTarget)
+                controlsRef.current.update()
+              }
+              if (cameraRef.current) {
+                const FIXED_FRAME_RADIUS = 4.8
+                const fovRad = (cameraRef.current.fov * Math.PI) / 180
+                const dist = (FIXED_FRAME_RADIUS / Math.sin(fovRad / 2)) * 0.85
+                const dir = new Vector3(1, 0.45, -1).normalize()
+                cameraRef.current.position.copy(cTarget).addScaledVector(dir, dist)
+                cameraRef.current.lookAt(cTarget)
+                cameraRef.current.updateProjectionMatrix()
+              }
+              cameraFramedRef.current = true
+            }
+          }
+
+          setLoading(false)
+          needsRenderRef.current = true
+          // Apply the CURRENT season to this cached/warmed group unconditionally.
+          // A cached group may have been left in a stale season (e.g. winter
+          // stamped in a prior pass), and the season useEffect skips the initial
+          // mount — so without this the cache-hit fast path could render the
+          // wrong season. Re-stamping summer is a cheap material map swap.
+          applySeasonToGroup(cachedEntry.group, season)
+            .catch(e => console.warn('[viewport] cache-hit season apply failed', e))
+          return  // exit run() — no parse/decode/build needed
+        }
+
+        // Cache miss confirmed. Only show the loading overlay on the FIRST
+        // ever build (cold connect, no model on screen yet). For vehicle
+        // SWITCHES we keep the previous model visible and hot-swap it only
+        // once the new one is built (see the deferred old-group removal after
+        // scene.add below), so the user NEVER sees a spinner while browsing —
+        // "no loading in the app except on the connect button".
+        if (!meshGroupRef.current) setLoading(true)
 
         let rgmBytes: Uint8Array | null = null
         for (const sgaName of sgaCandidates) {
@@ -2109,6 +2744,9 @@ export default function Viewport({
           m36_tank_destroyer: ['m36', 'm36_jackson'],
           m15a1_aa_halftrack: ['m15_aa_halftrack', 'm15a1', 'm16_halftrack'],
           sherman_firefly: ['firefly', 'sherman_firefly', 'sherman_vc'],
+          // Non-standard diffuse basenames verified from CoH2 SGAs (2026-06):
+          sherman_m4a3:     ['sherman_page', 'sherman_m4a3'],
+          aec_armoured_car: ['aec_armouredcar_page', 'aec_armoured_car'],
         }
         // Always include vehicle.id itself first — many SGAs file textures
         // under the canonical id (e.g. king_tiger_sdkfz_182_dif.rgt) and
@@ -2132,46 +2770,9 @@ export default function Viewport({
           ]),
         )
 
-        // Winter variants — CoH2 ships them under skin-folder subdirs whose
-        // name contains `winter`, e.g.
-        //   art/armies/german/vehicles/tiger/skins/german_0001_winter/tiger_dif.rgt
-        //   art/armies/west_german/vehicles/jagdpanzer_iv_.../skins/winter/<id>_dif.rgt
-        //   art/armies/west_german/vehicles/.../skins/okw_0001_winter/<id>_dif.rgt
-        // The previous toWinter() that just inserted `_winter` before `_dif`
-        // produced paths that NEVER exist in any retail SGA — every winter
-        // attempt fell through to the summer texture. We now scan the SGA's
-        // full TOC for any `*winter*` skin folder matching one of our base
-        // names; canonical `skins/winter/` wins, otherwise the lowest-id
-        // numbered variant. This is asynchronous because we may need to open
-        // multiple SGAs to find the texture's home archive — done lazily
-        // below the main path-array assembly.
-        const findWinterPathsInSga = (a: SgaArchive): string[] => {
-          const all = a.list().map(f => f.path.toLowerCase())
-          const factionRe = new RegExp(`^art/armies/${vehicle.faction.toLowerCase()}/vehicles/`)
-          const hits: string[] = []
-          for (const base of bases) {
-            const baseLow = base.toLowerCase()
-            const skinRe = new RegExp(
-              `^art/armies/${vehicle.faction.toLowerCase()}/vehicles/[^/]+/skins/([^/]*winter[^/]*)/${baseLow}_dif\\.rgt$`,
-            )
-            const candidates = all.filter(p => factionRe.test(p) && skinRe.test(p))
-            // Prefer canonical `skins/winter/` over numbered variants — feels
-            // most "stock" and avoids picking an unusual unit camo.
-            candidates.sort((p1, p2) => {
-              const f1 = p1.match(skinRe)![1]
-              const f2 = p2.match(skinRe)![1]
-              if (f1 === 'winter' && f2 !== 'winter') return -1
-              if (f2 === 'winter' && f1 !== 'winter') return 1
-              return f1.localeCompare(f2)
-            })
-            hits.push(...candidates)
-          }
-          return hits
-        }
-
-        // Summer-path attempt list (always tried, regardless of season). The
-        // winter-path attempt is interleaved on the season=winter branch, but
-        // computed per-archive (since each SGA holds its own TOC).
+        // Summer-path attempt list. Winter re-skinning is handled in place by
+        // the season useEffect (applySeasonToGroup), not here — the heavy
+        // model-load always builds the summer body diffuse.
         const allPaths = [...new Set([...tsetPaths, ...fallbackPaths])]
 
         // Open archives lazily but cache them — without this we re-open every
@@ -2266,20 +2867,23 @@ export default function Viewport({
           // start-or-underscore boundary that actually matches. Also
           // accept the plural `treads?|wheels?|tracks?` since CoH2's
           // texture naming is inconsistent across factions.
-          !/(?:^|_)(treads?|wheels?|tracks?)_[a-z0-9_]*_dif\.rgt$/i.test(p)
+          // `(?:_[a-z0-9]+)*` is OPTIONAL so this matches the PLAIN
+          // `treads_dif.rgt` / `tracks_dif.rgt` / `wheels_dif.rgt` basenames
+          // too — not just the `treads_left_dif` multi-token form. The old
+          // pattern required a token between `treads` and `_dif`, so a bare
+          // `treads_dif.rgt` slipped through and bound to the hull (e.g. the
+          // Ostwind, whose tsets carry NO id-matching `_dif`, sorted the short
+          // `treads_dif` first → whole tank wrapped in the dark track texture
+          // and looked "burnt out").
+          !/(?:^|[_/])(treads?|wheels?|tracks?)(?:_[a-z0-9]+)*_dif\.rgt$/i.test(p)
         const bodyPaths = allPaths.filter(isBodyPath)
-        if (season === 'winter') {
-          outerWinter: for (const { name: aName, archive: a } of archivesToTry) {
-            const winter = findWinterPathsInSga(a)
-            console.log(`[viewport] winter search in ${aName}: ${winter.length} candidates`)
-            const hit = await findFirstReadable(a, winter)
-            if (hit) {
-              console.log(`[viewport] winter texture found: ${hit.path}`)
-              rgtBytes = hit.bytes
-              break outerWinter
-            }
-          }
-        }
+        // NOTE: the body diffuse is ALWAYS resolved as SUMMER here, even when
+        // the user is on Winter. Winter re-skinning (body + turret + panel
+        // atlases + frost) is applied uniformly afterwards by
+        // applySeasonToGroup, which also keeps __summerMap correctly labelled
+        // so a later Winter→Summer toggle restores the true summer atlas.
+        // (Previously this block special-cased the winter body atlas, which
+        // mislabelled __summerMap as winter and left turrets/skirts in summer.)
         if (!rgtBytes) {
           outerSummer: for (const { name: aName, archive: a } of archivesToTry) {
             console.log(`[viewport] summer search in ${aName}: ${bodyPaths.length} paths`)
@@ -2304,10 +2908,27 @@ export default function Viewport({
           console.log(`[viewport] decoding diffuse texture (${rgtBytes.byteLength} bytes)`)
           try {
             const t0 = Date.now()
-            const rgt = decodeRgt(rgtBytes)
-            diffuseImage = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
+            // Combined off-thread inflate + BC decode: only the cheap chunky
+            // header parse runs on the main thread; the zlib inflate and BC
+            // decode both happen in a worker (single round-trip).
+            const header = parseRgtHeader(rgtBytes)
+            const dec = await decodeRgtFullOffThread(header)
+            const rgba = dec.rgba
+            diffuseImage = document.createElement('canvas')
+            diffuseImage.width = dec.width
+            diffuseImage.height = dec.height
+            const diffuseCtx = diffuseImage.getContext('2d')!
+            diffuseCtx.putImageData(
+              new ImageData(
+                new Uint8ClampedArray(rgba.buffer.slice(rgba.byteOffset, rgba.byteOffset + rgba.byteLength) as ArrayBuffer),
+                dec.width,
+                dec.height,
+              ),
+              0,
+              0,
+            )
             diffuse = new CanvasTexture(diffuseImage)
-            console.log(`[viewport] diffuse decoded in ${Date.now()-t0}ms`)
+            console.log(`[viewport] diffuse decoded in ${Date.now()-t0}ms (worker)`)
             // UVs are stored as (u, 1 - v_orig) per rgm.ts:412; flipY=true is required
             // so image rows sample in the correct orientation. flipY=false V-mirrors the texture.
             diffuse.flipY = true
@@ -2355,6 +2976,11 @@ export default function Viewport({
         // `<vehicle>_hull_nrm.rgt` over an arbitrary textureSet entry.
         const allNrmPaths = [...new Set([...nrmFallbackPaths, ...nrmTsetPaths])]
 
+        // Fast path — consume pre-built CompressedTexture from idle prefetch.
+        const prefetchedNrm = prefetchedTextures.get(`${vehicle.id}:nrm`)
+        if (prefetchedNrm) {
+          normalTex = prefetchedNrm
+        } else {
         outerNrm: for (const tryPath of allNrmPaths) {
           const direct = await sga.readByPath(tryPath)
           let bytes = direct
@@ -2372,13 +2998,11 @@ export default function Viewport({
           if (bytes) {
             try {
               const rgt = decodeRgt(bytes)
-              const cv = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
-              normalTex = new CanvasTexture(cv)
-              // Must match the diffuse: UVs are stored as (u, 1 - v_orig) per rgm.ts:412,
-              // so flipY=true is the documented invariant. A mismatch with the diffuse
-              // produces the cookie-cutter pure-black void bug.
-              normalTex.flipY = true
+              normalTex = rgtToCompressedTexture(rgt)
+              // rgtToCompressedTexture sets colorSpace = SRGBColorSpace by default;
+              // override to NoColorSpace — normal maps must be sampled as linear data.
               normalTex.colorSpace = NoColorSpace
+              // flipY=true is already set by rgtToCompressedTexture (CoH2 D3D UV convention).
               normalTex.wrapS = normalTex.wrapT = RepeatWrapping
               normalTex.anisotropy = MAX_ANISO
               break outerNrm
@@ -2390,16 +3014,16 @@ export default function Viewport({
             }
           }
         }
+        } // end else (no prefetched normal)
         if (cancelled) return
 
         const scene = sceneRef.current!
+        // Capture the currently-displayed group but DON'T remove it yet. We
+        // keep the previous vehicle on screen through the (possibly
+        // multi-second) build of the new one so the viewport never goes blank
+        // or shows a loading spinner on a switch. It is removed + disposed
+        // immediately AFTER the new group is added to the scene (below).
         const oldGroup = meshGroupRef.current
-        if (oldGroup) {
-          scene.remove(oldGroup)
-          oldGroup.traverse(o => {
-            if ((o as Mesh).geometry) (o as Mesh).geometry.dispose()
-          })
-        }
         if (baseTextureRef.current) baseTextureRef.current.dispose()
         baseTextureRef.current = diffuse
 
@@ -2438,6 +3062,10 @@ export default function Viewport({
         const destroyed: typeof model.meshes = []
         for (const sub of uniqueMeshes) {
           const matchTarget = `${sub.name} ${sub.materialName ?? ''}`
+          // Drop gameplay-variant overlays (Churchill mortar/AVRE/Crocodile,
+          // hero-RGM crew "goblins") entirely — they belong to neither the
+          // intact nor the wreck view, just clutter the base vehicle.
+          if (isVariantMesh(matchTarget)) continue
           if (isDestroyedMesh(matchTarget)) destroyed.push(sub)
           else intact.push(sub)
         }
@@ -2511,35 +3139,47 @@ export default function Viewport({
         //   'gloss'   → linear, INVERTED to become Three.js roughness map
         //               (CoH2 gloss: high=smooth; Three.js roughness: high=rough)
         type TextureRole = 'diffuse' | 'normal' | 'spec' | 'gloss'
-        const decodeTextureBytes = (bytes: Uint8Array, role: TextureRole): Texture | null => {
+        // Off-thread path: inflate + BC decode both happen in a worker via
+        // decodeRgtFullOffThread (same as the body diffuse at line 2906).
+        // Only `putImageData` and — for gloss — the RGB inversion run on the
+        // main thread, which is unavoidable (DOM canvas / pixel transform).
+        // The previous synchronous path (pako.inflate + bcToCanvas on the main
+        // thread) blocked for 20–60 ms per texture × 4 textures per material.
+        const decodeTextureBytes = async (bytes: Uint8Array, role: TextureRole): Promise<Texture | null> => {
           try {
-            const rgt = decodeRgt(bytes)
-            const cv = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
+            const header = parseRgtHeader(bytes)
+            const dec = await decodeRgtFullOffThread(header)
+            const rgba = dec.rgba
+            // For gloss: invert RGB channels so the texture works directly as
+            // `roughnessMap` in Three.js (reads G channel).
+            // CoH2 stores gloss as "1.0 = polished mirror, 0.0 = matte fabric";
+            // Three.js expects roughness as "0.0 = mirror, 1.0 = matte".
             if (role === 'gloss') {
-              // Invert RGB so the resulting texture works directly as
-              // `roughnessMap` in Three.js (which reads the G channel).
-              // CoH2 stores gloss as "1.0 = polished mirror, 0.0 = matte
-              // fabric"; Three.js expects roughness as "0.0 = mirror,
-              // 1.0 = matte" — i.e. the complement.
-              const ctx = cv.getContext('2d')!
-              const img = ctx.getImageData(0, 0, rgt.width, rgt.height)
-              const d = img.data
-              for (let i = 0; i < d.length; i += 4) {
-                d[i] = 255 - d[i] // R
-                d[i + 1] = 255 - d[i + 1] // G (the channel Three.js samples)
-                d[i + 2] = 255 - d[i + 2] // B
+              for (let i = 0; i < rgba.length; i += 4) {
+                rgba[i] = Math.max(26, 255 - rgba[i])         // R (clamp floor ≈ 0.10 roughness)
+                rgba[i + 1] = Math.max(26, 255 - rgba[i + 1]) // G (the channel Three.js samples)
+                rgba[i + 2] = Math.max(26, 255 - rgba[i + 2]) // B
                 // alpha left intact
               }
-              ctx.putImageData(img, 0, 0)
             }
+            const cv = document.createElement('canvas')
+            cv.width = dec.width
+            cv.height = dec.height
+            const ctx = cv.getContext('2d')!
+            ctx.putImageData(
+              new ImageData(
+                new Uint8ClampedArray(rgba.buffer.slice(rgba.byteOffset, rgba.byteOffset + rgba.byteLength) as ArrayBuffer),
+                dec.width,
+                dec.height,
+              ),
+              0,
+              0,
+            )
             const t = new CanvasTexture(cv)
             // Must match the main body diffuse (line 541) and overlay texture
             // (line 919): flipY=true. UVs are stored with `v = 1 - v_orig` per
             // rgm.ts:412, and the canvas/PNG image data is top-down; flipY=true
             // is what makes those two conventions sample correctly together.
-            // Earlier this was set to `false` as a debugging probe — that
-            // produced a V-mirrored body texture (engine fan reading hull-front
-            // texels), which manifested as "not unwrapped properly".
             t.flipY = true
             t.colorSpace = role === 'diffuse' ? SRGBColorSpace : NoColorSpace
             t.wrapS = t.wrapT = RepeatWrapping
@@ -2570,13 +3210,28 @@ export default function Viewport({
           for (const t of tsetsLower) if (predicate(t)) return t
           return null
         }
+        // Schurzen / side-armour skirt meshes — these are bolt-on upgrade
+        // panels and do not share the vehicle body diffuse. No dedicated
+        // TSET exists for them in standard CoH2 packs so we leave them
+        // untextured (Three.js default grey) rather than binding the wrong
+        // body atlas. Recognised by name anywhere in the material string.
+        const isSchurzenMesh = (name: string) =>
+          /schurzen|skirt|side_armor|sidearmor/i.test(name)
         const tokenFor = (mat: string): string => {
           // Pull the distinguishing token from a material name.
           // `wreak` is Relic's in-file typo on several wreck materials
           // (m5a1_stuart_wreak, jagdtiger_wreak, …). Treat it as wreck
           // so the texture lookup routes to *_wreck_dif and the mesh
           // gets filtered as destroyed downstream.
-          if (/wreck|wreak/.test(mat)) return 'wreck'
+          // `turrets` routing: StuG III has a separate `sug_iii_turrets`
+          // material (Relic typo — missing 't') with its own atlas
+          // `stug_iii_turrets_dif`. Without this branch both the hull
+          // and turrets materials fall through to the body scan, which
+          // finds both `stug_iii_dif` and `stug_iii_turrets_dif` as
+          // candidates and lets whichever is first in the TSET array win
+          // for both meshes — so one of them always gets the wrong atlas.
+          if (/(?:^|_)turrets?(?:_|$)/i.test(mat)) return 'turrets'
+          if (/wreck|wreak/i.test(mat)) return 'wreck'
           // Tread, track, AND wheel share the tread lookup path. Without
           // this, wheel submeshes fell through to the body branch which
           // resolved their diffuse from whichever `*_dif` TSET entry the
@@ -2600,6 +3255,15 @@ export default function Viewport({
           // `Tread_R`, `wheel_01`, and the plural `tracks`/`wheels`/`treads`
           // still do.
           if (/(?:^|[^a-z])(?:tread|track|wheel)s?(?![a-z])/i.test(mat)) return 'tread'
+          // Schurzen / skirt / side-armour: no body-diffuse fallback —
+          // return a sentinel so the caller skips texture assignment.
+          if (isSchurzenMesh(mat)) return 'schurzen'
+          // `panels` routing: Brummbär has a separate `Brummbar_Panels`
+          // material with its own atlas `brummbar_panels_dif`. Without
+          // this branch both body meshes fall through to the body scan
+          // and compete for the same `brummbar_dif`, stretching the
+          // panels texture (authored for a different UV layout).
+          if (/(?:^|_)panels?(?:_|$)/i.test(mat)) return 'panels'
           // Body / default — let the matcher pick the plain `*_dif` not
           // qualified by `_tread_` / `_wreck_`.
           return ''
@@ -2660,8 +3324,19 @@ export default function Viewport({
             tokenRe('wreck').test(p) ||
             tokenRe('tread').test(p) ||
             tokenRe('track').test(p) ||
-            /\/badges\//i.test(p)
-          if (token) {
+            tokenRe('panels').test(p) ||
+            tokenRe('turrets').test(p) ||
+            /\/badges\//i.test(p) ||
+            isSchurzenMesh(p)
+          if (token === 'schurzen') {
+            // Schurzen meshes have no dedicated TSET — leave all paths null
+            // so the mesh renders with the Three.js default grey material
+            // rather than the body diffuse.
+            difPath = null
+            nrmPath = null
+            spcPath = null
+            glsPath = null
+          } else if (token) {
             const re = tokenRe(token)
             difPath = findTset(p => re.test(p) && /_dif$/.test(p))
             nrmPath = findTset(p => re.test(p) && /_nrm$|_norm$/.test(p))
@@ -2699,22 +3374,22 @@ export default function Viewport({
           const decodeYield = () => new Promise<void>(r => setTimeout(r, 0))
           if (difPath) {
             const b = await resolveRgtPath(difPath)
-            if (b) dTex = decodeTextureBytes(b, 'diffuse')
+            if (b) dTex = await decodeTextureBytes(b, 'diffuse')
             await decodeYield()
           }
           if (nrmPath) {
             const b = await resolveRgtPath(nrmPath)
-            if (b) nTex = decodeTextureBytes(b, 'normal')
+            if (b) nTex = await decodeTextureBytes(b, 'normal')
             await decodeYield()
           }
           if (spcPath) {
             const b = await resolveRgtPath(spcPath)
-            if (b) sTex = decodeTextureBytes(b, 'spec')
+            if (b) sTex = await decodeTextureBytes(b, 'spec')
             await decodeYield()
           }
           if (glsPath) {
             const b = await resolveRgtPath(glsPath)
-            if (b) gTex = decodeTextureBytes(b, 'gloss')
+            if (b) gTex = await decodeTextureBytes(b, 'gloss')
             await decodeYield()
           }
           // Fall back to body atlas channels if this material didn't resolve
@@ -2730,8 +3405,12 @@ export default function Viewport({
           // the body's maps as a benign visual upgrade.
           const bodyCache = texCache.get('__body__') as MaterialTextures | undefined
           const isNonBody = token !== ''
+          // Turret shares the body diffuse atlas (no dedicated tiger_turret_dif); its
+          // UVs map into the body atlas, so fall back to body diffuse rather than the
+          // flat olive fallback. Treads/wreck still stay null (their UVs tile).
+          const sharesBodyAtlas = token === 'turrets'
           const result: MaterialTextures = {
-            diffuse: dTex ?? (isNonBody ? null : (bodyCache?.diffuse ?? null)),
+            diffuse: dTex ?? ((isNonBody && !sharesBodyAtlas) ? null : (bodyCache?.diffuse ?? null)),
             normal: nTex ?? bodyCache?.normal ?? null,
             specular: sTex ?? bodyCache?.specular ?? null,
             roughness: gTex ?? bodyCache?.roughness ?? null,
@@ -2763,7 +3442,7 @@ export default function Viewport({
           // accumulated across 30 iterations was choking the SVG anim.
           await yieldToBrowser()
           if (cancelled) return
-          const tex = await getTexturesForMaterial(sub.materialName)
+          const tex = await getTexturesForMaterial(sub.materialName ?? sub.name)
           if (cancelled) return
           const subDiffuse = tex.diffuse
           const subNormal = tex.normal
@@ -2773,7 +3452,7 @@ export default function Viewport({
           // per material token so tracks don't render the same khaki as
           // the body — dark gunmetal looks like a track, khaki looks like
           // a hull-coloured smear.
-          const subToken = sub.materialName ? tokenFor(sub.materialName) : ''
+          const subToken = tokenFor(sub.materialName ?? sub.name)
           const fallbackColor =
             subToken === 'tread' ? 0x2a2c2e : subToken === 'wreck' ? 0x3a342c : 0x9aa18b
           // MeshPhysicalMaterial (rather than MeshStandardMaterial) so we can
@@ -2816,12 +3495,21 @@ export default function Viewport({
             // to keep deep-shade panels legible without the cubemap's
             // hue bleeding onto painted steel. Foliage / terrain /
             // wreck props inherit the full 0.3 scene knob.
-            envMapIntensity: 0.6,
+            envMapIntensity: 0.3,
             // CoH2 RGM submeshes have inconsistent winding — some panels
             // (Puma turret, Panther skirts) end up with their normals
             // facing inwards, rendering as solid black. DoubleSide makes
             // both faces lit, masking the broken winding.
             side: DoubleSide,
+            // Tread/track submeshes share UV space with other geometry at
+            // the same world position and z-fight without a polygon offset.
+            // Push tread fragments slightly closer to the camera so they
+            // win the depth test consistently against the hull floor.
+            ...(subToken === 'tread' ? {
+              polygonOffset: true,
+              polygonOffsetFactor: -1,
+              polygonOffsetUnits: -1,
+            } : {}),
           })
           // Y is negated to convert DX-convention normal maps (Y points down,
           // CoH2/Essence engine ships these) to Three.js / OpenGL convention
@@ -2835,6 +3523,15 @@ export default function Viewport({
             // keep their own (non-editable) tile/wreck textures.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- custom property on Three.js MeshStandardMaterial to track body-diffuse binding
           ;(mat as any).__usesBodyDiffuse = isBodyMaterial(sub.materialName)
+          // Season tagging — paintable atlases (body, turret, panels) get
+          // re-skinned by applySeasonToGroup on Summer↔Winter toggle. Tread/
+          // wheel/wreck atlases are season-invariant so stay untagged.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- custom season props on Three.js material
+          ;(mat as any).__seasonPaint = subToken === '' || subToken === 'turrets' || subToken === 'panels'
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ;(mat as any).__seasonToken = subToken
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ;(mat as any).__summerMap = subDiffuse
           const m = new Mesh(sub.geometry, mat)
           m.name = sub.name
           // Vehicle submeshes both cast AND receive shadows.  Cast → the
@@ -2852,6 +3549,25 @@ export default function Viewport({
           submeshMap.set(sub.name, m)
           origPos.set(sub.name, new Vector3(0, 0, 0))
         }
+
+        // Season context for applySeasonToGroup — captures everything the
+        // central re-skinner needs to resolve winter atlases lazily and rebind
+        // them across vehicle switches (incl. warmed cache-hit copies).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- custom season props on Three.js Group
+        ;(group as any).__seasonFaction = vehicle.faction
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(group as any).__seasonBases = bases
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(group as any).__seasonModel = model
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(group as any).__seasonPaintReady = true
+
+        // Pre-resolve the winter atlas for the displayed vehicle too (the
+        // warmup queue skips the current vehicle, so without this the very
+        // first Summer↔Winter toggle would lazily fetch+decode and flash the
+        // season beam). Fire-and-forget so it never delays first paint; it
+        // only stamps __winterMap on the materials for an instant later swap.
+        void prewarmWinterAtlases(group, vehicle.faction, bases)
 
         // Auto-fit: scale model so longest axis = ~5 units, centre it
         // horizontally, and rest its tracks ON the ground (bbox.min.y = 0).
@@ -2872,7 +3588,17 @@ export default function Viewport({
         const box = fitBox.isEmpty() ? new Box3().setFromObject(group) : fitBox
         const size = box.getSize(new Vector3())
         const longest = Math.max(size.x, size.y, size.z)
-        const scale = longest > 0.0001 ? 5 / longest : 0.01
+        // TRUE 1:1 RELATIVE SCALE. RGM native units are ~metres, so a single
+        // constant scale preserves real in-game size differences — a King
+        // Tiger is genuinely longer than a StuG and should look it. The old
+        // `5/longest` normalised every vehicle to the same on-screen length,
+        // which made the King Tiger's long gun barrel eat the size budget and
+        // left its hull looking SMALLER than tinier vehicles. 0.72 keeps the
+        // StuG (native longest ≈6.91) looking ≈as it did before (its old
+        // scale was 5/6.91 = 0.7237) while every other vehicle now scales
+        // proportionally to it.
+        const WORLD_SCALE = 0.72
+        const scale = longest > 0.0001 ? WORLD_SCALE : 0.01
         group.scale.setScalar(scale)
         // Record the apparent size so the crew-loading effect can size
         // the soldier RGM proportionally (a soldier loaded at native
@@ -2906,49 +3632,10 @@ export default function Viewport({
         ) as Mesh[]
         const bodyMesh: Mesh | undefined = bodyMeshes[0]
 
-        const centroidLocal = new Vector3()
-        if (bodyMeshes.length > 0) {
-          // Triangle-area-weighted centroid for Y-pivot only.
-          const sum = new Vector3()
-          let totalArea = 0
-          const a = new Vector3(),
-            b = new Vector3(),
-            c = new Vector3()
-          const ab = new Vector3(),
-            ac = new Vector3(),
-            cross = new Vector3()
-          for (const m of bodyMeshes) {
-            const geom = m.geometry
-            const pos = geom.attributes.position as BufferAttribute | undefined
-            const idx = geom.index
-            if (!pos || !idx) continue
-            const idxArr = idx.array as Uint16Array | Uint32Array
-            const posArr = pos.array as Float32Array
-            for (let i = 0; i < idxArr.length; i += 3) {
-              const ia = idxArr[i] * 3,
-                ib = idxArr[i + 1] * 3,
-                ic = idxArr[i + 2] * 3
-              a.set(posArr[ia], posArr[ia + 1], posArr[ia + 2])
-              b.set(posArr[ib], posArr[ib + 1], posArr[ib + 2])
-              c.set(posArr[ic], posArr[ic + 1], posArr[ic + 2])
-              ab.subVectors(b, a)
-              ac.subVectors(c, a)
-              cross.crossVectors(ab, ac)
-              const area = cross.length() * 0.5
-              if (area <= 0) continue
-              const cx = (a.x + b.x + c.x) / 3
-              const cy = (a.y + b.y + c.y) / 3
-              const cz = (a.z + b.z + c.z) / 3
-              sum.x += cx * area
-              sum.y += cy * area
-              sum.z += cz * area
-              totalArea += area
-            }
-          }
-          if (totalArea > 0) centroidLocal.copy(sum).divideScalar(totalArea)
-        }
-        // Scale centroid Y into post-scale world space (used for camera
-        // target only — XZ positioning now uses fitBoxCenter instead).
+        // Triangle-area-weighted body centroid (local pre-scale space).
+        // Drives both the XZ pad-centring (below) and the camera-target Y.
+        const centroidLocal = computeBodyCentroidLocal(group)
+        // Scale centroid Y into post-scale world space (camera target pivot).
         const centroidWorldY = centroidLocal.y * scale
 
         // Recompute full bbox AFTER scaling so we know where the bottom
@@ -2956,63 +3643,155 @@ export default function Viewport({
         // rest on y=0, not the body's centroid).
         const scaledBox = new Box3().setFromObject(group)
 
-        // REQ-1: Centre the vehicle's BODY centre-of-mass exactly over the
-        // pad centre (world X=0, Z=0). We use the area-weighted centroid of
-        // the body geometry (computed above) rather than the bounding-box
-        // centre because a bounding box is fragile: a long gun barrel — or
-        // any small outlying attachment (antenna, stowage, tow cable, spare
-        // track) that the helper-name filter doesn't catch — drags the box
-        // centre to one side, leaving the hull visibly off-pad while the
-        // barrel overhangs the edge. Surface-area weighting makes the centroid
-        // robust: thin/small parts contribute little area, so the heavy
-        // hull+turret mass lands dead-centre on the pad for every vehicle.
-        // Falls back to the debris-excluded fitBox centre only when no body
-        // meshes were detected (so a model with no body diffuse still centres).
-        const haveCentroid = bodyMeshes.length > 0 && centroidLocal.lengthSq() > 0
-        const centreX = haveCentroid ? centroidLocal.x * scale : fitCenterX
-        const centreZ = haveCentroid ? centroidLocal.z * scale : fitCenterZ
-        group.position.x = -centreX
-        group.position.z = -centreZ
+        // Centre the vehicle's BODY centre-of-mass exactly over the pad centre
+        // (world X=0, Z=0). We use the area-weighted body centroid rather than
+        // the bounding-box centre because the bbox is fragile: a long gun
+        // barrel (Tiger, Elefant) or any small outlying attachment (antenna,
+        // tow cable, spare track) drags the box centre to one side, leaving the
+        // hull visibly off-pad while the barrel overhangs the edge — which is
+        // exactly the "Tiger isn't centred" report. Surface-area weighting
+        // makes thin/small parts contribute little, so the heavy hull+turret
+        // mass lands dead-centre for every vehicle. Falls back to the
+        // debris-excluded fitBox centre only when no body mesh was detected.
+        const centerX = centroidLocal.lengthSq() > 0 ? centroidLocal.x * scale : fitCenterX
+        const centerZ = centroidLocal.lengthSq() > 0 ? centroidLocal.z * scale : fitCenterZ
+        group.position.x = -centerX
+        group.position.z = -centerZ
         group.position.y = -scaledBox.min.y
+
+        if (cancelled) return
+
+        // Add the group to the live scene FIRST so the vehicle appears and
+        // OrbitControls stay responsive during shader/texture warmup.
         scene.add(group)
+
+        // Hot-swap: now that the new vehicle is on screen, retire the previous
+        // one. Deferring removal until here (rather than before the build) is
+        // what lets a switch happen with zero blank frames and no spinner.
+        if (oldGroup && oldGroup !== group) {
+          scene.remove(oldGroup)
+          // Only dispose geometry if the group is not held by either cache.
+          const oldStillCached =
+            Array.from(vehicleGroupCache.values()).some(e => e.group === oldGroup) ||
+            Array.from(pinnedVehicleCache.values()).some(e => e.group === oldGroup)
+          if (!oldStillCached) {
+            oldGroup.traverse(o => {
+              if ((o as Mesh).geometry) (o as Mesh).geometry.dispose()
+            })
+          }
+        }
+
+        // ── Shader & texture warmup (background) ────────────────────────────
+        // Run compileAsync + initTexture AFTER scene.add so the user can orbit
+        // immediately. Guard against the group being removed/cancelled before
+        // the async compile resolves. compileAsync is a no-op if
+        // KHR_parallel_shader_compile is unavailable (falls back to sync).
+        if (rendererRef.current && cameraRef.current) {
+          const renderer = rendererRef.current
+          const camera = cameraRef.current
+          const capturedGroup = group
+          // Use queueMicrotask so this yields to the rAF loop first.
+          queueMicrotask(async () => {
+            if (cancelled) return
+            // Check the group is still in the live scene (not evicted/replaced)
+            if (!sceneRef.current?.children.includes(capturedGroup)) return
+            const stagingScene = new Scene()
+            stagingScene.environment = sceneRef.current?.environment ?? null
+            stagingScene.add(capturedGroup)
+            try {
+              await renderer.compileAsync(stagingScene, camera)
+            } catch (e) {
+              console.warn('[viewport] compileAsync failed (non-fatal):', e)
+            }
+            stagingScene.remove(capturedGroup)
+            // CRITICAL: stagingScene.add() above reparented the group OUT of the
+            // live scene (an Object3D can only have one parent), and the remove()
+            // just orphaned it. Re-attach to the live scene or the vehicle never
+            // renders — it vanishes one microtask after scene.add(group) above.
+            if (cancelled) return
+            if (sceneRef.current && capturedGroup.parent !== sceneRef.current) {
+              sceneRef.current.add(capturedGroup)
+            }
+            if (!sceneRef.current?.children.includes(capturedGroup)) return
+            // Force synchronous GPU texture upload for all textures in the group.
+            capturedGroup.traverse(o => {
+              const mesh = o as Mesh
+              if (!mesh.isMesh) return
+              const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+              mats.forEach(m => {
+                const mat = m as MeshStandardMaterial
+                ;[mat.map, (mat as MeshPhysicalMaterial).normalMap,
+                  (mat as MeshPhysicalMaterial).roughnessMap,
+                  (mat as MeshPhysicalMaterial).metalnessMap]
+                  .forEach(t => { if (t) renderer.initTexture(t) })
+              })
+            })
+            needsRenderRef.current = true
+          })
+        }
 
         // Recentre orbit camera target on the model's actual centre so the
         // user orbits around the tank, not a hardcoded point in space.
         const finalBox = new Box3().setFromObject(group)
         const finalSize = finalBox.getSize(new Vector3())
+
+        // ── CONSTANT ground pad ───────────────────────────────────────────
+        // Every vehicle sits on the SAME pad size (scale 1 = SLAB_BASE_RADIUS,
+        // sized to fit the largest vehicle). Previously the pad was fitted to
+        // each vehicle's footprint, so it visibly resized on every switch — the
+        // user wants the pad to stay consistent across all vehicles.
+        const slabMesh = groundMeshRef.current
+        if (slabMesh) {
+          // Constant pad, reduced a quarter from the full base radius (0.75).
+          slabMesh.scale.x = 0.75
+          slabMesh.scale.z = 0.75
+        }
+
         // Target the body's centroid Y (which gives the best orbit pivot),
         // at X/Z=0 (the pad centre, where the model is now guaranteed to sit).
         const finalCenter =
           bodyMesh && centroidLocal.lengthSq() > 0
             ? new Vector3(0, centroidWorldY + group.position.y, 0)
             : finalBox.getCenter(new Vector3())
-        // Re-frame the camera tightly on the freshly-loaded vehicle.
-        if (controlsRef.current) {
-          controlsRef.current.target.copy(finalCenter)
-          controlsRef.current.update()
-        }
-        // Pull camera back to frame the bounding sphere with a tight margin.
-        // 0.85× rather than 1.15× — earlier framing left ~30% empty space on
-        // every edge, making the tank read as a small thumbnail in a vast dark
-        // void. The user wants the tank to FILL the viewport.
-        if (cameraRef.current) {
-          const radius = finalSize.length() * 0.5
-          const fovRad = (cameraRef.current.fov * Math.PI) / 180
-          const dist = (radius / Math.sin(fovRad / 2)) * 0.85
-          // Slightly elevated 3/4 view, tracking the model's actual centre
-          // so the camera target sits on the tank's centre of mass not its
-          // hull bottom. Z is NEGATIVE — CoH2 RGM vehicles load with their
-          // front along -Z in world space, so a (+x, +y, +z) camera looks
-          // at the back-right corner of the tank. Flipping Z to -1 puts
-          // the camera on the front-right corner, which is the angle that
-          // shows the most decal-relevant geometry (turret face, glacis,
-          // mantlet, hull side) at once.
-          const dir = new Vector3(1, 0.45, -1).normalize()
-          cameraRef.current.position.copy(finalCenter).addScaledVector(dir, dist)
-          cameraRef.current.lookAt(finalCenter)
-          cameraRef.current.updateProjectionMatrix()
+        // Frame the camera ONCE — on the first vehicle of the session. Every
+        // switch after that keeps the user's current orbit/zoom; the camera
+        // must NOT jump when changing vehicles. FIXED framing: the distance is
+        // computed from a CONSTANT reference radius (≈ half a King Tiger's
+        // bounding-sphere diagonal, the largest vehicle), so the first vehicle
+        // is consistently framed regardless of which one it is.
+        if (!cameraFramedRef.current) {
+          if (controlsRef.current) {
+            controlsRef.current.target.copy(finalCenter)
+            controlsRef.current.update()
+          }
+          if (cameraRef.current) {
+            const FIXED_FRAME_RADIUS = 4.8
+            const fovRad = (cameraRef.current.fov * Math.PI) / 180
+            const dist = (FIXED_FRAME_RADIUS / Math.sin(fovRad / 2)) * 0.85
+            // Slightly elevated 3/4 view. Z is NEGATIVE — CoH2 RGM vehicles
+            // load with their front along -Z in world space, so a (+x,+y,-z)
+            // camera looks at the front-right corner of the tank, the angle
+            // that shows the most decal-relevant geometry (turret face,
+            // glacis, mantlet, hull side) at once.
+            const dir = new Vector3(1, 0.45, -1).normalize()
+            cameraRef.current.position.copy(finalCenter).addScaledVector(dir, dist)
+            cameraRef.current.lookAt(finalCenter)
+            cameraRef.current.updateProjectionMatrix()
+          }
+          cameraFramedRef.current = true
         }
         meshGroupRef.current = group
+        // Store in LRU cache. normalTex and diffuse captured from closure above.
+        vehicleGroupCache.set(vehicle.id, {
+          group,
+          baseDiffuse: diffuse,
+          normalTex: normalTex ?? null,
+          model,
+          diffuseCanvas: diffuseImage,
+          submeshMap,
+          lastUsed: Date.now(),
+        })
+        evictLruEntry()
         submeshMapsRef.current = submeshMap
         origPosRef.current = origPos
         targetPosRef.current = new Map(
@@ -3025,6 +3804,16 @@ export default function Viewport({
         isolateTargetRef.current = null
         savedControlsTargetRef.current = null
 
+        // Cold build while the user is on Winter: re-skin to winter (body +
+        // turret + panel atlases + frost) BEFORE handing the base canvas to
+        // the parent, so overlay compositing uses the winter base. With no
+        // overlay active yet, applySeasonToGroup swaps maps directly and sets
+        // baseTextureRef to the winter body texture.
+        if (season === 'winter') {
+          await applySeasonToGroup(group, 'winter')
+          const wb = baseTextureRef.current?.image
+          if (wb instanceof HTMLCanvasElement) diffuseImage = wb
+        }
         onPartsLoaded?.(Array.from(submeshMap.keys()))
         onModelLoaded?.(model, diffuseImage)
         // Tell the crew-loading effect the chassis is ready so it can
@@ -3039,111 +3828,6 @@ export default function Viewport({
         setModelTick(t => t + 1)
         setLoading(false)
         needsRenderRef.current = true
-
-        // ── Season-reload helper ─────────────────────────────────────────
-        // Captures the archive-search context (sga, sgaCandidates, archive
-        // cache, tset/fallback paths, current model) so a Summer ↔ Winter
-        // toggle can re-run the body-diffuse RGT search alone — without
-        // tearing down the geometry, materials, normals, spec, gloss,
-        // overlay, or skybox. The actual rebind is synchronous: we await
-        // the bytes, decode the texture, then apply the new map and the
-        // matching ground colour in one block so they commit atomically.
-        seasonReloadRef.current = async (newSeason: 'summer' | 'winter') => {
-          // Mirror the heavy effect's resolution order: winter (per-archive
-          // TOC scan for skins/*winter*/<base>_dif.rgt) → summer fallback.
-          let bytes: Uint8Array | null = null
-          const archivesToTry: { name: string; archive: SgaArchive }[] = [
-            { name: 'rgm SGA', archive: sga },
-          ]
-          for (const sgaName of sgaCandidates) {
-            const a = await getArchive(sgaName)
-            if (a && a !== sga) archivesToTry.push({ name: sgaName, archive: a })
-          }
-          // Same archive-search ordering as the heavy effect: winter across
-          // all archives first, then summer body-only paths across all
-          // archives. Mixing per-archive (winter then summer for archive #1,
-          // then move on) lands on shared tread textures in early archives
-          // whenever the body diffuse lives in a later one.
-          if (newSeason === 'winter') {
-            outerWinter: for (const { archive: a } of archivesToTry) {
-              const winter = findWinterPathsInSga(a)
-              for (const p of winter) {
-                const b = await a.readByPath(p)
-                if (b) {
-                  bytes = b
-                  break outerWinter
-                }
-              }
-            }
-          }
-          if (!bytes) {
-            outerSummer: for (const { archive: a } of archivesToTry) {
-              for (const p of bodyPaths) {
-                const b = await a.readByPath(p)
-                if (b) {
-                  bytes = b
-                  break outerSummer
-                }
-              }
-            }
-          }
-          if (!bytes) {
-            console.warn(`[viewport] season=${newSeason}: no diffuse found, keeping previous`)
-            // Still flip the ground so the toggle feels responsive: real
-            // snow texture if available, legacy colour-tint otherwise.
-            slabSeasonSwapRef.current?.(newSeason)
-            return
-          }
-          let newDiffuse: Texture | null
-          let newImage: HTMLCanvasElement | null
-          try {
-            const rgt = decodeRgt(bytes)
-            newImage = bcToCanvas(rgt.pixels, rgt.width, rgt.height, rgt.fourCC)
-            newDiffuse = new CanvasTexture(newImage)
-            newDiffuse.flipY = true
-            newDiffuse.colorSpace = SRGBColorSpace
-            newDiffuse.wrapS = newDiffuse.wrapT = RepeatWrapping
-            newDiffuse.anisotropy = MAX_ANISO
-          } catch (e) {
-            console.warn(`[viewport] season=${newSeason}: decode failed`, e)
-            return
-          }
-          // ── Atomic swap ────────────────────────────────────────────────
-          // From here on we run synchronously so the new texture, the new
-          // base reference, and the matching ground colour all commit on
-          // the same render frame. No awaits past this point.
-          if (baseTextureRef.current) baseTextureRef.current.dispose()
-          baseTextureRef.current = newDiffuse
-
-          // When no overlay is active, the body materials' .map IS the base
-          // diffuse — swap it directly. When an overlay is active, .map
-          // points at the overlay CanvasTexture; the overlay-rebuild path
-          // (driven by the parent re-running the layering pipeline below)
-          // will pick up the fresh base via baseTextureRef.
-          const groupNow = meshGroupRef.current
-          if (groupNow && !overlayTexRef.current) {
-            groupNow.traverse(o => {
-              const mesh = o as Mesh
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- reading custom __usesBodyDiffuse property on Three.js material
-              const mat = mesh.material as any
-              if (mat?.__usesBodyDiffuse) {
-                mat.map = newDiffuse
-                mat.needsUpdate = true
-              }
-            })
-          }
-          // Hand the new base canvas back to the parent so any overlay
-          // re-render picks up the season-correct underlay.
-          onModelLoaded?.(model, newImage)
-
-          // Ground swap — same tick. slabSeasonSwapRef handles both:
-          //   • real winter texture available → pointer swap to the cached
-          //     snow canvas built from the grass RGT (proper snowy look).
-          //   • procedural slab fallback → legacy colour-tint behaviour
-          //     (warm brown summer / pale blue-grey winter).
-          slabSeasonSwapRef.current?.(newSeason)
-          needsRenderRef.current = true
-        }
       } catch (e) {
         console.error(e)
         if (!cancelled) {
@@ -3155,15 +3839,11 @@ export default function Viewport({
     run()
     return () => {
       cancelled = true
-      // Drop the helper so a stale closure (pointing at the previous
-      // vehicle's archive context) can never run after the model has
-      // been swapped out.
-      seasonReloadRef.current = null
     }
-    // `season` intentionally excluded — handled by seasonReloadRef + the
-    // separate season useEffect, which re-skin the model in place rather
-    // than tearing the whole mesh group down on every Summer ↔ Winter flip.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- onModelLoaded/onPartsLoaded are parent callbacks not wrapped in useCallback (adding them would reload the whole mesh on every parent render); season is deliberately excluded (handled by seasonReloadRef); only vehicle?.id is read, not the full object
+    // `season` intentionally excluded — re-skinning Summer ↔ Winter is handled
+    // in place by the separate season useEffect (applySeasonToGroup) rather
+    // than tearing the whole mesh group down on every flip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onModelLoaded/onPartsLoaded are parent callbacks not wrapped in useCallback (adding them would reload the whole mesh on every parent render); season is deliberately excluded (handled by the season useEffect); only vehicle?.id is read, not the full object
   }, [root, vehicle?.id, showDestroyed])
 
   // =========================================================================
@@ -3188,6 +3868,11 @@ export default function Viewport({
       overlayTexRef.current!.flipY = true
       overlayTexRef.current!.colorSpace = SRGBColorSpace
       overlayTexRef.current!.wrapS = overlayTexRef.current!.wrapT = RepeatWrapping
+      // Anisotropic filtering: match all other diffuse textures (MAX_ANISO=16).
+      // Without this the overlay defaults to anisotropy=1, which makes decals
+      // and painted regions appear blurry/soft at grazing angles compared to
+      // the underlying hull detail.
+      overlayTexRef.current!.anisotropy = MAX_ANISO
       // Initial bind needs an upload — flag the dirty bit so the loop's
       // gate runs once, then it stays quiet until something paints.
       overlayDirtyRef.current = true
@@ -3262,14 +3947,28 @@ export default function Viewport({
     // Compute new explode targets
     const newTargets = new Map<string, Vector3>()
     if (explodeAll) {
+      // B6: radial "unwrap" explosion. Build a LOCAL-space centre + size from
+      // the submeshes' own geometry-bbox centroids (mesh.position ≈ 0 for
+      // imported RGM, so geometry space == group-local space, which is the
+      // space mesh.position offsets are applied in). The old code mixed this
+      // geometry-local bboxCenter with the WORLD-space `vehicleCenter`, so the
+      // radial directions were wrong and only the name-heuristic parts (treads
+      // /wheels) moved while the hull stayed put.
+      const localBox = new Box3()
+      const partCenters = new Map<string, Vector3>()
       for (const [name, mesh] of map) {
         mesh.geometry.computeBoundingBox()
-        const bboxCenter = new Vector3()
-        mesh.geometry.boundingBox!.getCenter(bboxCenter)
+        const c = mesh.geometry.boundingBox!.getCenter(new Vector3())
+        partCenters.set(name, c)
+        localBox.expandByPoint(c)
+      }
+      const localCenter = localBox.getCenter(new Vector3())
+      const localSize = localBox.getSize(new Vector3())
 
-        const dir = computeExplodeDirection(name, bboxCenter, vehicleSize, vehicleId, vehicleCenter)
-        // Chassis / hull anchors return zero — keep them in place
-        newTargets.set(name, dir.lengthSq() > 0 ? dir.multiplyScalar(0.5) : new Vector3(0, 0, 0))
+      for (const [name] of map) {
+        const bboxCenter = partCenters.get(name)!
+        const off = computeExplodeOffset(name, bboxCenter, localSize, vehicleId, localCenter)
+        newTargets.set(name, off)
       }
 
       // When entering explode mode, reset isolate state
@@ -3336,7 +4035,12 @@ export default function Viewport({
     targetPosRef.current = newTargets
     explodeProgressRef.current = 0 // kick off animation
     needsRenderRef.current = true
-  }, [selectedPart, explodeAll, vehicle])
+  // modelTick is bumped (setModelTick(t => t + 1)) at both the slow-path
+  // load completion and the fast-path cache hit, so adding it here ensures
+  // the effect re-runs after submeshMapsRef.current is fully populated.
+  // Without it the effect fires synchronously during the async model load
+  // with an empty/stale submeshMap and animates nothing.
+  }, [selectedPart, explodeAll, vehicle, modelTick])
 
   // =========================================================================
   // ESC key → deselect part in explode mode ("back to exploded view")
@@ -3452,6 +4156,702 @@ export default function Viewport({
       if (canvasRef.current) canvasRef.current.style.cursor = ''
     }
   }
+
+  // ── Faction-first vehicle preload ─────────────────────────────────────────
+  // Builds a vehicle's Group + textures in the background and stores it in
+  // `pinnedVehicleCache`, WITHOUT touching the displayed vehicle. Exposed to
+  // Editor via `preloadRef` so the faction-first prefetch can fire from
+  // onModelLoaded without needing internal Viewport state.
+  //
+  // Design choice: we duplicate the cache-miss build sequence from `run()`
+  // rather than extracting a shared helper, because `run()` captures ≥15
+  // closure variables (vehicle, season, sga, archiveCache, getArchive,
+  // bodyPaths, candidates, …) that are scoped inside
+  // the heavy load effect and cannot be referenced outside it without a
+  // substantial refactor that risks the active-load path. The duplication is
+  // self-contained inside this callback and does NOT touch any ref that
+  // affects the live render (meshGroupRef, submeshMapsRef, baseTextureRef,
+  // setLoading, setErr, setModelTick, onModelLoaded, onPartsLoaded, etc.).
+  const buildVehicleIntoCache = useCallback(async (
+    spec: VehicleSpec,
+    targetSeason: 'summer' | 'winter',
+    eager = false,
+    cpuOnly = false,
+  ): Promise<void> => {
+    if (pinnedVehicleCache.has(spec.id) || vehicleGroupCache.has(spec.id)) return
+    // cpuOnly mode (Connect-time warm): renderer not required for CPU phases.
+    // Normal mode: require both renderer and camera (GPU compile phases need them).
+    if (!cpuOnly && (!rendererRef.current || !cameraRef.current)) return
+    if (!cameraRef.current) return
+
+    // Interaction-aware gate: background preloads must never run their heavy
+    // decode / GPU-upload / shader-compile work while the user is actively
+    // orbiting the current vehicle. Park here until the camera has been idle
+    // for IDLE_MS (or a hard ceiling elapses, so a fidgety user can't starve
+    // the preload forever). Each heavy phase awaits this before proceeding.
+    //
+    // EAGER mode (post-Connect "prepare all vehicles" batch): skip the idle
+    // gate entirely and build flat-out. The user is watching a progress
+    // indicator during this phase, so brief jank is expected and acceptable —
+    // the whole point is to warm EVERY vehicle as fast as possible so that
+    // once it finishes, switching between vehicles is a pure cache hit with
+    // zero loading. Idle-gating here was what starved warmup (a user who keeps
+    // orbiting never lets it complete), which is exactly the "still loading on
+    // switch" complaint this mode fixes.
+    const IDLE_MS = 450
+    const waitForIdle = async (): Promise<void> => {
+      if (eager) return
+      const ceiling = performance.now() + 8000
+      while (
+        performance.now() - lastInteractionRef.current < IDLE_MS &&
+        performance.now() < ceiling
+      ) {
+        await new Promise<void>(r => setTimeout(r, 120))
+      }
+    }
+    await waitForIdle()
+
+    const archives = await locateArchives(root)
+    if (!archives) return
+
+    const sgaCandidates = [
+      'ArtHigh.sga', 'ArtHighXP1.sga', 'ArtHighXP2.sga', 'ArtArmies.sga',
+      'ArtGermanEF.sga', 'ArtSovietEF.sga', 'ArtAEF.sga', 'ArtAEFSkins.sga',
+      'ArtBritish.sga', 'ArtWestGerman.sga',
+    ]
+
+    // Locate the RGM bytes
+    let sga: SgaArchive | null = null
+    let rgmBytes: Uint8Array | null = null
+    const rgmArchiveCache = new Map<string, SgaArchive>()
+    for (const sgaName of sgaCandidates) {
+      const pre = getPreloadedArchive(sgaName)
+      if (pre) rgmArchiveCache.set(sgaName, pre)
+    }
+
+    // Re-check after warm (race: another buildVehicleIntoCache completed meanwhile)
+    if (pinnedVehicleCache.has(spec.id) || vehicleGroupCache.has(spec.id)) return
+
+    for (const sgaName of sgaCandidates) {
+      try {
+        let a: SgaArchive
+        if (rgmArchiveCache.has(sgaName)) {
+          a = rgmArchiveCache.get(sgaName)!
+        } else {
+          const fh = await archives.getFileHandle(sgaName)
+          const file = await fh.getFile()
+          a = await SgaArchive.open(file)
+          rgmArchiveCache.set(sgaName, a)
+          cacheArchive(sgaName, a)
+        }
+        const b = await a.readByPath(rgmPath(spec))
+        if (b) { sga = a; rgmBytes = b; break }
+      } catch { /* continue */ }
+    }
+    if (!sga || !rgmBytes) return
+
+    const model = parseRgm(rgmBytes)
+
+    // ── Archive helper (mirrors run()) ─────────────────────────────────────
+    const archiveCache = new Map<string, SgaArchive>()
+    const getArchive = async (name: string): Promise<SgaArchive | null> => {
+      if (archiveCache.has(name)) return archiveCache.get(name)!
+      const preloaded = getPreloadedArchive(name)
+      if (preloaded) { archiveCache.set(name, preloaded); return preloaded }
+      try {
+        const fh = await archives.getFileHandle(name)
+        const file = await fh.getFile()
+        const a = await SgaArchive.open(file)
+        archiveCache.set(name, a)
+        cacheArchive(name, a)
+        return a
+      } catch { return null }
+    }
+
+    // ── Texture path helpers (mirrors run()) ───────────────────────────────
+    const lower = (s: string) => s.toLowerCase()
+    const id = spec.id.toLowerCase()
+    const aliases: Record<string, string[]> = {
+      elefant: ['elefant_hull', 'elefant'],
+      ostwind_flak_panzer: ['ostwind_flak_panzer', 'ostwind', 'ostwind_flakpanzer'],
+      sdkfz_222: ['sdkfz_222', 'sdkfz222', 'sdkfz221'],
+      panther_ausf_g: ['panther', 'panther_ausf_g', 'pzkpfw_v_panther'],
+      king_tiger_sdkfz_182: ['kingtiger', 'king_tiger', 'tiger_ii'],
+      puma_sdkfz_234: ['puma', 'sdkfz_234', 'sdkfz234_puma'],
+      jagdpanzer_iv_sdkfz_162: ['jagdpanzer_iv', 'jagdpanzeriv', 'jagdpanzer'],
+      panzer_ii_luchs_sdkfz_123: ['luchs', 'panzer_ii_luchs', 'pzkpfw_ii'],
+      panzer_iv_sdkfz_ausf_i: ['panzeriv', 'panzer_iv', 'pzkpfw_iv'],
+      hetzer: ['hetzer', 'jagdpanzer_38t', 'jagdpanzer_38'],
+      jagdtiger: ['jagdtiger'],
+      sturmtiger: ['sturmtiger', 'sturmpanzer'],
+      tiger: ['tiger', 'tiger_i', 'pzkpfw_vi_tiger'],
+      brummbar: ['brummbar', 'sturmpanzer_iv'],
+      kubelwagen: ['kubelwagen', 'kuebelwagen'],
+      m4a3e8_sherman_easy_8: ['m4a3e8_sherman', 'm4a3e8', 'sherman_easy_8'],
+      m4a3_sherman_76mm: ['m4a3_sherman_76', 'm4a3_76mm', 'sherman_76mm'],
+      m4a1_sherman_calliope: ['m4a1_calliope', 'm4a1_sherman', 'sherman_calliope'],
+      m10_tank_destroyer: ['m10', 'm10_wolverine'],
+      m36_tank_destroyer: ['m36', 'm36_jackson'],
+      m15a1_aa_halftrack: ['m15_aa_halftrack', 'm15a1', 'm16_halftrack'],
+      sherman_firefly: ['firefly', 'sherman_firefly', 'sherman_vc'],
+    }
+    const bases = [spec.id, ...(aliases[spec.id] ?? [])].filter((v, i, a) => a.indexOf(v) === i)
+    const dirCandidates = [spec.id, ...bases].map(d => `art/armies/${spec.faction}/vehicles/${d}/`)
+    const candidates = model.textureSets
+      .filter(t => !isDestroyedMesh(t) && /_dif$/i.test(t))
+      .sort((a, b) => {
+        const aMatch = lower(a).includes(id) ? 0 : 1
+        const bMatch = lower(b).includes(id) ? 0 : 1
+        if (aMatch !== bMatch) return aMatch - bMatch
+        return a.length - b.length
+      })
+    const tsetPaths = candidates.map(c => c.replace(/\\/g, '/').toLowerCase() + '.rgt')
+    const fallbackPaths = dirCandidates.flatMap(dirPath =>
+      bases.flatMap(b => [
+        `${dirPath}${b}_dif.rgt`, `${dirPath}${b}_hull_dif.rgt`, `${dirPath}${b}_default_dif.rgt`,
+      ]),
+    )
+
+    const findWinterPathsInSga = (a: SgaArchive): string[] => {
+      const all = a.list().map(f => f.path.toLowerCase())
+      const factionRe = new RegExp(`^art/armies/${spec.faction.toLowerCase()}/vehicles/`)
+      const hits: string[] = []
+      for (const base of bases) {
+        const baseLow = base.toLowerCase()
+        const skinRe = new RegExp(
+          `^art/armies/${spec.faction.toLowerCase()}/vehicles/[^/]+/skins/([^/]*winter[^/]*)/${baseLow}_dif\\.rgt$`,
+        )
+        const cs = all.filter(p => factionRe.test(p) && skinRe.test(p))
+        cs.sort((p1, p2) => {
+          const f1 = p1.match(skinRe)![1]; const f2 = p2.match(skinRe)![1]
+          if (f1 === 'winter' && f2 !== 'winter') return -1
+          if (f2 === 'winter' && f1 !== 'winter') return 1
+          return f1.localeCompare(f2)
+        })
+        hits.push(...cs)
+      }
+      return hits
+    }
+
+    const isBodyPath = (p: string) =>
+      !/\/(treads?|wheels?|tracks?)\//i.test(p) &&
+      !/(?:^|_)(treads?|wheels?|tracks?)_[a-z0-9_]*_dif\.rgt$/i.test(p)
+    const bodyPaths = [...new Set([...tsetPaths, ...fallbackPaths])].filter(isBodyPath)
+
+    const findFirstReadable = async (
+      a: SgaArchive, paths: string[],
+    ): Promise<Uint8Array | null> => {
+      for (const p of paths) {
+        const cached = getPreloadedBytes(p)
+        if (cached) return cached
+        const b = await a.readByPath(p)
+        if (b) { cacheBytes(p, b); return b }
+      }
+      return null
+    }
+
+    const archivesToTry: { archive: SgaArchive }[] = [{ archive: sga }]
+    for (const sgaName of sgaCandidates) {
+      const a = await getArchive(sgaName)
+      if (a && a !== sga) archivesToTry.push({ archive: a })
+    }
+
+    // Re-check again after all the async archive opens — another call may
+    // have completed while we were awaiting.
+    if (pinnedVehicleCache.has(spec.id) || vehicleGroupCache.has(spec.id)) return
+
+    let rgtBytes: Uint8Array | null = null
+    if (targetSeason === 'winter') {
+      outer: for (const { archive: a } of archivesToTry) {
+        const winter = findWinterPathsInSga(a)
+        const b = await findFirstReadable(a, winter)
+        if (b) { rgtBytes = b; break outer }
+      }
+    }
+    if (!rgtBytes) {
+      outer2: for (const { archive: a } of archivesToTry) {
+        const b = await findFirstReadable(a, bodyPaths)
+        if (b) { rgtBytes = b; break outer2 }
+      }
+    }
+
+    let diffuse: import('three').Texture | null = null
+    let diffuseImage: HTMLCanvasElement | null = null
+    if (rgtBytes) {
+      try {
+        await waitForIdle()
+        // Combined off-thread inflate + BC decode: only the cheap chunky header
+        // parse stays on the main thread; the ~3s zlib inflate AND the BC decode
+        // run in a worker (single round-trip). See decodeRgtFullOffThread.
+        const header = parseRgtHeader(rgtBytes)
+        const dec = await decodeRgtFullOffThread(header)
+        const rgba = dec.rgba
+        diffuseImage = document.createElement('canvas')
+        diffuseImage.width = dec.width
+        diffuseImage.height = dec.height
+        diffuseImage.getContext('2d')!.putImageData(
+          new ImageData(
+            new Uint8ClampedArray(rgba.buffer.slice(rgba.byteOffset, rgba.byteOffset + rgba.byteLength) as ArrayBuffer),
+            dec.width, dec.height,
+          ), 0, 0,
+        )
+        diffuse = new CanvasTexture(diffuseImage)
+        diffuse.flipY = true
+        diffuse.colorSpace = SRGBColorSpace
+        diffuse.wrapS = diffuse.wrapT = RepeatWrapping
+        diffuse.anisotropy = MAX_ANISO
+      } catch (e) {
+        console.warn('[viewport:preload] diffuse decode failed:', e)
+        try {
+          const header = parseRgtHeader(rgtBytes)
+          const dec = await decodeRgtFullOffThread(header)
+          const cv = document.createElement('canvas')
+          cv.width = dec.width
+          cv.height = dec.height
+          const ctx = cv.getContext('2d')!
+          ctx.putImageData(
+            new ImageData(
+              new Uint8ClampedArray(dec.rgba.buffer.slice(dec.rgba.byteOffset, dec.rgba.byteOffset + dec.rgba.byteLength) as ArrayBuffer),
+              dec.width, dec.height,
+            ),
+            0, 0,
+          )
+          diffuse = new CanvasTexture(cv)
+          diffuse.flipY = true
+          diffuse.colorSpace = SRGBColorSpace
+          diffuse.wrapS = diffuse.wrapT = RepeatWrapping
+          diffuse.anisotropy = MAX_ANISO
+        } catch { /* silent */ }
+      }
+    }
+
+    // Normal map
+    let normalTex: import('three').Texture | null = null
+    const nrmFallbackPaths = dirCandidates.flatMap(dirPath =>
+      bases.flatMap(b => [
+        `${dirPath}${b}_nrm.rgt`, `${dirPath}${b}_hull_nrm.rgt`,
+        `${dirPath}${b}_norm.rgt`, `${dirPath}${b}_n.rgt`,
+        `${dirPath}${b}_default_nrm.rgt`,
+      ]),
+    )
+    const nrmTsetPaths = (model.textureSets ?? [])
+      .filter(t => /_nrm$|_norm$/i.test(t) && !isDestroyedMesh(t))
+      .map(t => t.replace(/\\/g, '/').toLowerCase() + '.rgt')
+    const allNrmPaths = [...new Set([...nrmFallbackPaths, ...nrmTsetPaths])]
+    const prefetchedNrm = prefetchedTextures.get(`${spec.id}:nrm`)
+    if (prefetchedNrm) {
+      normalTex = prefetchedNrm
+    } else {
+      outer3: for (const tryPath of allNrmPaths) {
+        let bytes: Uint8Array | null = getPreloadedBytes(tryPath) ?? await sga.readByPath(tryPath)
+        if (!bytes) {
+          for (const sgaName of sgaCandidates) {
+            const a = await getArchive(sgaName)
+            if (!a) continue
+            const b = await a.readByPath(tryPath)
+            if (b) { bytes = b; break }
+          }
+        }
+        if (bytes) {
+          try {
+            const header = parseRgtHeader(bytes)
+            const dec = await decodeRgtFullOffThread(header)
+            const cv = document.createElement('canvas')
+            cv.width = dec.width
+            cv.height = dec.height
+            const ctx = cv.getContext('2d')!
+            ctx.putImageData(
+              new ImageData(
+                new Uint8ClampedArray(dec.rgba.buffer.slice(dec.rgba.byteOffset, dec.rgba.byteOffset + dec.rgba.byteLength) as ArrayBuffer),
+                dec.width, dec.height,
+              ),
+              0, 0,
+            )
+            normalTex = new CanvasTexture(cv)
+            normalTex.colorSpace = NoColorSpace
+            normalTex.flipY = true
+            normalTex.wrapS = normalTex.wrapT = RepeatWrapping
+            normalTex.anisotropy = MAX_ANISO
+            break outer3
+          } catch { /* continue */ }
+        }
+      }
+    }
+
+    // Build the Three.js Group (intact submeshes only, showDestroyed=false)
+    await waitForIdle()
+    const uniqueMeshes = dedupeByGeometry(dedupeSubmeshes(model.meshes))
+    const intact: typeof model.meshes = []
+    for (const sub of uniqueMeshes) {
+      const t = `${sub.name} ${sub.materialName ?? ''}`
+      if (isVariantMesh(t)) continue // drop variant/crew overlays (Churchill mortar/AVRE/croc, crew goblins)
+      if (!isDestroyedMesh(t)) intact.push(sub)
+    }
+    if (intact.length === 0) return // unsupported mesh format — skip silently
+
+    const texCache2 = new Map<string, { diffuse: import('three').Texture | null; normal: import('three').Texture | null; specular: import('three').Texture | null; roughness: import('three').Texture | null }>()
+    if (diffuse) texCache2.set('__body__', { diffuse, normal: normalTex, specular: null, roughness: null })
+
+    const tsetsLower = model.textureSets.map(t => t.replace(/\\/g, '/').toLowerCase())
+    const findTset2 = (predicate: (p: string) => boolean): string | null => {
+      for (const t of tsetsLower) if (predicate(t)) return t; return null
+    }
+    const isSchurzenMesh = (name: string) => /schurzen|skirt|side_armor|sidearmor/i.test(name)
+    const tokenFor2 = (mat: string): string => {
+      if (/(?:^|_)turrets?(?:_|$)/i.test(mat)) return 'turrets'
+      if (/wreck|wreak/i.test(mat)) return 'wreck'
+      if (/(?:^|[^a-z])(?:tread|track|wheel)s?(?![a-z])/i.test(mat)) return 'tread'
+      if (isSchurzenMesh(mat)) return 'schurzen'
+      if (/(?:^|_)panels?(?:_|$)/i.test(mat)) return 'panels'
+      return ''
+    }
+    const tokenRe2 = (t: string) => {
+      const suffix = t === 'wreck' ? '(?:s|ed)?' : 's?'
+      return new RegExp(`(?:^|/|_)${t}${suffix}(?:_|/)`, 'i')
+    }
+    const isVariantPath2 = (p: string) =>
+      tokenRe2('wreck').test(p) || tokenRe2('tread').test(p) || tokenRe2('track').test(p) ||
+      tokenRe2('panels').test(p) || tokenRe2('turrets').test(p) || /\/badges\//i.test(p) || isSchurzenMesh(p)
+    const resolveRgtPath2 = async (rawPath: string): Promise<Uint8Array | null> => {
+      const norm = rawPath.replace(/\\/g, '/').toLowerCase()
+      const candidate = norm.endsWith('.rgt') ? norm : `${norm}.rgt`
+      const cached = getPreloadedBytes(candidate)
+      if (cached) return cached
+      const direct = await sga!.readByPath(candidate)
+      if (direct) { cacheBytes(candidate, direct); return direct }
+      for (const sgaName of sgaCandidates) {
+        const a = await getArchive(sgaName)
+        if (!a) continue
+        const b = await a.readByPath(candidate)
+        if (b) { cacheBytes(candidate, b); return b }
+      }
+      return null
+    }
+    const decodeTexBytes2 = async (bytes: Uint8Array, role: 'diffuse' | 'normal' | 'spec' | 'gloss'): Promise<import('three').Texture | null> => {
+      try {
+        // Combined off-thread inflate + BC decode (mirrors body-diffuse path):
+        // only the cheap chunky header parse stays on the main thread.
+        const header = parseRgtHeader(bytes)
+        const dec = await decodeRgtFullOffThread(header)
+        const rgba = dec.rgba
+        const cv = document.createElement('canvas')
+        cv.width = dec.width
+        cv.height = dec.height
+        const ctx = cv.getContext('2d')!
+        if (role === 'gloss') {
+          // Gloss inversion: roughness = max(26, 255 - gloss)
+          const d = rgba
+          for (let i = 0; i < d.length; i += 4) {
+            d[i] = Math.max(26, 255 - d[i])
+            d[i + 1] = Math.max(26, 255 - d[i + 1])
+            d[i + 2] = Math.max(26, 255 - d[i + 2])
+          }
+        }
+        ctx.putImageData(
+          new ImageData(
+            new Uint8ClampedArray(rgba.buffer.slice(rgba.byteOffset, rgba.byteOffset + rgba.byteLength) as ArrayBuffer),
+            dec.width, dec.height,
+          ), 0, 0,
+        )
+        const t = new CanvasTexture(cv)
+        t.flipY = true
+        t.colorSpace = role === 'diffuse' ? SRGBColorSpace : NoColorSpace
+        t.wrapS = t.wrapT = RepeatWrapping
+        t.anisotropy = MAX_ANISO
+        return t
+      } catch { return null }
+    }
+    const getTexForMat2 = async (materialName: string | null) => {
+      const cacheKey = materialName ?? '__body__'
+      if (texCache2.has(cacheKey)) return texCache2.get(cacheKey)!
+      const token = materialName ? tokenFor2(materialName) : ''
+      let difPath: string | null; let nrmPath: string | null; let spcPath: string | null; let glsPath: string | null
+      const notVariant2 = (p: string) => !isVariantPath2(p)
+      const specId = spec.id.toLowerCase()
+      if (token === 'schurzen') {
+        difPath = nrmPath = spcPath = glsPath = null
+      } else if (token) {
+        const re = tokenRe2(token)
+        difPath = findTset2(p => re.test(p) && /_dif$/.test(p))
+        nrmPath = findTset2(p => re.test(p) && /_nrm$|_norm$/.test(p))
+        spcPath = findTset2(p => re.test(p) && /_spc$/.test(p))
+        glsPath = findTset2(p => re.test(p) && /_gls$/.test(p))
+      } else {
+        const isBody = (p: string) => /_dif$/.test(p) && notVariant2(p)
+        const isBodyNrm = (p: string) => /_nrm$|_norm$/.test(p) && notVariant2(p)
+        const isBodySpc = (p: string) => /_spc$/.test(p) && notVariant2(p)
+        const isBodyGls = (p: string) => /_gls$/.test(p) && notVariant2(p)
+        difPath = findTset2(p => isBody(p) && p.includes(specId)) ?? findTset2(isBody)
+        nrmPath = findTset2(p => isBodyNrm(p) && p.includes(specId)) ?? findTset2(isBodyNrm)
+        spcPath = findTset2(p => isBodySpc(p) && p.includes(specId)) ?? findTset2(isBodySpc)
+        glsPath = findTset2(p => isBodyGls(p) && p.includes(specId)) ?? findTset2(isBodyGls)
+      }
+      // Resolve byte arrays for all four slots concurrently, then fire their
+      // worker decodes concurrently via Promise.all so round-trips don't serialize.
+      const [difBytes, nrmBytes, spcBytes, glsBytes] = await Promise.all([
+        difPath ? resolveRgtPath2(difPath) : Promise.resolve(null),
+        nrmPath ? resolveRgtPath2(nrmPath) : Promise.resolve(null),
+        spcPath ? resolveRgtPath2(spcPath) : Promise.resolve(null),
+        glsPath ? resolveRgtPath2(glsPath) : Promise.resolve(null),
+      ])
+      const [dTex, nTex, sTex, gTex] = await Promise.all([
+        difBytes ? decodeTexBytes2(difBytes, 'diffuse') : Promise.resolve(null),
+        nrmBytes ? decodeTexBytes2(nrmBytes, 'normal') : Promise.resolve(null),
+        spcBytes ? decodeTexBytes2(spcBytes, 'spec') : Promise.resolve(null),
+        glsBytes ? decodeTexBytes2(glsBytes, 'gloss') : Promise.resolve(null),
+      ])
+      const bodyCache2 = texCache2.get('__body__')
+      const isNonBody = token !== ''
+      // Turret shares the body diffuse atlas (e.g. Tiger I has no dedicated
+      // tiger_turret_dif); its UVs map into the body atlas, so fall back to the
+      // body diffuse rather than the flat olive (0x9aa18b) fallback. Treads /
+      // wreck stay null (their UVs tile a small texture). MUST mirror the live
+      // path (getTexturesForMaterial) — without it, warmed turrets render
+      // untextured pale-green while the live build looks correct.
+      const sharesBodyAtlas = token === 'turrets'
+      const result = {
+        diffuse: dTex ?? ((isNonBody && !sharesBodyAtlas) ? null : (bodyCache2?.diffuse ?? null)),
+        normal: nTex ?? bodyCache2?.normal ?? null,
+        specular: sTex ?? bodyCache2?.specular ?? null,
+        roughness: gTex ?? bodyCache2?.roughness ?? null,
+      }
+      texCache2.set(cacheKey, result)
+      return result
+    }
+
+    const group = new Group()
+    const submeshMap = new Map<string, Mesh>()
+    for (const sub of intact) {
+      const tex = await getTexForMat2(sub.materialName ?? sub.name)
+      const subToken = tokenFor2(sub.materialName ?? sub.name)
+      const fallbackColor = subToken === 'tread' ? 0x2a2c2e : subToken === 'wreck' ? 0x3a342c : 0x9aa18b
+      const mat = new MeshPhysicalMaterial({
+        map: tex.diffuse,
+        normalMap: tex.normal,
+        roughnessMap: tex.roughness,
+        specularIntensityMap: tex.specular,
+        color: tex.diffuse ? 0xffffff : fallbackColor,
+        metalness: 0,
+        roughness: tex.roughness ? 1.0 : 0.55,
+        specularIntensity: tex.specular ? 1.0 : 0.5,
+        envMapIntensity: 0.3,
+        side: DoubleSide,
+        ...(subToken === 'tread' ? { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 } : {}),
+      })
+      if (tex.normal) mat.normalScale = new Vector2(1.0, -1.0)
+      ;(mat as any).__usesBodyDiffuse = tokenFor2(sub.materialName ?? sub.name) === '' // eslint-disable-line @typescript-eslint/no-explicit-any
+      // Season tagging — mirrors the live build path so warmed cache-hit
+      // groups re-skin identically on Summer↔Winter toggle.
+      ;(mat as any).__seasonPaint = subToken === '' || subToken === 'turrets' || subToken === 'panels' // eslint-disable-line @typescript-eslint/no-explicit-any
+      ;(mat as any).__seasonToken = subToken // eslint-disable-line @typescript-eslint/no-explicit-any
+      ;(mat as any).__summerMap = tex.diffuse // eslint-disable-line @typescript-eslint/no-explicit-any
+      const m = new Mesh(sub.geometry, mat)
+      m.name = sub.name
+      m.castShadow = true
+      m.receiveShadow = true
+      group.add(m)
+      submeshMap.set(sub.name, m)
+    }
+
+    // Season context (mirrors run()) so warmed groups re-skin on toggle.
+    ;(group as any).__seasonFaction = spec.faction // eslint-disable-line @typescript-eslint/no-explicit-any
+    ;(group as any).__seasonBases = bases // eslint-disable-line @typescript-eslint/no-explicit-any
+    ;(group as any).__seasonModel = model // eslint-disable-line @typescript-eslint/no-explicit-any
+    ;(group as any).__seasonPaintReady = true // eslint-disable-line @typescript-eslint/no-explicit-any
+
+    // Auto-fit (mirrors run())
+    const HELPER_NAME_RE_P = /crushed|proxy|marker|wreck|destroy|spawn|orphan/i
+    const fitChildren = group.children.filter(c => !HELPER_NAME_RE_P.test(c.name ?? ''))
+    const fitBox = new Box3()
+    for (const c of fitChildren) fitBox.expandByObject(c)
+    const box = fitBox.isEmpty() ? new Box3().setFromObject(group) : fitBox
+    const size = box.getSize(new Vector3())
+    const longest = Math.max(size.x, size.y, size.z)
+    // TRUE 1:1 RELATIVE SCALE — MUST match the live build path (run()).
+    // A warmed group is shown verbatim by the cache-hit fast path, which
+    // does NOT re-scale; if this baked the old `5/longest` normalisation the
+    // pre-built vehicles would display at the wrong size (every vehicle the
+    // same on-screen length) and silently regress the B1 1:1 fix.
+    const WORLD_SCALE = 0.72
+    const scale = longest > 0.0001 ? WORLD_SCALE : 0.01
+    group.scale.setScalar(scale)
+    const scaledBox = new Box3().setFromObject(group)
+    // Centre the area-weighted BODY centroid over the pad origin (X=0, Z=0)
+    // and rest the lowest mesh on Y=0 — IDENTICAL to run(). Must use the same
+    // centroid (not bbox centre) so warmed cache-hit copies sit on the pad the
+    // same way freshly-built ones do; otherwise a long-gun vehicle (Tiger)
+    // would render off-centre when shown from the pinned cache.
+    const fitBoxCenter = box.getCenter(new Vector3())
+    const centroidLocal = computeBodyCentroidLocal(group)
+    const centerX = centroidLocal.lengthSq() > 0 ? centroidLocal.x * scale : fitBoxCenter.x * scale
+    const centerZ = centroidLocal.lengthSq() > 0 ? centroidLocal.z * scale : fitBoxCenter.z * scale
+    group.position.x = -centerX
+    group.position.z = -centerZ
+    group.position.y = -scaledBox.min.y
+
+    // GPU warmup on a staging scene (no live scene touched). compileAsync +
+    // initTexture are the single biggest main-thread janks in a preload, so
+    // wait for the user to stop orbiting before kicking them off.
+    //
+    // cpuOnly: skip GPU steps entirely — these GL calls are bound to this
+    // renderer's context and do NOT transfer to the editor's renderer, so
+    // doing them here would waste main-thread time. The editor's renderer
+    // will re-upload on first draw (cheap: decoded bytes already in JS heap).
+    if (!cpuOnly) {
+      await waitForIdle()
+      const stagingScene = new Scene()
+      stagingScene.add(group)
+      try {
+        await rendererRef.current!.compileAsync(stagingScene, cameraRef.current!)
+      } catch (e) {
+        console.warn('[viewport:preload] compileAsync failed (non-fatal):', e)
+      }
+      stagingScene.remove(group)
+      group.traverse(o => {
+        const mesh = o as Mesh
+        if (!mesh.isMesh) return
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+        mats.forEach(m => {
+          const mat = m as MeshStandardMaterial
+          ;[mat.map, (mat as MeshPhysicalMaterial).normalMap,
+            (mat as MeshPhysicalMaterial).roughnessMap,
+            (mat as MeshPhysicalMaterial).metalnessMap]
+            .forEach(t => { if (t) rendererRef.current!.initTexture(t) })
+        })
+      })
+    }
+
+    // Final guard: another call may have completed while GPU warmup ran
+    if (pinnedVehicleCache.has(spec.id) || vehicleGroupCache.has(spec.id)) {
+      // Dispose the redundant group we just built
+      disposeVehicleGroup({ group, baseDiffuse: null, normalTex: null, model: null, diffuseCanvas: null, submeshMap: null, lastUsed: 0 })
+      return
+    }
+
+    pinnedVehicleCache.set(spec.id, {
+      group,
+      baseDiffuse: diffuse,
+      normalTex: normalTex ?? null,
+      model,
+      diffuseCanvas: diffuseImage,
+      submeshMap,
+      lastUsed: Date.now(),
+    })
+    // Pre-resolve the winter atlas now (still behind the Connect circle) so the
+    // first Summer↔Winter toggle for this vehicle is instant — no season beam.
+    await prewarmWinterAtlases(group, spec.faction, bases)
+    console.log(`[viewport:preload] pinned ${spec.id} (${spec.faction}) for instant swap`)
+  }, [root, prewarmWinterAtlases])
+
+  // Wire buildVehicleIntoCache to the preloadRef so Editor can call it
+  useEffect(() => {
+    if (!preloadRef) return
+    preloadRef.current = buildVehicleIntoCache
+    return () => { preloadRef.current = null }
+  }, [preloadRef, buildVehicleIntoCache])
+
+  // Wire faceDecalSide to faceDecalRef so Editor can call it after a decal
+  // bake completes, snapping the camera to the right-side hull view so the
+  // newly applied decal is immediately visible without orbiting.
+  //
+  // "Right side" in CoH2 RGM world space = camera at (+X, y, 0) looking toward
+  // origin.  The hullSideRight UV rect is painted onto the vehicle's positive-X
+  // face, so approaching from +X (dir = (-1, 0.3, 0) normalised) shows it.
+  //
+  // We keep the current controls.target Y so the camera pivots around the same
+  // hull-centre height; only azimuth changes.  Distance is preserved from the
+  // current camera radius so zoom is unchanged.  needsRender is flagged so the
+  // frame fires without user input.
+  useEffect(() => {
+    if (!faceDecalRef) return
+    const faceDecalSide = () => {
+      const camera = cameraRef.current
+      const controls = controlsRef.current
+      if (!camera || !controls) return
+      const target = controls.target.clone()
+      // Current orbit radius — preserve user's zoom level
+      const radius = camera.position.distanceTo(target)
+      // Approach from +X at a slight elevation (0.3) so the upper hull panel
+      // is in frame.  Z=0 so we're looking straight at the right side, not
+      // at an angle.
+      const dir = new Vector3(-1, 0.3, 0).normalize()
+      camera.position.copy(target).addScaledVector(dir, radius)
+      camera.lookAt(target)
+      camera.updateProjectionMatrix()
+      controls.update()
+      needsRenderRef.current = true
+    }
+    faceDecalRef.current = faceDecalSide
+    return () => { faceDecalRef.current = null }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- faceDecalRef is a stable ref; cameraRef/controlsRef/needsRenderRef are also stable refs never changing identity
+  }, [faceDecalRef])
+
+  // =========================================================================
+  // Background GPU warm for Connect-warmed cache entries (editor mode only)
+  // =========================================================================
+  // When the fleet was warmed at Connect with cpuOnly=true, the cached Groups
+  // carry no GPU state. On first draw Three.js re-uploads textures and
+  // recompiles shaders synchronously, causing a brief hitch per vehicle switch.
+  //
+  // Fix: after the editor's renderer is live (modelTick > 0 = first model
+  // loaded), run compileAsync over every cached Group that hasn't been GPU-
+  // compiled by this renderer yet. compileAsync is ASYNC and non-blocking —
+  // it does NOT stall the render loop or main thread between frames. We
+  // throttle to a few entries per idle slot so the editor stays responsive.
+  //
+  // warmupOnly: skip — the headless Viewport's renderer is discarded; GPU
+  //             state built here would not transfer to the editor anyway.
+  useEffect(() => {
+    if (warmupOnly) return
+    if (modelTick === 0) return // renderer not ready yet
+    const renderer = rendererRef.current
+    const camera = cameraRef.current
+    if (!renderer || !camera) return
+
+    let cancelled = false
+    // Collect all groups that haven't been GPU-compiled by this renderer.
+    // We mark compiled groups with a WeakSet keyed to the renderer instance
+    // so we don't re-run on vehicle switch (modelTick bumps each load).
+    const allEntries = [
+      ...Array.from(pinnedVehicleCache.values()),
+      ...Array.from(vehicleGroupCache.values()),
+    ]
+    const toWarm = allEntries.filter(e => !(e.group as { __gpuWarmed?: boolean }).__gpuWarmed)
+    if (toWarm.length === 0) return
+
+    const scheduleNext: (fn: () => void) => void =
+      typeof requestIdleCallback === 'function'
+        ? fn => requestIdleCallback(fn, { timeout: 1000 })
+        : fn => window.setTimeout(fn, 16)
+
+    let idx = 0
+    const pump = () => {
+      if (cancelled) return
+      const entry = toWarm[idx++]
+      if (!entry) return // all done
+      const r = rendererRef.current
+      const c = cameraRef.current
+      if (!r || !c) return // renderer gone (unmounted)
+      const staging = new Scene()
+      staging.add(entry.group)
+      r.compileAsync(staging, c).then(() => {
+        if (!cancelled) {
+          staging.remove(entry.group)
+          // Mark so we don't re-compile on the next modelTick bump.
+          ;(entry.group as { __gpuWarmed?: boolean }).__gpuWarmed = true
+          scheduleNext(pump)
+        }
+      }).catch(() => {
+        if (!cancelled) scheduleNext(pump)
+      })
+    }
+
+    // Kick off up to 2 concurrent warm lanes.
+    for (let i = 0; i < Math.min(2, toWarm.length); i++) scheduleNext(pump)
+
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- run once after first model load; modelTick dep intentional
+  }, [warmupOnly, modelTick])
 
   return (
     <div ref={containerRef} className="relative w-full h-full">

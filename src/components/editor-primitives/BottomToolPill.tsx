@@ -1,11 +1,11 @@
 /**
  * BottomToolPill — Apple-style segmented control that holds editor tools.
  *
- * Pixel-matched to the `VehicleMenu` pill (same `rgba(20, 22, 28, 0.62)`
- * surface, same `blur(28px) saturate(180%)` backdrop, same hairline
- * 0.5px white stroke, same shadow recipe). The active segment uses the
- * VehicleMenu "selected pill" ring + tinted fill so the active tool reads
- * as picked without anchoring colour to the brand orange.
+ * Surface is the shared `glass-hud` utility (index.css) — the same recipe
+ * VehicleMenu / ScenePanel / FactionPanel use, so every floating dock & rail
+ * stays visually coherent from one source of truth. The active segment uses
+ * the "selected pill" ring + tinted fill so the active tool reads as picked
+ * without anchoring colour to the brand orange.
  *
  * Each tool is rendered as a 56×56 rounded-xl segment with an icon and a
  * 10px caption underneath — the same height as VehicleMenu pills minus
@@ -75,27 +75,18 @@ export default function BottomToolPill<TId extends string>({
 }: Props<TId>) {
   if (tools.length === 0 && (!extras || extras.length === 0)) return null
 
-  // The outer pill recipe is a 1:1 lift from VehicleMenu — keeps the
-  // editor surfaces visually coherent with the vehicle-selector users
-  // already know.
-  const pillStyle: CSSProperties = {
-    background: 'rgba(20, 22, 28, 0.62)',
-    backdropFilter: 'blur(28px) saturate(180%)',
-    WebkitBackdropFilter: 'blur(28px) saturate(180%)',
-    border: '0.5px solid rgba(255,255,255,0.10)',
-    boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
-    ...style,
-  }
-
+  // Surface recipe lives in the `glass-hud` utility (index.css) so every
+  // floating dock/rail shares one source of truth. `style` stays free for
+  // the caller's positioning overrides.
   return (
     <div
       role="toolbar"
       aria-label="Editor tools"
       className={
-        'rounded-2xl px-2 py-1.5 flex items-center gap-0 max-w-[min(85vw,640px)] overflow-x-auto [&::-webkit-scrollbar]:h-0' +
+        'glass-hud rounded-2xl px-2 py-1.5 flex items-center gap-0 max-w-[min(85vw,640px)] overflow-x-auto [&::-webkit-scrollbar]:h-0' +
         (className ? ' ' + className : '')
       }
-      style={pillStyle}
+      style={style}
     >
       {tools.map(tool => {
         const isActive = activeId === tool.id
