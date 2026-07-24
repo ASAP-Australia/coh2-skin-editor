@@ -12,7 +12,6 @@
  */
 
 import type { CSSProperties, ReactNode } from 'react'
-import { RefreshCw, RefreshCwOff } from 'lucide-react'
 import { BorderBeam } from '@/components/ui/border-beam'
 import { StateIcon } from '@/components/LiveSyncBadge'
 import type { LiveSyncState } from '@/lib/live-sync'
@@ -52,15 +51,6 @@ export interface EditorTitlePillProps {
    * is shown as the pill tooltip. Auto-cleared by the parent after a timeout.
    */
   publishError?: string | null
-  /**
-   * Q7 (Live Sync opt-out): current enabled state of Live Sync. When provided
-   * (together with `onToggleLiveSync`), a compact On/Off toggle renders as a
-   * SEPARATE control adjacent to the pill — never inside the rename click
-   * target. Omit both to hide the toggle entirely (back-compat).
-   */
-  liveSyncEnabled?: boolean
-  /** Called when the user clicks the Live Sync toggle. Flips enabled/disabled. */
-  onToggleLiveSync?: () => void
 }
 
 export default function EditorTitlePill({
@@ -75,8 +65,6 @@ export default function EditorTitlePill({
   popoverOpen,
   popoverContent,
   publishError,
-  liveSyncEnabled,
-  onToggleLiveSync,
 }: EditorTitlePillProps) {
   const handleClick = () => {
     if (titleAcknowledged === false && onAcknowledge) {
@@ -84,53 +72,6 @@ export default function EditorTitlePill({
     }
     onToggle()
   }
-
-  // Q7: render the toggle only when the parent wired both the state and the
-  // handler. Kept as a standalone sibling button so it never intercepts the
-  // pill's click-to-rename affordance.
-  const showLiveSyncToggle = liveSyncEnabled !== undefined && onToggleLiveSync !== undefined
-  const liveSyncToggle = showLiveSyncToggle ? (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={liveSyncEnabled}
-      onClick={onToggleLiveSync}
-      title={liveSyncEnabled ? 'Live sync: On — click to pause' : 'Live sync: Off — click to resume'}
-      aria-label={liveSyncEnabled ? 'Live sync on — click to pause' : 'Live sync off — click to resume'}
-      data-testid="editor-title-live-sync-toggle"
-      data-enabled={liveSyncEnabled}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 5,
-        height: 36,
-        padding: '0 10px',
-        borderRadius: 12,
-        background: 'rgba(20, 20, 20, 0.75)',
-        backgroundImage:
-          'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
-        backdropFilter: 'blur(40px) saturate(150%)',
-        WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-        border: '0.5px solid rgba(255, 255, 255, 0.08)',
-        boxShadow:
-          'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-        color: liveSyncEnabled ? 'rgb(52 211 153)' /* emerald-400 */ : 'rgba(245,245,245,0.55)',
-        cursor: 'pointer',
-        fontSize: 12,
-        fontWeight: 600,
-        letterSpacing: '0.01em',
-        whiteSpace: 'nowrap',
-        transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-      }}
-    >
-      {liveSyncEnabled ? (
-        <RefreshCw size={14} aria-hidden />
-      ) : (
-        <RefreshCwOff size={14} aria-hidden />
-      )}
-      <span>{liveSyncEnabled ? 'On' : 'Off'}</span>
-    </button>
-  ) : null
 
   const pillStyle: CSSProperties = {
     display: 'inline-flex',
@@ -214,9 +155,9 @@ export default function EditorTitlePill({
           } as CSSProperties
         }
       >
-        {/* Pill row: the pill button + Live Sync toggle + popover content
-            side-by-side. The toggle is a SEPARATE control (Q7) so clicking it
-            never triggers the pill's rename affordance. */}
+        {/* Pill row: the pill button + popover content side-by-side. The pill
+            still shows the live-sync STATUS icon (Saved / Syncing…) — sync is
+            always-on with no user-facing toggle. */}
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           {titleAcknowledged === false ? (
             <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={12} borderWidth={1}>
@@ -225,8 +166,6 @@ export default function EditorTitlePill({
           ) : (
             pillButton
           )}
-
-          {liveSyncToggle}
 
           {popoverContent}
         </div>

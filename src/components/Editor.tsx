@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Stamp, Paintbrush, Boxes, Sun, Download, Loader2 } from 'lucide-react'
+import { Stamp, Paintbrush, Boxes, Sun } from 'lucide-react'
 import { useDecalHistory } from '@/lib/decal-history'
 const Viewport = lazy(() => import('./Viewport'))
 import ViewportGuard from './ViewportGuard'
@@ -51,9 +51,7 @@ import {
 } from '@/lib/brush'
 // (relTime removed with bottom-right "saved Xs ago" indicator)
 import { SgaArchive } from '@/lib/sga'
-import { scheduleLiveSync, deriveNumericIdFromProjectId } from '@/lib/live-sync'
-import { collectExportVehicleIds } from '@/lib/mod-export'
-import { isElectron, detectModsPath, writeFile } from '@/lib/native-fs'
+import { scheduleLiveSync } from '@/lib/live-sync'
 import { generateCamo, applyWeathering, CAMO_OVERLAY_ALPHA, type CamoPreset } from '@/lib/camo-generator'
 // vehicle-3d-renderer is dynamically imported so its Three.js dependency
 // doesn't land in the main chunk — it's only needed after the editor mounts.
@@ -931,93 +929,11 @@ export default function Editor({
   // vehicle's body meshes — drives the texture editor's "unwrap" overlay.
   const [uvLines, setUvLines] = useState<Float32Array | null>(null)
 
-  // Q6: explicit "Export .sga" affordance. Live Sync writes silently (and its
-  // disk write is a no-op in the browser), so first-timers get no visible file
-  // and no feedback. This button builds the SAME SGA Live Sync builds and
-  // either downloads it (browser) or writes it to mods/skins/ + toasts the
-  // path (Electron). `exporting` gates the button while the build runs.
-  const [exporting, setExporting] = useState(false)
-  // A skin only exports when at least one vehicle has decals or a chosen
-  // template/diffuse — otherwise exportSkinPack throws "no vehicles with
-  // decals or a chosen template". Mirror that gate so the button is disabled
-  // (with a hint) until there's something to export.
-  const canExport = useMemo(
-    () => collectExportVehicleIds(project).length > 0,
-    [project],
-  )
-
-  // Q6: build the current skin's SGA and deliver it to the user.
-  //
-  // Build path mirrors Live Sync exactly (live-sync.ts:731-776): a stable
-  // numeric id derived from project.id, prefer the signed `patchExport` when
-  // the key pool is present, else the unsigned `exportSkinPack`. The engine
-  // scans mods/skins/ for `%I64u.sga` only, so we keep ExportResult.filename
-  // (already `<numericId>.sga`) for BOTH the browser download and the disk
-  // write — a human-readable name would be invisible to the game's scanner.
-  //
-  // Delivery:
-  //   • Electron → write to <modsPath>/skins/<numericId>.sga (same location
-  //     Live Sync targets, live-sync.ts:884-891) and toast the full path.
-  //   • Browser → trigger a real Blob download (createObjectURL + <a download>),
-  //     matching the existing downloadProject/downloadFaceplate idiom.
-  const handleExportSga = useCallback(async () => {
-    if (exporting) return
-    if (!canExport) {
-      toast.push('Nothing to export yet — paint a skin, pick a template, or add a decal first', 'info')
-      return
-    }
-    setExporting(true)
-    try {
-      const stableNumericId = deriveNumericIdFromProjectId(project.id)
-      const { patchExport, exportSkinPack, hasSigningKeys } = await import('@/lib/mod-export')
-      let result: { bytes: Uint8Array; filename: string }
-      if (await hasSigningKeys()) {
-        try {
-          result = await patchExport(root, project, () => {}, stableNumericId)
-        } catch (patchErr: unknown) {
-          // Signed path can fail on template slot-size mismatch; unsigned SGAs
-          // load fine locally ([Sig:0]) — degrade so export always succeeds.
-          const msg = patchErr instanceof Error ? patchErr.message : String(patchErr)
-          console.warn(`[editor] patchExport failed (${msg}); falling back to unsigned exportSkinPack`)
-          result = await exportSkinPack(root, project, () => {}, undefined, stableNumericId)
-        }
-      } else {
-        result = await exportSkinPack(root, project, () => {}, undefined, stableNumericId)
-      }
-
-      if (isElectron()) {
-        // Write to the same mods/skins/ folder Live Sync targets.
-        const modsPath = await detectModsPath()
-        if (!modsPath) {
-          toast.push('Could not locate the CoH2 mods folder — is the game installed?', 'error')
-          return
-        }
-        const destPath = `${modsPath}/skins/${result.filename}`
-        await writeFile(destPath, result.bytes)
-        toast.push(`Exported to ${destPath}`, 'success')
-      } else {
-        // Browser: trigger a real file download of the SGA bytes. Keep the
-        // numeric `%I64u.sga` filename so a user who drops it into
-        // mods/skins/ has it picked up by the engine.
-        const blob = new Blob([new Uint8Array(result.bytes)], { type: 'application/octet-stream' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = result.filename
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        setTimeout(() => URL.revokeObjectURL(url), 1000)
-        toast.push(`Downloaded ${result.filename} — drop it in …/My Games/Company of Heroes 2/mods/skins/`, 'success')
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error('[editor] Export .sga failed', err)
-      toast.push(`Export failed: ${msg}`, 'error')
-    } finally {
-      setExporting(false)
-    }
-  }, [exporting, canExport, project, root, toast])
+  // FIX 3: the explicit "Export .sga" button was removed — the app auto-saves
+  // and auto-syncs the pack to the game on every edit (see the repaint effect's
+  // scheduleLiveSync('skin', …) call), so there is no manual export path. The
+  // underlying build functions (patchExport / exportSkinPack in @/lib/mod-export)
+  // are kept for Live Sync + tests + future use.
 
   // Save indicator — 'saved' for 1.5 s after each auto-save, then clears.
   const [saveIndicator, setSaveIndicator] = useState<'saved' | null>(null)
@@ -2371,49 +2287,6 @@ export default function Editor({
               size={32}
             />
           </div>
-
-          {/* Export .sga (Q6) — the ONLY explicit, discoverable export control.
-              Live Sync writes silently (and no-ops in the browser), so without
-              this a first-timer never sees a file or any confirmation. Builds
-              the SAME SGA Live Sync builds (patchExport/exportSkinPack) and
-              either downloads it (browser) or writes it to mods/skins/ +
-              toasts the path (Electron). Disabled until the project has
-              something to export (a painted skin / chosen template / decals),
-              with a hint on hover. Docks top-right, clear of the left-docked
-              panel nav rail and the App-level window controls. */}
-          <button
-            type="button"
-            onClick={handleExportSga}
-            disabled={exporting || !canExport}
-            title={
-              !canExport
-                ? 'Paint a skin, pick a template, or add a decal first'
-                : isElectron()
-                  ? 'Export the skin .sga into the game’s mods/skins folder'
-                  : 'Download the skin .sga (drop it in mods/skins to install)'
-            }
-            aria-label="Export skin as .sga"
-            className={[
-              'glass-hud absolute z-30 inline-flex items-center gap-1.5',
-              'rounded-2xl px-3 py-2 text-[11px] font-medium select-none',
-              'transition-all duration-150 focus:outline-none',
-              'focus-visible:ring-1 focus-visible:ring-white/30',
-              exporting || !canExport
-                ? 'text-[var(--color-text-3)] opacity-60 cursor-not-allowed'
-                : 'text-white hover:bg-white/10 active:scale-95 cursor-pointer',
-            ].join(' ')}
-            style={{
-              top: 'calc(20px + var(--app-top-inset, 0px))',
-              right: 132,
-            }}
-          >
-            {exporting ? (
-              <Loader2 size={14} strokeWidth={2} className="animate-spin" aria-hidden />
-            ) : (
-              <Download size={14} strokeWidth={2} aria-hidden />
-            )}
-            <span>{exporting ? 'Exporting…' : 'Export .sga'}</span>
-          </button>
 
           {/* Save indicator — fades in briefly after each auto-save.
                Inline style override applies the same --app-top-inset shim

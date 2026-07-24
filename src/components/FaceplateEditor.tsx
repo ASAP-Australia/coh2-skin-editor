@@ -65,7 +65,6 @@ import {
   updateRecentFaceplateThumbnail,
 } from '@/lib/faceplate-project'
 import { writeClipboard, readClipboard, type ClipboardEntry } from '@/lib/editor-clipboard'
-import { isElectron, detectModsPath, writeFile } from '@/lib/native-fs'
 import { INSIGNIA_LIBRARY, type InsigniaEntry } from '@/lib/insignia-library'
 import HexColorInput from '@/components/editor-primitives/HexColorInput'
 import EditorTitlePill from '@/components/editor-primitives/EditorTitlePill'
@@ -79,7 +78,6 @@ import {
   CaseSensitive,
   Circle,
   CornerDownLeft,
-  Download,
   Eraser,
   FlipHorizontal2,
   FlipVertical2,
@@ -130,7 +128,6 @@ import {
   CanvasPlaceholder,
   EditorHomeButton,
   GlassModal,
-  GlassToast,
   GradientFillEditor,
   SliderPopover,
   ToolOptionsPeel,
@@ -246,14 +243,6 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   /** Currently-active editor tool. Drives both the bottom pill's selected
    *  segment and the contents of the floating options peel above it. */
   const [activeTool, setActiveTool] = useState<FaceplateToolId>('select')
-  /** Bottom-right status toast for the manual "Export .sga" action.
-   *  `intent` drives the GlassToast border colour (green success / red error). */
-  const [exportToast, setExportToast] = useState<
-    { intent: 'success' | 'error'; body: string } | null
-  >(null)
-  /** True while a manual Export .sga build is in flight (disables the button
-   *  and shows a "Exporting…" affordance so the user gets immediate feedback). */
-  const [isExporting, setIsExporting] = useState(false)
   /** Whether the keyboard-shortcuts overlay is open (F1 or ? button). */
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   // Stable getter ref so useHistoryEngine captures remain current.
@@ -1348,102 +1337,10 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
     }
   }, [project, setProject])
 
-  // ── Manual "Export .sga" — the discoverable, explicit export path ────────
-  // Live Sync writes the SGA into the mods folder automatically, but its
-  // browser writeFile() is a no-op (native-fs is IPC-only) so a browser user
-  // never gets a file, and even in Electron there was no explicit, confirmable
-  // export affordance. This handler builds the SAME faceplate SGA that Live
-  // Sync / Publish produce (buildFaceplateMod over the composed 692×204 atlas)
-  // and then either downloads it (browser) or writes it to the game mods
-  // folder with a success toast naming the path (Electron).
-  const handleExportSga = useCallback(async () => {
-    if (isExporting) return
-    // "Nothing to export yet" guard — an empty canvas would still build a
-    // (blank) atlas, but exporting nothing is almost never intended, so we
-    // surface a clear message instead of silently producing an empty banner.
-    if (project.layers.length === 0) {
-      setExportToast({ intent: 'error', body: 'Nothing to export yet — add a layer first.' })
-      return
-    }
-    setIsExporting(true)
-    try {
-      const { buildFaceplateMod, generateGuid } = await import('@/lib/faceplate-mod-build')
-      const { ATLAS_WIDTH, ATLAS_HEIGHT, ICON_RECT, BANNER_RECT } =
-        await import('@/lib/faceplate-templates')
-
-      // Compose the banner, then pack it into the 692×204 atlas exactly the
-      // way the publish path does (banner in the left region + a downscaled
-      // copy into the 64×64 icon sub-rect so the scoreboard/chat icon isn't
-      // black). Reuses composeFaceplateCanvas — no re-implemented compositor.
-      const bannerCanvas = await composeFaceplateCanvas(project)
-      const atlasCanvas = document.createElement('canvas')
-      atlasCanvas.width = ATLAS_WIDTH
-      atlasCanvas.height = ATLAS_HEIGHT
-      const atlasCtx = atlasCanvas.getContext('2d')
-      if (atlasCtx) {
-        atlasCtx.drawImage(bannerCanvas, 0, 0)
-        atlasCtx.drawImage(
-          bannerCanvas,
-          0, 0, BANNER_RECT.width, BANNER_RECT.height,
-          ICON_RECT.x, ICON_RECT.y, ICON_RECT.width, ICON_RECT.height,
-        )
-      }
-      const atlasRgba = atlasCtx
-        ? atlasCtx.getImageData(0, 0, ATLAS_WIDTH, ATLAS_HEIGHT).data
-        : new Uint8ClampedArray(ATLAS_WIDTH * ATLAS_HEIGHT * 4)
-
-      // Reuse the project's stable mod-identity GUID (persist a fresh one as a
-      // defensive fallback, mirroring handleRequestBuild) so every export
-      // shares the identity CoH2 registers the faceplate under.
-      let projectForBuild = project
-      let guid = project.guid
-      if (!guid) {
-        guid = generateGuid()
-        projectForBuild = { ...project, guid }
-        setProject(projectForBuild)
-        persistFaceplate(projectForBuild)
-      }
-      const result = await buildFaceplateMod({ project: projectForBuild, atlasRgba, guid })
-
-      if (isElectron()) {
-        // Electron: write to the SAME location Live Sync targets —
-        // <modsRoot>/faceplates/subscriptions/<guid>.sga (see live-sync
-        // _writeFile). detectModsPath() resolves the CoH2 mods folder.
-        const modsPath = await detectModsPath()
-        if (!modsPath) {
-          setExportToast({
-            intent: 'error',
-            body: "Couldn't locate your CoH2 mods folder. Open the game once so it's created.",
-          })
-          return
-        }
-        const norm = modsPath.replace(/\\/g, '/')
-        const outPath = `${norm}/faceplates/subscriptions/${result.sgaFilename}`
-        await writeFile(outPath, result.sga)
-        setExportToast({ intent: 'success', body: `Wrote ${outPath}` })
-      } else {
-        // Browser: trigger a real file download of the SGA bytes. Copy into a
-        // fresh Uint8Array so the Blob owns a plain ArrayBuffer (avoids the
-        // SharedArrayBuffer typing pitfall documented in native-fs.writeFile).
-        const bytes = new Uint8Array(result.sga)
-        const blob = new Blob([bytes], { type: 'application/octet-stream' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = result.sgaFilename
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        setTimeout(() => URL.revokeObjectURL(url), 1000)
-        setExportToast({ intent: 'success', body: `Downloaded ${result.sgaFilename}` })
-      }
-    } catch (e) {
-      console.error('Faceplate .sga export failed:', e)
-      setExportToast({ intent: 'error', body: "Couldn't build the mod file — please try again." })
-    } finally {
-      setIsExporting(false)
-    }
-  }, [project, isExporting, setProject])
+  // FIX 3: the manual "Export .sga" button was removed — the faceplate
+  // auto-syncs to the game on every edit via scheduleLiveSync('faceplate', …)
+  // in the history engine's onPersist. The build path (buildFaceplateMod over
+  // the composed atlas) is still exercised by Live Sync + the publish flow.
 
   return (
     <div
@@ -2915,54 +2812,8 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           onRedo={redo}
           redoLabel="Redo (Ctrl+Shift+Z)"
         />
-        {/* Q6 — explicit, discoverable "Export .sga" affordance. Live Sync's
-            on-disk write is a no-op in the browser and silent even in Electron,
-            so this button gives the user a confirmable export: a real file
-            download in the browser, or a mods-folder write + path toast in
-            Electron. Disabled with a hint when there's nothing to export yet.
-            Styling mirrors EditorHomeButton's glass pill so the two read as a
-            matched top-bar pair. */}
-        <button
-          type="button"
-          onClick={handleExportSga}
-          disabled={isExporting || project.layers.length === 0}
-          title={
-            project.layers.length === 0
-              ? 'Add a layer before exporting'
-              : isElectron()
-                ? 'Export the faceplate .sga into your CoH2 mods folder'
-                : 'Download the faceplate as a .sga mod file'
-          }
-          aria-label="Export faceplate as .sga"
-          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{
-            position: 'relative',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-            height: 36,
-            padding: '0 12px',
-            borderRadius: 12,
-            background: 'rgba(17, 17, 17, 0.78)',
-            backgroundImage:
-              'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
-            backdropFilter: 'blur(40px) saturate(150%)',
-            WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-            border: '0.5px solid rgba(255, 255, 255, 0.08)',
-            boxShadow:
-              'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-            color: 'var(--color-text-2)',
-            cursor: 'pointer',
-            fontSize: 12,
-            fontWeight: 600,
-            transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-            WebkitAppRegion: 'no-drag',
-          } as CSSProperties}
-        >
-          <Download size={16} strokeWidth={2} aria-hidden />
-          {isExporting ? 'Exporting…' : 'Export .sga'}
-        </button>
+        {/* FIX 3: manual "Export .sga" button removed — the faceplate
+            auto-syncs to the game on every edit. */}
       </div>
 
       {/* ── Centered project title pill — top center of viewport ────────
@@ -2980,8 +2831,6 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         onToggle={() => setPackNameEditOpen(v => !v)}
         popoverOpen={packNameEditOpen}
         publishError={publishError}
-        liveSyncEnabled={sync.enabled}
-        onToggleLiveSync={sync.actions.toggle}
         popoverContent={
           <PackIdentityPopover
             open={packNameEditOpen}
@@ -3889,17 +3738,6 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             )
           }
           onClose={() => setCurvesOpen(false)}
-        />
-      )}
-
-      {/* Export status toast (success = green, error = red) */}
-      {exportToast && (
-        <GlassToast
-          title={exportToast.intent === 'success' ? 'Export .sga' : 'Export failed'}
-          body={exportToast.body}
-          intent={exportToast.intent}
-          autoDismissMs={exportToast.intent === 'success' ? 4000 : undefined}
-          onClose={() => setExportToast(null)}
         />
       )}
 

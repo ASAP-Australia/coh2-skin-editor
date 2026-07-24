@@ -30,11 +30,8 @@ import {
   FlipHorizontal2,
   FlipVertical2,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import {
-  downloadProject,
   getOrInitVehicle,
-  readProjectFile,
   effectiveMainDecalId,
   persistActive,
   type Coh2SkinProject,
@@ -226,8 +223,6 @@ export default function TopBar(p: Props) {
       onToggle={() => setPackNameEditOpen(v => !v)}
       popoverOpen={packNameEditOpen}
       publishError={publishError}
-      liveSyncEnabled={sync.enabled}
-      onToggleLiveSync={sync.actions.toggle}
       popoverContent={
         <PackIdentityPopover
           open={packNameEditOpen}
@@ -502,19 +497,6 @@ function Slider({
 // ============================================================================
 
 function ViewPanel(p: Props) {
-  const viewFileInputRef = useRef<HTMLInputElement>(null)
-  const onLoadProject = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    try {
-      const proj = await readProjectFile(file)
-      p.setProject(proj)
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
-    }
-    e.target.value = ''
-  }
-
   return (
     <div className="space-y-3">
       <Section label="Pack info">
@@ -545,44 +527,13 @@ function ViewPanel(p: Props) {
         </label>
       </Section>
 
-      {/* Project file — save/load the .coh2skin project state. Lives here
-          alongside pack metadata rather than in Export because these are
-          project-state actions, not mod-build actions. */}
-      <Section label="Project file">
-        {/* Save / Load are peer actions on the same project file, so they
-            share the same visual weight. Previously Save was a filled
-            accent button and Load was a secondary chip — the asymmetry
-            implied one was primary and the other was secondary, which
-            isn't true at the project-state layer. */}
-        <div className="grid grid-cols-2 gap-1.5">
-          <Button
-            size="sm"
-            variant="secondary"
-            className="rounded-lg"
-            onClick={() => downloadProject(p.project)}
-            title="Save this project to a file on your computer"
-          >
-            Save project
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="rounded-lg"
-            onClick={() => viewFileInputRef.current?.click()}
-            title="Open a saved project file from your computer"
-          >
-            Open project
-          </Button>
-          <input
-            ref={viewFileInputRef}
-            type="file"
-            accept=".coh2skin,.json"
-            onChange={onLoadProject}
-            className="hidden"
-            aria-label="Load project file"
-          />
-        </div>
-      </Section>
+      {/* FIX 3: the manual "Save project" / "Open project" (.coh2skin file)
+          controls were removed. Persistence is automatic — every edit
+          auto-saves to local storage (Editor.tsx repaint effect → persistActive)
+          and the StartScreen "Continue" card restores the active project. The
+          StartScreen "Load Project" entry remains for opening old project
+          files. The build/serialise libs (downloadProject / readProjectFile in
+          @/lib/project) are kept for tests + future use. */}
 
       {/* Pack actions — close-pack + disconnect now share a single section
           rather than dangling at the bottom of the panel unattached. Both

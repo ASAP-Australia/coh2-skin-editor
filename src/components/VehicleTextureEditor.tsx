@@ -35,7 +35,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import {
   ArrowLeft,
   Brush,
-  Download,
   Eraser,
   Pipette,
   Grid3x3,
@@ -304,21 +303,6 @@ export default function VehicleTextureEditor(p: Props) {
     () => p.baseDiffuse?.getContext('2d') ?? null,
     [p.baseDiffuse],
   )
-
-  // Download the current composited texture atlas as a PNG.
-  // Uses the live overlayCanvas so the exported file always matches what the
-  // user sees — base diffuse + camo + all decals composited at full 2048²
-  // resolution. The filename mirrors the old "Advanced" panel in ExportPanel.
-  const downloadTexturePng = useCallback(() => {
-    const cv = p.overlayCanvas
-    const url = cv.toDataURL('image/png')
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${p.vehicleName}.png`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-  }, [p.overlayCanvas, p.vehicleName])
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -740,21 +724,6 @@ export default function VehicleTextureEditor(p: Props) {
           style={{ ...glassPillStyle, width: 36, padding: 0 }}
         >
           <Percent size={15} strokeWidth={2} aria-hidden />
-        </button>
-
-        {/* Download texture PNG — export the live composited atlas for
-            external editing. Replaces the old "Advanced > Vehicle texture"
-            action in ExportPanel which was removed when the pack-deploy
-            ExportPanel was superseded by automatic Live Sync. */}
-        <button
-          type="button"
-          title={`Download ${p.vehicleName}.png — full 2048² composited texture`}
-          aria-label={`Download ${p.vehicleName}.png`}
-          onClick={downloadTexturePng}
-          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
-          style={{ ...glassPillStyle, width: 36, padding: 0 }}
-        >
-          <Download size={15} strokeWidth={2} aria-hidden />
         </button>
 
         {/* Help / shortcuts */}

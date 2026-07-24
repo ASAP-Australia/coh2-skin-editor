@@ -249,14 +249,26 @@
   /* Squircle corner via the global corner-shape rule below (the reference
    * applies superellipse(1.33) to *, so its card is a squircle too).
    * border-radius is the circular fallback if corner-shape is unsupported. */
-  background-color: rgba(13, 13, 13, 0.4);
+  /* Frame border = SOLID exp-03 gray chrome. Ported from lab01 experiment #3
+   * (see artifacts/editor-redesign/lab01-design-language.md): raised surface
+   * #333333 on base #242424 / ground #161616. The border ring is the 4px pad
+   * that shows around glass-frame-inner, so this fill IS the visible "gloss
+   * border". It was rgba(13,13,13,0.4) — 40% alpha, so you saw straight through
+   * to the desktop. Now a near-opaque exp-03 gray (#242424 @ 0.96) so the
+   * chrome reads as decisively gray, harmonizing with the #111 family while
+   * keeping the faintest translucency for the rounded-corner desktop bleed. */
+  background-color: rgba(36, 36, 36, 0.96);
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.08),
+    /* Outer 1px hairline: exp-03 ground #161616, opaque so the frame edge
+     * reads crisp against the desktop instead of washing out. */
+    0 0 0 1px rgba(22, 22, 22, 0.9),
     0 14px 5px -3px rgba(0, 0, 0, 0.01),
     0 8px 5px -2px rgba(0, 0, 0, 0.02),
     0 3px 3px -1px rgba(0, 0, 0, 0.03),
     0 1px 2px -0.5px rgba(0, 0, 0, 0.03),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    /* Inset ring lifted to exp-03 raised-surface #333 so the gray ring has a
+     * subtle top bevel (was white/5 + white/10 on a translucent base). */
+    inset 0 0 0 1px rgba(51, 51, 51, 0.9),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 @utility glass-frame-inner {

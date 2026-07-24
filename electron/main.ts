@@ -939,6 +939,24 @@ if (process.env.SHOWCASE === '1') {
     console.error('[verify-visual] Failed to load verify-visual-capture module:', e)
     process.exit(1)
   })
+// ── UI_CAPTURE=1 gate ─────────────────────────────────────────────────────────
+// Redesign-v2 UI-capture harness: loads the REAL production app (dist/, the
+// normal main-window render path — NOT ?audit), drives it to named screens by
+// clicking buttons like a user via webContents.executeJavaScript, and captures
+// a PNG per state into artifacts/redesign-v2/ui-verify/. Real GPU. DO NOT
+// launch CoH2; reads SGAs read-only. See electron/ui-capture.ts.
+} else if (process.env.UI_CAPTURE === '1') {
+  import('./ui-capture').then(({ runUiCapture }) => {
+    runUiCapture()
+      .then(() => console.log('[ui-capture] Capture complete.'))
+      .catch(e => {
+        console.error('[ui-capture] Capture failed:', e)
+        process.exit(1)
+      })
+  }).catch(e => {
+    console.error('[ui-capture] Failed to load ui-capture module:', e)
+    process.exit(1)
+  })
 // ── AUDIT_REAL=1 gate ─────────────────────────────────────────────────────────
 // Real-pipeline audit: loads the actual app at ?audit=1, mounts the real
 // Viewport (MeshPhysicalMaterial + IBL + normalMap etc.), captures via

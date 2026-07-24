@@ -44,7 +44,6 @@ import {
   Contrast,
   Copy,
   Crosshair,
-  Download,
   Droplet,
   Eraser,
   FlipHorizontal2,
@@ -115,7 +114,6 @@ import {
   CanvasPlaceholder,
   EditorHomeButton,
   GlassModal,
-  GlassToast,
   PanelButton,
   SliderPopover,
   ToolOptionsPeel,
@@ -306,12 +304,6 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
   const [isBuildingTarget, setIsBuildingTarget] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [publishError, setPublishError] = useState<string | null>(null)
-
-  // ── Q6: Export .sga to disk/download ──────────────────────────────────────
-  /** True while the export build is in flight (disables the button). */
-  const [isExporting, setIsExporting] = useState(false)
-  /** Non-null → GlassToast is shown reporting the export result. */
-  const [exportToast, setExportToast] = useState<{ body: string; intent: 'success' | 'error' } | null>(null)
 
   // ── S5: Default-slot reference preview ───────────────────────────────────
   // A 128×128 canvas showing the composited result of the active part's
@@ -1598,56 +1590,10 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
     }
   }, [project, setProject, buildDecalSgaBytes])
 
-  // ── Q6: Export the pack as a real .sga on disk (Electron) / download (browser) ──
-  // In Electron this drops the .sga into the SAME game folder Live Sync targets
-  // (`<modsPath>/decals/subscriptions/<guid>.sga`) and reports the path. In the
-  // browser — where native writeFile is a no-op — it triggers a real file
-  // download so the user always ends up with the built artifact.
-  const handleExportSga = useCallback(async () => {
-    if (isExporting) return
-    setIsExporting(true)
-    try {
-      const { result } = await buildDecalSgaBytes()
-      const filename = result.sgaFilename // `<guid>.sga`
-
-      const { isElectron, detectModsPath, writeFile } = await import('@/lib/native-fs')
-      if (isElectron()) {
-        const modsPath = await detectModsPath()
-        if (!modsPath) {
-          setExportToast({
-            body: 'Could not locate the CoH2 mods folder. Is Company of Heroes 2 installed?',
-            intent: 'error',
-          })
-          return
-        }
-        // Mirror live-sync._writeFile: decal subs live under decals/subscriptions/.
-        const targetPath = `${modsPath}/decals/subscriptions/${filename}`
-        await writeFile(targetPath, result.sga)
-        setExportToast({ body: `Wrote ${targetPath}`, intent: 'success' })
-      } else {
-        // Browser: real file download of the SGA bytes (mirrors downloadDecalPack).
-        const buf = result.sga.buffer.slice(
-          result.sga.byteOffset,
-          result.sga.byteOffset + result.sga.byteLength,
-        ) as ArrayBuffer
-        const blob = new Blob([buf], { type: 'application/octet-stream' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = filename
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-        setExportToast({ body: `Downloaded ${filename}`, intent: 'success' })
-      }
-    } catch (e) {
-      console.error('Decal pack export failed:', e)
-      setExportToast({ body: 'Export failed — see console for details.', intent: 'error' })
-    } finally {
-      setIsExporting(false)
-    }
-  }, [isExporting, buildDecalSgaBytes])
+  // FIX 3: the manual "Export .sga" button was removed — the pack auto-syncs
+  // to the game on every edit via scheduleLiveSync('decal', …) in the history
+  // engine's onPersist. `buildDecalSgaBytes` above is retained for the publish
+  // flow and future use.
 
   // Whether to show the placeholder for the active decal canvas.
   const showDecalPlaceholder =
@@ -2312,51 +2258,8 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           onRedo={redo}
           redoLabel="Redo (Ctrl+Shift+Z)"
         />
-        {/* Hairline divider before the export affordance */}
-        <span aria-hidden style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.10)', margin: '0 2px', flexShrink: 0 }} />
-        {/* ── Q6: Export .sga — builds the real 15-file decal SGA and either
-            downloads it (browser) or writes it into the CoH2 mods folder
-            (Electron). Disabled until the pack has exportable artwork. */}
-        <button
-          type="button"
-          title={
-            hasExportableArtwork
-              ? 'Build and export this pack as a CoH2-loadable .sga'
-              : 'Add a decal before exporting'
-          }
-          aria-label="Export decal pack as .sga"
-          data-testid="dc-export-sga"
-          disabled={isExporting || !hasExportableArtwork}
-          onClick={handleExportSga}
-          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-35 disabled:pointer-events-none"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-            height: 36,
-            padding: '0 12px',
-            borderRadius: 12,
-            background: 'rgba(17,17,17,0.78)',
-            backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))',
-            backdropFilter: 'blur(40px) saturate(150%)',
-            WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-            border: '0.5px solid rgba(255,255,255,0.10)',
-            boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05), 0 4px 12px -4px rgba(0,0,0,0.2)',
-            color: 'var(--color-text-2)',
-            fontFamily: 'var(--font-mono)',
-            fontVariantNumeric: 'slashed-zero',
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: 'pointer',
-            transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-            WebkitAppRegion: 'no-drag',
-          } as CSSProperties}
-        >
-          <Download size={16} strokeWidth={2} aria-hidden />
-          {isExporting ? 'Exporting…' : 'Export .sga'}
-        </button>
-        {/* Keyboard shortcuts button removed — F1 still opens the overlay via keydown */}
+        {/* FIX 3: manual "Export .sga" button removed — the pack auto-syncs to
+            the game on every edit. Keyboard shortcuts still open via F1. */}
       </div>
 
       {/* ── Keyboard shortcuts overlay (G2) ────────────────────────────── */}
@@ -2377,8 +2280,6 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         onToggle={() => setPackNameEditOpen(v => !v)}
         popoverOpen={packNameEditOpen}
         publishError={publishError}
-        liveSyncEnabled={sync.enabled}
-        onToggleLiveSync={sync.actions.toggle}
         popoverContent={
           <PackIdentityPopover
             open={packNameEditOpen}
@@ -3120,16 +3021,6 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         </GlassModal>
       )}
 
-      {/* ── Q6: Export result toast — success (auto-dismiss) / error (sticky) ── */}
-      {exportToast && (
-        <GlassToast
-          title="Export .sga"
-          body={exportToast.body}
-          intent={exportToast.intent}
-          autoDismissMs={exportToast.intent === 'success' ? 4000 : undefined}
-          onClose={() => setExportToast(null)}
-        />
-      )}
     </div>
   )
 }

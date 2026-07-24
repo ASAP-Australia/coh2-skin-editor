@@ -542,6 +542,20 @@ export default function AuthShell({ phase, exiting = false, children }: Props) {
                 opacity: isLoading ? 0 : 1,
                 transition: `opacity ${OUT_MS}ms ${EASE}`,
                 visibility: isLoading ? 'hidden' : undefined,
+                // Sit above StartScreenCard's black-modal background layer.
+                // That layer is portalled in as a direct child of this
+                // `.glass-3` card at z-0. The body content below lives inside
+                // <HeightTransition>, whose `overflow:clip` establishes its own
+                // stacking context — which would otherwise trap the body's
+                // z-10 rows *inside* that subtree, leaving them at the card's
+                // z-auto level and painting them BEHIND the z-0 modal layer
+                // (the Start action buttons vanished under the black modal).
+                // Lifting this wrapper to z-index:1 (matching the brand mark +
+                // eyebrow above, which already crown the modal) puts the whole
+                // body subtree above the modal background. No effect on other
+                // phases: no modal layer is portalled there.
+                position: 'relative',
+                zIndex: 1,
               }}
             >
               <HeightTransition

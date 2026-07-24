@@ -1,9 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, lazy, Suspense } from 'react'
 import ConnectScreen from '@/components/ConnectScreen'
 import StartScreen from '@/components/StartScreen'
 import SavedProjectsList from '@/components/SavedProjectsList'
 import Editor from '@/components/Editor'
-import FaceplateEditor from '@/components/FaceplateEditor'
+// FaceplateEditor is lazy-loaded to defer its module eval. A rolldown-vite
+// production-chunk init-order bug throws "require_jsx_runtime is not a
+// function" (minified: "g is not a function") at FaceplateEditor's EAGER
+// module load, which blanks the whole app on the very first paint — every
+// screen, not just the faceplate editor — because App statically imports it.
+// Deferring the eval behind React.lazy() breaks that init-order cycle: the
+// chunk only evaluates when the user navigates to the faceplate editor
+// (rendered inside a <Suspense> boundary below), by which point the runtime
+// chunk is fully initialised. Permanent fix, not a capture-only workaround —
+// reverting to an eager import white-screens the shipped app.
+const FaceplateEditor = lazy(() => import('@/components/FaceplateEditor'))
 import DecalPackEditor from '@/components/DecalPackEditor'
 import AuthShell from '@/components/AuthShell'
 import WindowControls from '@/components/WindowControls'
@@ -28,7 +38,6 @@ import {
 } from '@/lib/decal-pack-project'
 import { loadSavedHandle } from '@/lib/coh2-fs'
 import { isElectron, detectInstallPath, nativePathToHandle, httpPathToHandle } from '@/lib/native-fs'
-import { lazy, Suspense } from 'react'
 import { preloadCommonArchives } from '@/lib/preload'
 import { VEHICLES, defaultVehicleForFaction, type VehicleSpec } from '@/lib/vehicles'
 
@@ -682,15 +691,17 @@ export default function App() {
         />
       )}
       {phase === 'faceplate' && faceplateProject && (
-        <FaceplateEditor
-          project={faceplateProject}
-          onBack={() =>
-            withViewTransition(() => {
-              setFaceplateProject(null)
-              setPhase('start')
-            })
-          }
-        />
+        <Suspense fallback={null}>
+          <FaceplateEditor
+            project={faceplateProject}
+            onBack={() =>
+              withViewTransition(() => {
+                setFaceplateProject(null)
+                setPhase('start')
+              })
+            }
+          />
+        </Suspense>
       )}
       {phase === 'decal-pack' && decalPackProject && (
         <DecalPackEditor
