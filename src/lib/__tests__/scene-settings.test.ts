@@ -1,11 +1,17 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import {
   SCENE_PRESETS,
   DEFAULT_PRESET_ID,
   applySeasonOverrides,
+  loadPresetId,
+  persistPresetId,
   type PresetId,
   type ScenePreset,
 } from '../scene-settings'
+
+const V2_KEY = 'coh2-skin-editor:scene-preset:v2'
+const V1_KEY = 'coh2-skin-editor:scene-preset:v1'
+const LEGACY_SLIDER_KEY = 'coh2-skin-editor:scene-settings:v1'
 
 // ---------------------------------------------------------------------------
 // DEFAULT_PRESET_ID
@@ -311,5 +317,68 @@ describe('applySeasonOverrides', () => {
     const summerSun = summerInGame.directionalLights[0]
     const winterSun = winter.directionalLights[0]
     expect(winterSun.intensity).toBeLessThan(summerSun.intensity)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Persistence + one-time re-default migration (GLITCH-LIST #6)
+// ---------------------------------------------------------------------------
+
+describe('loadPresetId / persistPresetId', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
+  it('returns the dark studio default for a fresh profile (no keys)', () => {
+    expect(loadPresetId()).toBe('studio_grid')
+    expect(loadPresetId()).toBe(DEFAULT_PRESET_ID)
+  })
+
+  it('round-trips an explicit user choice via v2', () => {
+    persistPresetId('showcase')
+    expect(window.localStorage.getItem(V2_KEY)).toBe('showcase')
+    expect(loadPresetId()).toBe('showcase')
+  })
+
+  it('honours a valid v2 value without touching it (post-migration fast path)', () => {
+    window.localStorage.setItem(V2_KEY, 'in_game_field')
+    expect(loadPresetId()).toBe('in_game_field')
+    // Unchanged — a stored v2 is an explicit user choice, not migrated away.
+    expect(window.localStorage.getItem(V2_KEY)).toBe('in_game_field')
+  })
+
+  it('re-defaults an existing profile that persisted the old bright default under v1', () => {
+    // The core bug: a profile stored in_game_field under the v1 preset key.
+    window.localStorage.setItem(V1_KEY, 'in_game_field')
+    // First load ignores the stale v1 value and re-defaults to studio_grid.
+    expect(loadPresetId()).toBe('studio_grid')
+    // v2 now pins the dark default; the stale v1 key is removed.
+    expect(window.localStorage.getItem(V2_KEY)).toBe('studio_grid')
+    expect(window.localStorage.getItem(V1_KEY)).toBeNull()
+  })
+
+  it('re-defaults from the even-older slider-state key', () => {
+    window.localStorage.setItem(LEGACY_SLIDER_KEY, '{"exposure":1.2}')
+    expect(loadPresetId()).toBe('studio_grid')
+    expect(window.localStorage.getItem(V2_KEY)).toBe('studio_grid')
+    expect(window.localStorage.getItem(LEGACY_SLIDER_KEY)).toBeNull()
+  })
+
+  it('migration runs exactly once — a later re-pick of In-Game Field persists', () => {
+    window.localStorage.setItem(V1_KEY, 'in_game_field')
+    // 1st load: migration fires, re-defaults to studio_grid.
+    expect(loadPresetId()).toBe('studio_grid')
+    // User deliberately re-picks the battlefield look.
+    persistPresetId('in_game_field')
+    // 2nd load: honoured, NOT re-migrated back to studio_grid.
+    expect(loadPresetId()).toBe('in_game_field')
+    expect(window.localStorage.getItem(V2_KEY)).toBe('in_game_field')
+  })
+
+  it('does not write v2 for a fresh profile (only migrates when old keys exist)', () => {
+    expect(loadPresetId()).toBe('studio_grid')
+    // No v1/legacy keys existed, so nothing is persisted — the default is
+    // purely in-memory until the user makes a real choice.
+    expect(window.localStorage.getItem(V2_KEY)).toBeNull()
   })
 })

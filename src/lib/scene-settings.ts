@@ -5,7 +5,7 @@
  * packaging tone-mapping, lights and background as a single click-to-apply
  * bundle. The active preset id is the only thing persisted to localStorage.
  *
- * Persisted under: `coh2-skin-editor:scene-preset:v1`.
+ * Persisted under: `coh2-skin-editor:scene-preset:v2`.
  */
 
 export type PresetId = 'in_game_field' | 'studio_grid' | 'showcase'
@@ -299,29 +299,48 @@ export function applySeasonOverrides(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Persistence — only the active preset id is stored. The previous v1 key
-// (full slider state) is silently migrated by reading-then-discarding.
+// Persistence — only the active preset id is stored.
+//
+// The current key is v2. It was bumped from v1 to force a ONE-TIME re-default
+// on existing profiles: the old default was the bright in-game skybox, and any
+// profile created before GLITCH-LIST #6 has that value persisted under the v1
+// key. Reading v1 directly would resurrect the bright default forever, so on
+// the first load after this change we ignore whatever v1 (or the even-older
+// slider-state key) held, write v2 = the dark studio default, and delete the
+// stale keys. After that single migration, v2 persists user choices normally —
+// someone who re-picks In-Game Field keeps it.
 // ─────────────────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'coh2-skin-editor:scene-preset:v1'
-const LEGACY_STORAGE_KEY = 'coh2-skin-editor:scene-settings:v1'
+const STORAGE_KEY = 'coh2-skin-editor:scene-preset:v2'
+// v1 held a bare preset id (possibly the old bright default).
+const V1_PRESET_KEY = 'coh2-skin-editor:scene-preset:v1'
+// The original slider-state blob (pre-presets).
+const LEGACY_SLIDER_KEY = 'coh2-skin-editor:scene-settings:v1'
+
+function isPresetId(v: string | null): v is PresetId {
+  return v === 'in_game_field' || v === 'studio_grid' || v === 'showcase'
+}
 
 export function loadPresetId(): PresetId {
   if (typeof window === 'undefined') return DEFAULT_PRESET_ID
   try {
+    // Post-migration fast path: a valid v2 value is an explicit user choice.
     const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (raw && (raw === 'in_game_field' || raw === 'studio_grid' || raw === 'showcase')) {
-      return raw
-    }
-    // One-shot migration: if the legacy slider-state key exists, ignore its
-    // contents but write the new key with the default so we don't keep
-    // checking. Don't delete the legacy key — keeps the user's data intact.
-    const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY)
-    if (legacy) {
+    if (isPresetId(raw)) return raw
+
+    // One-time migration: v2 is absent. If either older key exists, this is an
+    // existing profile carrying the stale bright default — discard its value,
+    // re-default to the dark studio preset, and remove the old keys so this
+    // branch never runs again.
+    const hadV1 = window.localStorage.getItem(V1_PRESET_KEY) !== null
+    const hadSlider = window.localStorage.getItem(LEGACY_SLIDER_KEY) !== null
+    if (hadV1 || hadSlider) {
       window.localStorage.setItem(STORAGE_KEY, DEFAULT_PRESET_ID)
+      if (hadV1) window.localStorage.removeItem(V1_PRESET_KEY)
+      if (hadSlider) window.localStorage.removeItem(LEGACY_SLIDER_KEY)
     }
   } catch {
-    /* ignore */
+    /* storage unavailable — fall through to the default */
   }
   return DEFAULT_PRESET_ID
 }
