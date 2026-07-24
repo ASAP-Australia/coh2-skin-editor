@@ -4,7 +4,13 @@
 (`lab01-design-language.md`, `current-chrome-inventory.md`) — every fact, value, and
 file:line you need is inlined here.** Repo: `/var/home/jflessenkemper/dev/coh2-skin-editor`.
 Stack: React 19 + TS 6 + **Tailwind v4** (CSS `@theme` in `src/index.css`, **NO `tailwind.config.*`**)
-+ Three.js + Electron/Vite. Fonts already Geist (variable).
++ Three.js + Electron/Vite. Fonts: **Inter Variable** (`@fontsource-variable/inter`) app-wide.
+> **UPDATE 2026-07-24:** the app font was swapped Geist → **Inter** per user preference ("I prefer
+> Inter over Geist"). Geist + Geist-Mono are fully removed (packages uninstalled). `--font-sans`,
+> `--font-heading`, and `--font-mono` all now resolve to `'Inter Variable'`; the mono-styled
+> readouts keep their `slashed-zero` / `tabular-nums` / uppercase / letter-spacing treatments (the
+> "metadata" feel survives via font-features, not the family). All "Geist"/"Geist Mono" mentions
+> below are historical — read them as "Inter Variable" / "the mono-styled UI treatment".
 
 ---
 

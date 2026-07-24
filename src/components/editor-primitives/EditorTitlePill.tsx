@@ -152,7 +152,7 @@ export default function EditorTitlePill({
     color: 'rgba(245,245,245,0.88)',
     cursor: 'pointer',
     padding: '0 14px',
-    fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
+    fontFamily: "'Inter Variable', ui-monospace, monospace",
     fontSize: 14,
     fontWeight: 700,
     letterSpacing: '0.01em',

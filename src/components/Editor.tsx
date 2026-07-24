@@ -2465,7 +2465,7 @@ export default function Editor({
                 className="glass-pill l01-ring relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium cursor-pointer transition-all duration-150 select-none"
                 style={{
                   color: 'rgb(229, 231, 235)',
-                  fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
+                  fontFamily: "'Inter Variable', ui-monospace, monospace",
                   fontVariantNumeric: 'slashed-zero',
                 }}
                 title="Back to full view (Esc)"

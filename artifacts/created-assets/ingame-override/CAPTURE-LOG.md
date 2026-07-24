@@ -116,3 +116,21 @@ Goal: remove the stale duplicate gamemode (ae9c499b) so only the Gen10 photo-her
 1. **The win-condition list is BOOT-CACHED, and Gen11 a5a90ec1 LISTS STANDALONE.** This session enumerated the Gen11 SGA at its 12:26 boot and a5a90ec1 was selectable + selected with ae9c499b DISABLED — the Gen11 empty-folder-anchor fix WORKS in-game (upgrades the wiki's "structurally verified, not yet relaunched" to VERIFIED IN-GAME). (Whether the list rescans on lobby entry vs boot was not independently retested — we entered an already-running match; but boot-time enumeration of the Gen11 build + successful standalone selection is proven.)
 2. **Gen11 photo-hero SCAR fires** (on-screen ASAP_VERIFY_READY / HERO SPAWNED n=3 / PHOTO HERO n=1 with world coords) — the Gen11 build carries BOTH the listing fix and the isolated-photo-hero camera path.
 3. **Teardown claims MUST be ps-verified:** gamescope-wl is Steam-parented (PPID = steam client) and can SURVIVE `pkill -x` — kill it by exact PID with SIGKILL and re-verify. This is the mechanism behind the prior "silent sweep failures."
+
+## Run 4 — Gen12 TRIPLE PHOTO HERO built + staged; LAUNCH BLOCKED BY GATE (2026-07-24 ~13:07)
+
+**Gen12 SCAR change SHIPPED to disk; NO launch attempted — the gate was NOT clear (HoI4 running).**
+
+### Gate — NOT CLEAR (STOP, per brief)
+- `ps -eo comm | grep -cE 'Easy Red 2|hoi4|RelicCoH2'` = **2** (must be 0 or STOP).
+- The 2 matches were **Hearts of Iron IV**: `run_hoi4` (pid 220402) + `hoi4` (pid 220405, `.../Hearts of Iron IV/hoi4 … --continuelastsave …` via the Paradox launcher). A LIVE HoI4 session was in progress. Launching CoH2 (231430, DRM-gated) requires `steam -shutdown`, which would have KILLED the user's HoI4 session — exactly what the gate protects. **STOPPED before any Steam/LaunchOptions/harness action.**
+
+### Part 1 (build) — DONE, all Gen12 assertions PASS
+- `scripts/build-verify-gamemode.mts` SCAR upgraded Gen10/11 single photo hero (+40/+40, landed by an oil derrick) → **Gen12 THREE photo heroes** in ONE SGroup `sg_photo` on the PROVEN-OPEN ground near the grid: `asap.origin + (+14, {-10, 0, +10})` via `Util_ScarPos`. Facings via `Squad_FacePosition`: hero1→world +X, hero2(middle)→+Z, hero3→-X. Camera (`Camera_SetDefault(14, 22, TV_DefaultAngle)`) retargeted at the MIDDLE hero (squad #2, `Camera_FollowSquad(SGroup_GetSpawnedSquadAt(sg_photo,2))`). On-screen debug: `PrintOnScreen("GEN12 TRIPLE PHOTO HERO")` + `PHOTO HERO n=…` line. GUID `a5a90ec1f00f4b7e9c0d3a2b1e4f5a60` + all listing-critical structure UNCHANGED.
+- Build: **ALL self-assertions PASS** incl. GEN11 `scar folder anchored at .scar idx 1: OK`, GEN7 per-file verification hashes OK, drives/storage/CRLF/entity_replacements all OK. SGA **10919 B** (was 10162 B — +757 B for the triple-hero SCAR). Installed to `mods/gamemode/` + `subscriptions/`.
+- `ae9c499b…sga.disabled` stays DISABLED. Override skin `1784596583548748.sga` (1770761 B) confirmed present in `mods/skins/`.
+
+### Parts 2 & 3 — NOT PERFORMED (no launch → no teardown/restore needed)
+- **No Steam actions, no `localconfig.vdf` backup/edit, no harness launch, no captures.** localconfig.vdf byte-unchanged (mtime 13:06, before my 13:07 build). No RelicCoH2/AOE3DEHarness/gamescope/BsSndRpt orphans; socket absent. Steam still up at the same PID (127185) it had at session start — UNTOUCHED.
+- **NOTHING to restore** — LaunchOptions were never changed, so the user's original gamescope wrapper string is intact by non-action.
+- **NEXT RUN:** gate must be 0 (user's HoI4 closed). Gen12 is already built + staged, so next launch fires it with no rebuild needed — just backup localconfig → set harness wrapper → applaunch 231430 → menu-drive to ASAP Verify → look for `GEN12 TRIPLE PHOTO HERO` → capture the middle hero + try all three via minimap-jump.

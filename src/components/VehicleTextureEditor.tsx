@@ -686,7 +686,7 @@ export default function VehicleTextureEditor(p: Props) {
           border: '0.5px solid rgba(255, 255, 255, 0.08)',
           boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05), 0 4px 12px -4px rgba(0,0,0,0.2)',
           color: 'rgba(247,247,250,0.88)',
-          fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
+          fontFamily: "'Inter Variable', ui-monospace, monospace",
           fontVariantNumeric: 'slashed-zero',
           fontSize: 14,
           fontWeight: 700,

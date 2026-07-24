@@ -68,12 +68,12 @@ export default function EditTextureButton({ brushOn, onClick, disabled = false }
               border: '0.5px solid rgba(255,255,255,0.30)',
               boxShadow:
                 '0 8px 22px rgba(120, 160, 60, 0.40), inset 0 0.5px 0 rgba(255,255,255,0.30)',
-              fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
+              fontFamily: "'Inter Variable', ui-monospace, monospace",
               fontVariantNumeric: 'slashed-zero',
             }
           : {
               color: 'rgb(229, 231, 235)',
-              fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
+              fontFamily: "'Inter Variable', ui-monospace, monospace",
               fontVariantNumeric: 'slashed-zero',
             }
       }

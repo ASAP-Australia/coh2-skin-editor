@@ -140,7 +140,7 @@ dependencies =
 // still leaves the grid + camera usable.
 // ---------------------------------------------------------------------------
 const SCAR_TEXT = `-- ============================================================================
--- ASAP Verify -- in-game skin/decal verification gamemode  (GEN10)
+-- ASAP Verify -- in-game skin/decal verification gamemode  (GEN12)
 -- Spawns a grid of player-1 German vehicles, reveals FOW, frames + cycles the
 -- camera so an external harness can screenshot the equipped skin/decal on every
 -- vehicle class with zero input.
@@ -151,6 +151,14 @@ const SCAR_TEXT = `-- ==========================================================
 -- (sg_photo), well AWAY from the grid (origin +40 on world X), turns it side-on,
 -- and points the Gen9 camera pin at sg_photo ONLY -- low + close + near-horizontal
 -- so the isolated tank fills the frame and its hull-side insignia reads cleanly.
+--
+-- GEN12 (2026-07-24): the Gen11 single photo hero landed at origin +40/+40, right
+-- next to an oil derrick / map edge among trees -- unframeable. Gen12 spawns THREE
+-- photo heroes on the PROVEN-OPEN ground near the grid: offsets from asap.origin of
+-- (+14,-10), (+14,0), (+14,+10) via Util_ScarPos. Each gets a DIFFERENT facing
+-- (Squad_FacePosition toward world +X / +Z / -X respectively) so at least one hull
+-- side squares to CoH2's fixed camera. The close low-side camera
+-- Camera_SetDefault(14, 22, TV_DefaultAngle) is retargeted at the MIDDLE hero.
 --
 -- Risks resolved:
 --   R1 (SBP names): verified against AttribArchive.sga this session.
@@ -204,14 +212,17 @@ local HERO_CAM_HEIGHT = 14   -- low camera for a near side-on hull framing
 local HERO_CAM_DECLIN = 42   -- steeper-than-default downward pitch to fill the frame
 local HERO_HOLD_DELAY = 3    -- seconds after setup before the camera locks on the hero
 
--- GEN10 isolated "photo hero" config ------------------------------------------
--- ONE clean-hulled German medium/heavy tank, spawned FAR from the grid in its own
--- SGroup (sg_photo), turned side-on so the balkenkreuz on the hull SIDE squarely
--- faces CoH2's fixed camera. Reuses HERO_SBP_CANDIDATES (real, verified blueprints).
-local PHOTO_OFFSET_X  = 40   -- metres +X of the grid origin -- well clear of the grid
-local PHOTO_OFFSET_Z  = 40   -- metres +Z of the grid origin -- fully isolated cell
-local PHOTO_CAM_HEIGHT = 14  -- GEN10: low so the isolated tank fills the frame
-local PHOTO_CAM_DECLIN = 22  -- GEN10: near-horizontal -> look at the SIDE, not the top
+-- GEN12 TRIPLE "photo hero" config --------------------------------------------
+-- THREE clean-hulled German medium/heavy tanks in ONE SGroup (sg_photo), on the
+-- PROVEN-OPEN ground near the grid (Gen11's single +40/+40 hero landed by an oil
+-- derrick / map edge among trees -- unframeable). Each hero gets a DIFFERENT facing
+-- so at least one hull SIDE (where the balkenkreuz is baked, per TEXCOORD1) squares
+-- to CoH2's fixed camera. Reuses HERO_SBP_CANDIDATES (real, verified blueprints).
+-- Three cells at asap.origin + (PHOTO_OFFSET_X, Z) for Z in PHOTO_OFFSETS_Z:
+local PHOTO_OFFSET_X   = 14           -- metres +X of the grid origin (open ground near the grid)
+local PHOTO_OFFSETS_Z  = { -10, 0, 10 } -- three cells along world Z: hero 1 / 2(middle) / 3
+local PHOTO_CAM_HEIGHT = 14           -- GEN10/12: low so the middle tank fills the frame
+local PHOTO_CAM_DECLIN = 22           -- GEN10/12: near-horizontal -> look at the SIDE, not the top
 
 -- SBP leaf names -- EXACT, from AttribArchive.sga (attrib/sbps/races/german/vehicles/**).
 -- BP_GetSquadBlueprint() takes the leaf name (no path, no .rgd). Use _mp variants
@@ -418,11 +429,14 @@ function ASAPVerify_SpawnHero()
 end
 
 -- ---------------------------------------------------------------------------
--- GEN10: spawn the ISOLATED "photo hero" -- ONE clean-hulled German tank, FAR from
--- the grid (origin +40 on X/Z), in its OWN SGroup (sg_photo), turned side-on so its
--- balkenkreuz (baked on the hull SIDE per TEXCOORD1) faces CoH2's fixed camera. This
--- is the target the Gen9 camera pin is retargeted at so a screenshot captures the
--- national insignia cleanly with NO surrounding units in frame.
+-- GEN12: spawn THREE "photo heroes" -- clean-hulled German tanks on the PROVEN-OPEN
+-- ground near the grid (asap.origin + (+14, {-10,0,+10})), all in ONE SGroup
+-- (sg_photo). Each hero gets a DIFFERENT facing (Squad_FacePosition toward world +X,
+-- +Z, -X respectively) so at least one hull SIDE -- where the balkenkreuz is baked
+-- per TEXCOORD1 -- squares to CoH2's fixed camera. The Gen9 camera pin is retargeted
+-- at the MIDDLE hero (asap.photoPos) so a screenshot captures the national insignia
+-- with the three tanks close together in frame; the harness can also minimap-jump to
+-- each. This replaces the Gen11 single +40/+40 hero that landed by an oil derrick.
 function ASAPVerify_SpawnPhotoHero()
    -- Pick the first candidate blueprint that actually resolves (null-guarded).
    -- Reuses HERO_SBP_CANDIDATES (panther_squad_mp / panzer_iv_squad_mp / tiger_squad_mp).
@@ -438,73 +452,103 @@ function ASAPVerify_SpawnPhotoHero()
    end
    if photoBp == nil then return end   -- no BP resolved -> grid/hero still usable
 
-   -- Base position: the grid origin plus a LARGE offset so it is fully isolated.
-   -- Uses the SAME position-construction idiom as the rest of the file (Util_ScarPos).
+   -- Base position: the grid origin plus the open-ground X offset. Uses the SAME
+   -- position-construction idiom as the rest of the file (Util_ScarPos).
    local ox, oz = 0, 0
    if asap.origin ~= nil then
       pcall(function() ox = asap.origin.x end)
       pcall(function() oz = asap.origin.z end)
    end
    local px = ox + PHOTO_OFFSET_X
-   local pz = oz + PHOTO_OFFSET_Z
-   local pos = nil
-   pcall(function() pos = Util_ScarPos(px, pz) end)
-   if pos == nil then return end
 
-   -- Own SGroup so the camera can pin to THIS tank only (source of truth).
+   -- Own SGroup so the camera can pin to THESE tanks only (source of truth).
    local photoSg = SGroup_CreateIfNotFound("sg_photo")
    asap.photoSg = photoSg
 
-   -- Spawn ONE tank into sg_photo (same Util_CreateSquads helper the grid uses).
-   safe(function()
-      Util_CreateSquads(asap.player, "sg_photo", photoBp, pos, nil, 1, 0)
-   end)
+   -- Spawn THREE tanks into sg_photo, one per PHOTO_OFFSETS_Z cell, each with a
+   -- DIFFERENT facing so at least one presents its insignia-bearing hull SIDE to the
+   -- fixed camera regardless of the map's yaw-axis sign:
+   --   hero 1 (z=-10): faces world +X    hero 2/middle (z=0): faces world +Z
+   --   hero 3 (z=+10): faces world -X
+   local midPos = nil
+   for i = 1, 3 do
+      local pz = oz + PHOTO_OFFSETS_Z[i]
+      local pos = nil
+      pcall(function() pos = Util_ScarPos(px, pz) end)
+      if pos ~= nil then
+         if i == 2 then midPos = pos end   -- MIDDLE hero = the camera target
+         -- Spawn this hero into sg_photo (same Util_CreateSquads helper the grid uses).
+         safe(function()
+            Util_CreateSquads(asap.player, "sg_photo", photoBp, pos, nil, 1, 0)
+         end)
+         -- Per-hero facing target: a far-off point in the chosen compass direction.
+         --   i==1 -> +X ; i==2 -> +Z ; i==3 -> -X
+         local faceX, faceZ = px, pz
+         if i == 1 then faceX = px + 100          -- hero 1 faces world +X
+         elseif i == 2 then faceZ = pz + 100      -- hero 2 (middle) faces world +Z
+         else faceX = px - 100 end                -- hero 3 faces world -X
+         local facePos = nil
+         pcall(function() facePos = Util_ScarPos(faceX, faceZ) end)
+         -- Turn the just-spawned squad (last in the group) to its facing target.
+         if facePos ~= nil then
+            safe(function()
+               Squad_FacePosition(SGroup_GetSpawnedSquadAt(asap.photoSg, i), facePos)
+            end)
+         end
+      end
+   end
 
-   -- GEN10: face insignia side toward camera. The camera looks down world -Z toward
-   -- the tank, so turning the tank to face along world +X (perpendicular, 90 deg off
-   -- the camera-to-tank axis) presents its hull SIDE squarely to the lens.
-   safe(function()
-      Squad_FacePosition(SGroup_GetSpawnedSquadAt(asap.photoSg, 1), Util_ScarPos(px + 100, pz))
-   end)
-
-   -- Resolve the LIVE world pos of the isolated photo hero for framing/debug.
+   -- Camera target = the MIDDLE hero. Prefer its LIVE group-resolved position; fall
+   -- back to the computed middle ScarPos so framing/debug always has a target.
    pcall(function() asap.photoPos = SGroup_GetPosition(photoSg) end)
-   if asap.photoPos == nil then asap.photoPos = pos end
+   if asap.photoPos == nil then asap.photoPos = midPos end
    local pcount = 0
    pcall(function() pcount = SGroup_CountSpawned(photoSg) end)
    asap.photoReady = (asap.photoPos ~= nil) and (pcount > 0)
 
-   -- GEN10 on-screen debug: prove the isolated photo hero spawned + where.
+   -- GEN12 on-screen debug: prove the three photo heroes spawned + where (middle).
    local dx, dz = asap_xz(asap.photoPos)
    asap_dbg("PHOTO HERO n=" .. tostring(pcount)
             .. " x=" .. tostring(math.floor(dx)) .. " z=" .. tostring(math.floor(dz)), 2)
 end
 
 -- ---------------------------------------------------------------------------
--- GEN10: lock the camera LOW + CLOSE + SIDE-ON on the ISOLATED photo hero (sg_photo)
--- so a screenshot captures its hull-side balkenkreuz with no other units in frame.
--- Keeps the exact Gen9 pin pattern (SGroup_GetPosition -> Camera_MoveTo/Camera_Follow),
--- just retargeted at sg_photo and with a near-horizontal Camera_SetDefault.
+-- GEN12: lock the camera LOW + CLOSE + SIDE-ON on the MIDDLE photo hero (squad #2 of
+-- sg_photo) so a screenshot captures its hull-side balkenkreuz with the trio close
+-- together in frame. Keeps the exact Gen9 pin pattern (SGroup_GetPosition ->
+-- Camera_MoveTo/Camera_Follow), retargeted at the middle hero + near-horizontal default.
 function ASAPVerify_FramePhotoHero()
    if not asap.photoReady then return end
-   -- GEN10: close, low, near-horizontal default so we look at the tank's SIDE.
-   safe(function() Camera_SetDefault(PHOTO_CAM_HEIGHT, PHOTO_CAM_DECLIN, TV_DefaultAngle) end)  -- Gen10: tune to face insignia side
+   -- GEN10/12: close, low, near-horizontal default so we look at the tank's SIDE.
+   safe(function() Camera_SetDefault(PHOTO_CAM_HEIGHT, PHOTO_CAM_DECLIN, TV_DefaultAngle) end)  -- tune to face insignia side
    safe(function() Camera_ResetToDefault() end)
 
-   -- Re-read the isolated photo hero's LIVE world pos from its SGroup each time.
+   -- GEN12: re-read the MIDDLE hero's LIVE world pos (squad #2 in sg_photo) each time,
+   -- so the camera centres on the middle of the three (not the group centroid/first).
    local pos = nil
+   local midSquad = nil
    if asap.photoSg ~= nil then
-      pcall(function() pos = SGroup_GetPosition(asap.photoSg) end)
+      pcall(function() midSquad = SGroup_GetSpawnedSquadAt(asap.photoSg, 2) end)
+      if midSquad ~= nil then
+         pcall(function() pos = Squad_GetPosition(midSquad) end)
+      end
+      if pos == nil then
+         pcall(function() pos = SGroup_GetPosition(asap.photoSg) end)   -- fallback: group centroid
+      end
    end
    if pos == nil then pos = asap.photoPos end
    asap.photoPos = pos
 
-   -- Move the camera onto the photo hero and hold it (keepLocked=true).
+   -- Move the camera onto the middle photo hero and hold it (keepLocked=true).
    safe(function() Camera_MoveTo(pos, false, nil, true) end)
-   -- Follow the spawned squad in sg_photo (the most robust "look at this unit" call).
-   safe(function() Camera_Follow(asap.photoSg) end)
+   -- Follow the MIDDLE squad (squad #2) if resolvable; else follow the group.
+   if midSquad ~= nil then
+      safe(function() Camera_FollowSquad(midSquad) end)
+   else
+      safe(function() Camera_Follow(asap.photoSg) end)
+   end
 
-   -- GEN10 on-screen debug: prove where the camera was told to point.
+   -- GEN12 on-screen debug: prove where the camera was told to point.
    local cx, cz = asap_xz(pos)
    asap_dbg("CAM->PHOTO x=" .. tostring(math.floor(cx))
             .. " z=" .. tostring(math.floor(cz))
@@ -648,10 +692,11 @@ function ASAPVerify_Setup()
    --     row so the balkenkreuz on the hull SIDE faces CoH2's fixed camera.
    safe(function() ASAPVerify_SpawnHero() end)
 
-   -- 5c) GEN10: spawn the ISOLATED side-on "photo hero" (sg_photo), FAR from the
-   --     grid (origin +40), so a screenshot frames its hull-side balkenkreuz ALONE.
+   -- 5c) GEN12: spawn the THREE side-on "photo heroes" (sg_photo) on the open ground
+   --     near the grid (origin +14, z={-10,0,+10}), each facing a different way, so a
+   --     screenshot frames the middle hero's hull-side balkenkreuz with the trio close.
    safe(function() ASAPVerify_SpawnPhotoHero() end)
-   safe(function() PrintOnScreen("GEN10 PHOTO HERO ISOLATED") end)
+   safe(function() PrintOnScreen("GEN12 TRIPLE PHOTO HERO") end)
 
    -- 6) Brief wide-grid establishing shot (deferred 1.5 s so units settle).
    safe(function() Rule_AddOneShot(ASAPVerify_FrameCamera, 1.5, 1000) end)
