@@ -130,6 +130,16 @@ const panelSurface: CSSProperties = {
   overflow: 'hidden',
 }
 
+// Collapsed surface: with no layer selected there is nothing to edit, so the
+// panel shrinks to a slim content-sized pill anchored to the top rather than a
+// near-full-height empty bordered box (VISION forbids "empty boxes"). Selecting
+// a layer restores the full-height panel.
+const panelSurfaceCollapsed: CSSProperties = {
+  ...panelSurface,
+  bottom: 'auto', // release full-height stretch → shrink to content
+  height: 'auto',
+}
+
 const panelHeader: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -227,14 +237,19 @@ export default function PropertiesPanel<L extends BaseLayer = BaseLayer>({
     mutate(p => mapLayerGeneric(p, selectedLayer.id, updater))
   }
 
+  // With no layer selected there is nothing to edit — collapse to a slim pill
+  // instead of a full-height empty box. The empty-state hint stays in the DOM
+  // (accessibility + tests) but reads as a compact one-liner under the heading.
+  const collapsed = !selectedLayer
+
   return (
     <div
       data-testid="properties-panel"
-      className="l01-ring l01-bloom l01-grain"
-      style={panelSurface}
+      className={collapsed ? 'l01-ring l01-grain' : 'l01-ring l01-bloom l01-grain'}
+      style={collapsed ? panelSurfaceCollapsed : panelSurface}
     >
       {/* ── Header ── */}
-      <div style={panelHeader}>
+      <div style={collapsed ? { ...panelHeader, borderBottom: 'none' } : panelHeader}>
         <h3 style={headingStyle}>Properties</h3>
         {selectedLayer && (
           <span
@@ -251,32 +266,30 @@ export default function PropertiesPanel<L extends BaseLayer = BaseLayer>({
       </div>
 
       {/* ── Body ── */}
-      <div className="custom-scrollbar" style={scrollBody}>
-        {!selectedLayer ? (
-          /* No layer selected — show empty hint */
-          <>
-            <p
-              data-testid="properties-empty-state"
-              style={{
-                margin: '0 0 10px',
-                fontSize: 11,
-                lineHeight: 1.5,
-                color: EDITOR_TEXT_4,
-                textAlign: 'center',
-                padding: '0 6px',
-              }}
-            >
-              Select a layer to edit its properties
-            </p>
-          </>
-        ) : (
+      {collapsed ? (
+        /* No layer selected — compact empty hint (kept in DOM for a11y + tests) */
+        <p
+          data-testid="properties-empty-state"
+          style={{
+            margin: 0,
+            padding: '2px 12px 12px',
+            fontSize: 10,
+            lineHeight: 1.5,
+            color: EDITOR_TEXT_4,
+            textAlign: 'left',
+          }}
+        >
+          Select a layer to edit its properties
+        </p>
+      ) : (
+        <div className="custom-scrollbar" style={scrollBody}>
           <GenericLayerProperties
             layer={selectedLayer}
             mutateLayer={mutateLayer}
             layerTypeControls={layerTypeControls}
           />
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }

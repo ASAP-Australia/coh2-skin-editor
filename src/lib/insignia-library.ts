@@ -1,32 +1,72 @@
 /**
  * insignia-library — curated WWII-era insignia metadata.
  *
- * SVG assets live in `public/insignia/` and are referenced by relative URL
- * from the public root (e.g. `/insignia/iron-cross.svg`).
+ * SVG assets live in `src/assets/insignia/` and are resolved through Vite's
+ * asset pipeline via `import.meta.glob` (see `ASSET_URLS` below). This yields a
+ * base-correct URL in BOTH the dev server (`/assets/…`) and the packaged
+ * Electron build (`./assets/…` under `file://`). The previous absolute
+ * `/insignia/x.svg` public-root URLs broke under `file://` — they resolved to
+ * the filesystem root, so every thumbnail rendered as a broken image and
+ * placing an insignia (which `fetch()`es the same URL) silently failed.
  *
  * All symbols are clean geometric reproductions of public-domain historical
  * shapes — no copyrighted artwork is referenced.
  */
+
+/**
+ * Bundled SVG URLs, keyed by bare filename (e.g. `iron-cross.svg`). Vite
+ * rewrites each glob match to a hashed asset URL respecting `base` (`./`), so
+ * these load under both the dev server and the packaged `file://` app.
+ */
+const ASSET_URLS = import.meta.glob<string>('../assets/insignia/*.svg', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+})
+
+/** Resolve a bare insignia filename to its bundled, base-correct asset URL. */
+function insigniaUrl(file: string): string {
+  const url = ASSET_URLS[`../assets/insignia/${file}`]
+  if (!url) {
+    // Should never happen: every `file` below has a matching asset. Fail loud
+    // in dev so a typo is caught immediately rather than shipping a broken img.
+    console.warn(`insignia-library: no bundled asset for "${file}"`)
+    return ''
+  }
+  return url
+}
 
 export interface InsigniaEntry {
   id: string
   name: string
   faction: 'allies' | 'soviet' | 'axis-okw' | 'axis-oh' | 'generic'
   era: 'wwii'
-  /** Relative URL — resolves from the Vite public root. */
+  /**
+   * Bare SVG filename in `src/assets/insignia/` (e.g. `iron-cross.svg`).
+   * The bundled, base-correct URL is exposed as `url`.
+   */
+  file: string
+  /**
+   * Bundled asset URL (base-correct for dev + packaged `file://`), derived
+   * from `file` via Vite's asset pipeline. Safe to use in `<img src>` and
+   * `fetch()`.
+   */
   url: string
   /** Short alt-text description. */
   description: string
 }
 
-export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
+/** Raw entry shape before `url` is resolved from `file`. */
+type InsigniaSeed = Omit<InsigniaEntry, 'url'>
+
+const INSIGNIA_SEEDS: InsigniaSeed[] = [
   // ── Axis / OKW ────────────────────────────────────────────────────────────
   {
     id: 'iron-cross',
     name: 'Iron Cross',
     faction: 'axis-oh',
     era: 'wwii',
-    url: '/insignia/iron-cross.svg',
+    file: 'iron-cross.svg',
     description: 'Classic four-armed cross; used on German armour.',
   },
   {
@@ -34,7 +74,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Iron Cross (Bordered)',
     faction: 'axis-okw',
     era: 'wwii',
-    url: '/insignia/iron-cross-bordered.svg',
+    file: 'iron-cross-bordered.svg',
     description: 'Iron cross with white and black border bands.',
   },
   {
@@ -42,7 +82,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Balkenkreuz',
     faction: 'axis-oh',
     era: 'wwii',
-    url: '/insignia/balkenkreuz.svg',
+    file: 'balkenkreuz.svg',
     description: 'Wehrmacht straight-bar cross marking.',
   },
   {
@@ -50,7 +90,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Tactical Triangle',
     faction: 'axis-okw',
     era: 'wwii',
-    url: '/insignia/axis-triangle.svg',
+    file: 'axis-triangle.svg',
     description: 'Solid equilateral triangle tactical marker.',
   },
 
@@ -60,7 +100,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Soviet Star',
     faction: 'soviet',
     era: 'wwii',
-    url: '/insignia/soviet-star.svg',
+    file: 'soviet-star.svg',
     description: 'Five-pointed red star with white border; Red Army marking.',
   },
   {
@@ -68,7 +108,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Soviet Star (Plain)',
     faction: 'soviet',
     era: 'wwii',
-    url: '/insignia/soviet-star-plain.svg',
+    file: 'soviet-star-plain.svg',
     description: 'Five-pointed star, no border.',
   },
   {
@@ -76,7 +116,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Guards Badge',
     faction: 'soviet',
     era: 'wwii',
-    url: '/insignia/guards-badge.svg',
+    file: 'guards-badge.svg',
     description: 'Geometric shield silhouette for elite Guards units.',
   },
 
@@ -86,7 +126,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Allied Star',
     faction: 'allies',
     era: 'wwii',
-    url: '/insignia/allied-star.svg',
+    file: 'allied-star.svg',
     description: 'Five-pointed star inscribed in a circle; US/Allied roundel.',
   },
   {
@@ -94,7 +134,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'RAF Roundel',
     faction: 'allies',
     era: 'wwii',
-    url: '/insignia/roundel-raf.svg',
+    file: 'roundel-raf.svg',
     description: 'Three-ring concentric roundel (blue / white / red).',
   },
   {
@@ -102,7 +142,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Allied Diamond',
     faction: 'allies',
     era: 'wwii',
-    url: '/insignia/allied-diamond.svg',
+    file: 'allied-diamond.svg',
     description: 'Rotated square (lozenge) divisional marking.',
   },
 
@@ -112,7 +152,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Chevron ×1',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/chevron-1.svg',
+    file: 'chevron-1.svg',
     description: 'Single arrow chevron — lance corporal rank stripe.',
   },
   {
@@ -120,7 +160,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Chevron ×2',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/chevron-2.svg',
+    file: 'chevron-2.svg',
     description: 'Double arrow chevron — corporal rank stripe.',
   },
   {
@@ -128,7 +168,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Chevron ×3',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/chevron-3.svg',
+    file: 'chevron-3.svg',
     description: 'Triple arrow chevron — sergeant rank stripe.',
   },
 
@@ -138,7 +178,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Kill Tally ×1',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/kill-tally-1.svg',
+    file: 'kill-tally-1.svg',
     description: 'Single vertical bar kill tally mark.',
   },
   {
@@ -146,7 +186,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Kill Tally ×5',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/kill-tally-5.svg',
+    file: 'kill-tally-5.svg',
     description: 'Five-bar kill tally (four vertical, one diagonal).',
   },
 
@@ -156,7 +196,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Numeral 0',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/numerals-0.svg',
+    file: 'numerals-0.svg',
     description: 'Stencilled vehicle number digit 0.',
   },
   {
@@ -164,7 +204,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Numeral 1',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/numerals-1.svg',
+    file: 'numerals-1.svg',
     description: 'Stencilled vehicle number digit 1.',
   },
   {
@@ -172,7 +212,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Numeral 2',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/numerals-2.svg',
+    file: 'numerals-2.svg',
     description: 'Stencilled vehicle number digit 2.',
   },
   {
@@ -180,7 +220,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Numeral 3',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/numerals-3.svg',
+    file: 'numerals-3.svg',
     description: 'Stencilled vehicle number digit 3.',
   },
   {
@@ -188,7 +228,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Numeral 4',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/numerals-4.svg',
+    file: 'numerals-4.svg',
     description: 'Stencilled vehicle number digit 4.',
   },
   {
@@ -196,7 +236,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Numeral 5',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/numerals-5.svg',
+    file: 'numerals-5.svg',
     description: 'Stencilled vehicle number digit 5.',
   },
   {
@@ -204,7 +244,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Numeral 6',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/numerals-6.svg',
+    file: 'numerals-6.svg',
     description: 'Stencilled vehicle number digit 6.',
   },
   {
@@ -212,7 +252,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Numeral 7',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/numerals-7.svg',
+    file: 'numerals-7.svg',
     description: 'Stencilled vehicle number digit 7.',
   },
   {
@@ -220,7 +260,7 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Numeral 8',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/numerals-8.svg',
+    file: 'numerals-8.svg',
     description: 'Stencilled vehicle number digit 8.',
   },
   {
@@ -228,10 +268,20 @@ export const INSIGNIA_LIBRARY: InsigniaEntry[] = [
     name: 'Numeral 9',
     faction: 'generic',
     era: 'wwii',
-    url: '/insignia/numerals-9.svg',
+    file: 'numerals-9.svg',
     description: 'Stencilled vehicle number digit 9.',
   },
 ]
+
+/**
+ * The curated insignia library. Each seed's `url` is resolved from its `file`
+ * through Vite's asset pipeline so it loads in both the dev server and the
+ * packaged Electron (`file://`) build.
+ */
+export const INSIGNIA_LIBRARY: InsigniaEntry[] = INSIGNIA_SEEDS.map(seed => ({
+  ...seed,
+  url: insigniaUrl(seed.file),
+}))
 
 // ── Query helper ─────────────────────────────────────────────────────────────
 

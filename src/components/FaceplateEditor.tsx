@@ -104,11 +104,11 @@ import {
 import { applySnap, type SnapTarget } from '@/lib/snap-guides'
 import { samplePixel } from '@/lib/brush'
 // StateIcon is now used by EditorTitlePill — no direct import needed here
-import AtlasViewPanel from '@/components/AtlasViewPanel'
+// AtlasViewPanel removed: it was occluded by the persistent Properties panel and
+// its white active tile bled through as a stray glow (GLITCH-LIST #12).
 import {
   type AtlasViewMode,
   loadFaceplateViewMode,
-  persistFaceplateViewMode,
 } from '@/lib/atlas-view-settings'
 import ImageDropZone from './editor-shared/ImageDropZone'
 // TransformInputsRow removed from FaceplateEditor — now used only in PropertiesPanel.
@@ -278,18 +278,13 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   const [isUploading, setIsUploading] = useState(false)
   const [publishError, setPublishError] = useState<string | null>(null)
   // ── Canvas view mode ──────────────────────────────────────────────────
-  // Three-position visualisation switcher driven by the right-edge
-  // AtlasViewPanel (mirrors the Vehicle Viewport's ScenePanel):
+  // Two visualisation states persisted per-project:
   //   • 'template'     — editor scaffolding (dashed border, arrows)
   //   • 'checkerboard' — light checker behind layers (alpha preview)
-  //   • 'in_game'      — replaces the canvas with FaceplateInGamePreview
-  // Persisted to localStorage so users return to their preferred view on
-  // next open. `previewTransparent` is a derived boolean to keep the
-  // existing canvas-style branches readable.
-  const [viewMode, setViewMode] = useState<AtlasViewMode>(loadFaceplateViewMode)
-  useEffect(() => {
-    persistFaceplateViewMode(viewMode)
-  }, [viewMode])
+  // The right-edge picker that toggled these was removed (it was occluded by
+  // the persistent Properties panel — see GLITCH-LIST #12), so the value is now
+  // read-only from its persisted state and drives `previewTransparent`.
+  const [viewMode] = useState<AtlasViewMode>(loadFaceplateViewMode)
   const previewTransparent = viewMode === 'checkerboard'
 
   // ── Layer rename state (G6-style, mirrors DPE) ───────────────────────────
@@ -3502,10 +3497,13 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         }
       />
 
-      {/* Canvas view-mode picker — right-edge vertical stack of icon buttons.
-       *  Mirrors the Vehicle Viewport's ScenePanel so the editor surfaces
-       *  feel unified. `in_game` mode has been removed from the order. */}
-      <AtlasViewPanel mode={viewMode} setMode={setViewMode} ariaLabel="Faceplate view mode" />
+      {/* Canvas view-mode picker removed here: it was pinned to the right edge
+       *  (right-5) directly UNDERNEATH the persistent Properties panel (right:12,
+       *  z-38), so it was fully occluded / unreachable — and its bright white
+       *  active tile bled through the panel's backdrop-blur as a stray circular
+       *  glow at the panel's mid-right edge (GLITCH-LIST #12). Removing the buried
+       *  panel kills the glow and the dead chrome; the checkerboard/template view
+       *  state persists at its default and still drives `previewTransparent`. */}
 
       {/* Bottom tool surface — top row holds the tool-options peel on the
        *  LEFT and the Live Sync status badge on the RIGHT (mirror of the

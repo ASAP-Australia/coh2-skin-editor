@@ -26,13 +26,26 @@ interface Props {
   onSelect: (faction: Faction) => void
   /** Factions the pack already has vehicles for (subtle presence dot). */
   packFactions?: Faction[]
+  /**
+   * Hide the rail (fade + slide off-screen). The editor sets this while a
+   * left-docked panel body (Camo / Decals / Parts / Scene) is open, since
+   * both live at `left-5` and would otherwise overlap. Keyboard/aria state
+   * is untouched — the rail is just visually + interactively parked. */
+  hidden?: boolean
 }
 
-export default function FactionPanel({ selected, onSelect, packFactions }: Props) {
+export default function FactionPanel({ selected, onSelect, packFactions, hidden = false }: Props) {
   const present = new Set(packFactions ?? [])
   return (
     <div
-      className="glass-hud fixed top-1/2 left-5 -translate-y-1/2 z-30 flex flex-col gap-2 p-1.5 rounded-2xl"
+      aria-hidden={hidden}
+      className={[
+        'glass-hud fixed top-1/2 left-5 z-30 flex flex-col gap-2 p-1.5 rounded-2xl',
+        'transition-[opacity,transform] duration-200 ease-out',
+        hidden
+          ? '-translate-y-1/2 -translate-x-[calc(100%+1.25rem)] opacity-0 pointer-events-none'
+          : '-translate-y-1/2 translate-x-0 opacity-100',
+      ].join(' ')}
     >
       {FACTIONS.map(({ id }) => {
         const active = selected === id
@@ -47,7 +60,7 @@ export default function FactionPanel({ selected, onSelect, packFactions }: Props
               'relative w-11 h-11 rounded-xl flex items-center justify-center font-mono',
               'transition-all duration-150 active:scale-95',
               active
-                ? 'bg-white/95 shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_2px_8px_rgba(0,0,0,0.25)]'
+                ? 'bg-white/12 shadow-[inset_0_0.5px_0_rgb(255_255_255/0.35),0_2px_8px_rgba(0,0,0,0.30)]'
                 : 'hover:bg-white/10 opacity-80 hover:opacity-100',
             ].join(' ')}
           >

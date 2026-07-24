@@ -16,8 +16,11 @@ describe('DEFAULT_PRESET_ID', () => {
     expect(Object.keys(SCENE_PRESETS)).toContain(DEFAULT_PRESET_ID)
   })
 
-  it('is in_game_field', () => {
-    expect(DEFAULT_PRESET_ID).toBe('in_game_field')
+  it('is the dark studio preset (not the bright in-game skybox)', () => {
+    // Fresh users must land on the DARK default — the in-game preset renders
+    // a bright blue cubemap skybox that clashes with the near-black chrome.
+    // (GLITCH-LIST #6)
+    expect(DEFAULT_PRESET_ID).toBe('studio_grid')
   })
 })
 

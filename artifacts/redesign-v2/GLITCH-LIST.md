@@ -35,6 +35,39 @@ Legend — severity: **P1** breaks usability · **P2** ugly / clearly wrong · *
 | 12 | faceplate-editor / new-faceplate-form | A faint **circular white glow/bloom floats at the far-right screen edge**, vertically centered, detached from any element (stray ambient corner-light positioned mid-edge rather than in a corner). | faceplate editor ambient bloom layer (`FaceplateEditor.tsx` background glow) | P3 |
 | 13 | start | "New Faceplate" tile icon is a bright **sky-blue** hash/Frame icon (`text-sky-400`, `StartScreen.tsx:257`) — the only blue on the screen, stands out against gold/green/purple sibling icons. Intentional per-category color, but the lone blue reads as leftover-accent to a viewer. | `StartScreen.tsx:257` | P3 |
 
+## VERIFICATION PASS — 2026-07-24 (post-fix full sweep)
+
+Rebuilt (`npm run build && npm run electron:compile`) and re-ran the harness across ALL 14
+states → `artifacts/redesign-v2/ui-verify/*.png` (1600×972, real GPU, **14/14 OK**). Every PNG
+read at full res + region crops (ImageMagick, incl. 2.2–3.5× brightness boosts to probe for
+skybox bleed-through and residual blooms). Verdicts below cite the exact post-fix pixel evidence.
+
+| # | Verdict | Post-fix pixel evidence |
+|---|---------|--------------------------|
+| 1 | **FIXED** | `skin-camo-panel.png` — left insignia rail is GONE (FactionPanel `hidden={activePanel!==null}` fades + slides it off-screen). "APPLY THIS CAMO TO / DESCRIBE YOUR CAMO / PASTE OR UPLOAD CAMO IMAGE / QUICK PRESETS" headings and every first-column preset pill left-end fully visible, unclipped. |
+| 2 | **FIXED** | `skin-decals-panel.png` — no rail overlap. "TEMPLATES / IMAGE LIBRARY / PLACE DECAL" headings clear; "+ Shield / + Number / + Name / + Kills / + Cross / + Image" buttons show full left ends. Stamp grid renders clean. |
+| 3 | **FIXED** | `skin-scene-panel.png` (top-left crop) — "CREW" heading fully visible; the undo/redo bar no longer floats over it (Editor.tsx:2289-2293 `opacity-0 pointer-events-none` while a panel is open). Hide/Show toggle below, no overlap. |
+| 4 | **FIXED** | `decal-insignia.png` — all 25 thumbnails render as actual white insignia art (Iron Cross, Balkenkreuz, Soviet Star, Guards Badge, Allied Star, RAF Roundel, Chevron ×1–3, Kill Tally, Numeral 0–9). ZERO broken-image placeholder glyphs. Vite `import.meta.glob` asset URLs (`insignia-library.ts:21`) resolve under `file://`. |
+| 5 | **FIXED** | `skin-camo-panel.png` / `skin-decals-panel.png` — panel body is opaque near-black (`.glass-pop { background-color: hsl(0 0% 7% / 0.96) }`, Editor.tsx:2163). Even at 2.2× brightness boost the interior stays uniform charcoal; blue skybox appears only OUTSIDE the panel. Right-half text ("German 3-tone summer", "Soviet whitewash", "Desert tan") full contrast. |
+| 6 | **STILL PRESENT (noted, by-design — not fixed per brief)** | `skin-editor.png` + all skin states — bright medium-blue cubemap skybox + green ground oval unchanged (`scene-settings.ts:112` still `{ kind:'cubemap' }`). Framing note only; no regression, deliberately left. |
+| 7 | **FIXED** | `decal-editor.png` / `decal-advanced.png` / `faceplate-editor.png` / `faceplate-shapes.png` — LAYERS and PROPERTIES are now compact content-sized pills anchored to the top (LayersPanel.tsx:110-111,201-202; PropertiesPanel.tsx:135,241), not near-full-height empty bordered boxes. No "empty boxes" clutter. |
+| 8 | **STILL PRESENT (noted, deferred Phase-2 structural)** | `decal-editor.png` — layout still LAYERS-left / canvas-center / PROPERTIES-right, no 3D vehicle preview. Structural deviation, out of scope for this reskin pass. No regression. |
+| 9 | **FIXED** | `decal-insignia.png` — labels are FULL and below the thumbnail (2-line clamp + `wordBreak`, DecalPackEditor.tsx:3014-3031): "Iron Cross (Bordered)", "Balkenkreuz", "Soviet Star (Plain)", "Guards Badge", "Allied Diamond", "Chevron ×1/×2/×3", "Kill Tally ×1/×5", "Numeral 0–8" — no truncation, no overlap on the art. |
+| 10 | **FIXED** | `start.png` (New Decal Pack tile crop) — sublabel reads "Vehicle decal set" in full, no ellipsis. Descriptions rewritten to short one-line sublabels ("Paint a vehicle livery", "Player profile banner", "Open saved project"). |
+| 11 | **PARTIALLY FIXED — STILL-BROKEN (right rail)** | LEFT rail fixed: `skin-editor.png` (left crop) — FactionPanel active tile is now a soft translucent raised tile (`bg-white/12` + inset light, FactionPanel.tsx:63), not pure-white. RIGHT rail NOT fixed: `skin-editor.png` (right crop) — ScenePanel active tile (globe/cubemap preset) is still `bg-white/95` + `text-black` (`ScenePanel.tsx:55`) → a harsh near-pure-white tile against the dark rail. The fix agent only touched `FactionPanel.tsx`; the right HUD rail lives in `ScenePanel.tsx:55` (finding mis-attributed it to `Editor.tsx`), which was left unchanged. This same white tile also shows faintly through the modal scrim at the right edge of `decal-insignia.png`. |
+| 12 | **FIXED** | `faceplate-editor.png` / `new-faceplate-form.png` / `faceplate-shapes.png` — no circular white glow/bloom at the far-right edge; at 3.5× brightness boost the right edge is uniform flat dark (only the window frame hairline). Stray bloom source (`AtlasViewPanel` white active tile) removed entirely (FaceplateEditor.tsx:107-108). |
+| 13 | **FIXED** | `start.png` (New Faceplate tile crop) — Frame/hash icon now renders gold (`color: var(--color-editor-accent)` = `#BA965A`, StartScreen.tsx:260), not sky-blue. No lone blue on the screen. |
+
+### New findings from this pass
+- **None that are new regressions.** #11 right-rail is a *pre-existing, unresolved* half of finding #11 (the fix covered only the left rail) — logged above as STILL-BROKEN, not a new glitch.
+- Minor observation (not a listed finding, not introduced by these fixes): the decal editor's right-edge view-mode toggles (`decal-editor.png` / `decal-advanced.png`, ~x1550) and the "Shared" faction chip (`decal-advanced.png`) use the same bright-white active-tile treatment as ScenePanel — the same visual family as #11-right. If #11 is retired by softening active tiles globally, these would want the same token.
+
+### One-line remediation for the remaining #11-right
+`src/components/ScenePanel.tsx:55` — change the active branch from
+`'bg-white/95 text-black shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_2px_8px_rgba(0,0,0,0.25)]'`
+to match FactionPanel's soft raised tile
+`'bg-white/12 text-white shadow-[inset_0_0.5px_0_rgb(255_255_255/0.35),0_2px_8px_rgba(0,0,0,0.30)]'`.
+
 ## Per-screen "looks good" confirmations (coverage is explicit)
 
 - **start** ✔ — Texture/noise pattern renders on the black card; top-left AND bottom-right corner-light blooms visible (brightness-boosted crop confirmed both); border-light ring present, brighter top-left. Logo + "COH2 · COMMUNITY MODDING TOOL" eyebrow crisp; 2×2 action tiles aligned; Continue-skin-pack row clean. (Only #10/#13 nits.)

@@ -106,6 +106,16 @@ const panelSurface: CSSProperties = {
   overflow: 'hidden',
 }
 
+// Collapsed surface: when there are no layers yet, the panel shrinks to a slim
+// content-sized pill anchored to the top instead of a near-full-height empty
+// bordered box (VISION forbids "empty boxes everywhere"). It expands back to
+// the full panel the moment the first layer exists — or on click.
+const panelSurfaceCollapsed: CSSProperties = {
+  ...panelSurface,
+  bottom: 'auto', // release full-height stretch → shrink to content
+  height: 'auto',
+}
+
 const panelHeader: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -188,16 +198,46 @@ export default function LayersPanel<L extends { id: string; visible: boolean }>(
     fn: (l: L) => L,
   ): GenericLayerProject<L> => ({ ...p, layers: p.layers.map(l => (l.id === id ? fn(l) : l)) })
 
+  // When there are no layers, collapse to a slim pill instead of a giant empty
+  // bordered box. Clicking the collapsed pill peeks the hint open; the panel
+  // auto-expands to full size the instant the first layer exists.
+  const isEmpty = project.layers.length === 0
+  const [peeked, setPeeked] = useState(false)
+  const collapsed = isEmpty && !peeked
+
+  if (collapsed) {
+    return (
+      <div
+        role="toolbar"
+        aria-label="Layers"
+        data-testid="layers-panel"
+        className="l01-ring l01-grain"
+        style={panelSurfaceCollapsed}
+        onClick={() => setPeeked(true)}
+        onKeyDown={ev => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); setPeeked(true) }
+          if (ev.key === 'Escape') onClickOutside?.()
+        }}
+        tabIndex={0}
+        title="Layers — drop an image or use a tool to begin"
+      >
+        <div style={{ ...panelHeader, borderBottom: 'none', cursor: 'pointer' }}>
+          <h3 style={headingStyle}>Layers</h3>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       role="toolbar"
       aria-label="Layers"
       data-testid="layers-panel"
       className="l01-ring l01-bloom l01-grain"
-      style={panelSurface}
+      style={isEmpty ? panelSurfaceCollapsed : panelSurface}
       onClick={onClickOutside}
       onKeyDown={ev => {
-        if (ev.key === 'Escape') onClickOutside?.()
+        if (ev.key === 'Escape') { setPeeked(false); onClickOutside?.() }
       }}
     >
       {/* ── Header ── */}

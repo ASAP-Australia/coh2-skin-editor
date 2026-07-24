@@ -2151,6 +2151,20 @@ export default function Editor({
         style={{ opacity: showChrome ? 1 : 0.35 }}
       >
         <div className="pointer-events-auto select-none">
+          {/* Opaque panel-body override (glitch #5). The panel body (TopBar's
+              single `.glass-pop` surface) was semi-transparent + heavily
+              blurred, so the bright skybox bled through its right half and
+              killed text contrast. `.glass-pop` is used in exactly one place
+              (the left-docked panel body), so overriding it to a near-opaque
+              near-black fill with only a light blur is safe and scoped. Keeps
+              the hairline border + float shadow from the utility. */}
+          <style>{`
+            .glass-pop {
+              background-color: hsl(0 0% 7% / 0.96);
+              backdrop-filter: blur(12px) saturate(120%);
+              -webkit-backdrop-filter: blur(12px) saturate(120%);
+            }
+          `}</style>
           {/* Top-left: faction lobby chip + the active panel's dropdown body.
               TopBar no longer renders its own menu-button strip — the panels
               (Decals / Camo / Parts / Scene) are opened by the PanelNavRail
@@ -2263,9 +2277,20 @@ export default function Editor({
               (Ctrl+Z / Ctrl+Y still work); this exposes the same project
               history (useDecalHistory) as visible buttons. Docks just below
               the panel nav rail, aligned to the same left offset, wrapped in a
-              glass-hud pill so it reads as matched chrome. */}
+              glass-hud pill so it reads as matched chrome.
+              Hidden while a panel is open: the panel body slides in at the
+              same left offset just below the nav rail and would otherwise
+              overlap this bar's row (it clipped the Scene panel's CREW
+              heading). Ctrl+Z / Ctrl+Y still work while it's parked. */}
           <div
-            className="glass-hud absolute z-30 inline-flex items-center rounded-2xl p-1"
+            className={[
+              'glass-hud absolute z-30 inline-flex items-center rounded-2xl p-1',
+              'transition-[opacity,transform] duration-200 ease-out',
+              activePanel !== null
+                ? '-translate-x-2 opacity-0 pointer-events-none'
+                : 'translate-x-0 opacity-100',
+            ].join(' ')}
+            aria-hidden={activePanel !== null}
             style={{
               top: 'calc(72px + var(--app-top-inset, 0px))',
               left: onClosePack ? 64 : 20,
@@ -2316,6 +2341,7 @@ export default function Editor({
             selected={selectedFaction}
             onSelect={handleSelectFaction}
             packFactions={packFactions}
+            hidden={activePanel !== null}
           />
 
           {/* Right edge: 3 stacked scene-preset icons */}

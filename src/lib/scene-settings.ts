@@ -204,7 +204,14 @@ export const SCENE_PRESETS: Record<PresetId, ScenePreset> = {
   },
 }
 
-export const DEFAULT_PRESET_ID: PresetId = 'in_game_field'
+// Default is the DARK studio preset (dark-gray backdrop + reference grid,
+// uniform 6-axis fill), NOT the in-game field preset — the in-game preset
+// renders a bright blue CoH2 cubemap skybox + green ground that dominates
+// the near-black "dark mode" chrome and clashes with it. Studio Grid reads
+// as an intentional dark surface, grounds the model with a subtle grid, and
+// lights every panel evenly. In-Game Field stays selectable in the Scene
+// panel for users who want the battlefield look. (GLITCH-LIST #6)
+export const DEFAULT_PRESET_ID: PresetId = 'studio_grid'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Season-aware overrides for the in-game preset

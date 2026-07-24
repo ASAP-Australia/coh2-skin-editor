@@ -2948,7 +2948,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(56px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))',
               gap: 8,
               maxHeight: 360,
               overflowY: 'auto',
@@ -3003,7 +3003,13 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                 <img
                   src={insignia.url}
                   alt={insignia.name}
-                  style={{ width: 36, height: 36, objectFit: 'contain', filter: 'invert(1)' }}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    objectFit: 'contain',
+                    filter: 'invert(1)',
+                    flexShrink: 0,
+                  }}
                 />
                 <span
                   style={{
@@ -3011,6 +3017,14 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                     color: 'rgba(247,247,250,0.6)',
                     textAlign: 'center',
                     lineHeight: 1.2,
+                    width: '100%',
+                    // Two-line clamp: full name fits without overlapping the
+                    // thumbnail; longer names ellipsize on the second line.
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                    wordBreak: 'break-word',
                   }}
                 >
                   {insignia.name}

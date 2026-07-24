@@ -254,7 +254,14 @@ export default function StartScreen({
         onClick={onNewSkin}
       />
       <GridButton
-        icon={<Frame className="text-sky-400 flex-shrink-0" size={24} aria-hidden />}
+        icon={
+          <Frame
+            className="flex-shrink-0"
+            style={{ color: 'var(--color-editor-accent)' }}
+            size={24}
+            aria-hidden
+          />
+        }
         title="New Faceplate"
         sublabel="Player profile banner"
         onClick={onNewFaceplate}
@@ -262,7 +269,7 @@ export default function StartScreen({
       <GridButton
         icon={<Stamp className="text-emerald-400 flex-shrink-0" size={24} aria-hidden />}
         title="New Decal Pack"
-        sublabel="A set of vehicle decals"
+        sublabel="Vehicle decal set"
         onClick={onNewDecalPack}
       />
       <GridButton

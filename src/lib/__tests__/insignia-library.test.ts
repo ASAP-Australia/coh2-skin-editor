@@ -43,9 +43,22 @@ describe('INSIGNIA_LIBRARY', () => {
     }
   })
 
-  it('every entry url starts with /insignia/ and ends with .svg', () => {
+  it('every entry file is a bare .svg basename', () => {
     for (const entry of INSIGNIA_LIBRARY) {
-      expect(entry.url).toMatch(/^\/insignia\/.+\.svg$/)
+      expect(entry.file).toMatch(/^[a-z0-9-]+\.svg$/)
+    }
+  })
+
+  it('every entry url is a non-empty bundled SVG asset URL', () => {
+    // `url` is resolved through Vite's asset pipeline (import.meta.glob), so it
+    // is a base-correct bundled reference — not the old `/insignia/x.svg`
+    // literal. In the packaged/dev build this is a hashed `…/x.svg` path; under
+    // the Vitest transform the same `?url` glob inlines the SVG as a
+    // `data:image/svg+xml,…` data URI. Both are valid, usable `<img src>` /
+    // `fetch()` targets, so accept either form.
+    for (const entry of INSIGNIA_LIBRARY) {
+      expect(entry.url.length).toBeGreaterThan(0)
+      expect(entry.url).toMatch(/\.svg$|^data:image\/svg\+xml,/)
     }
   })
 

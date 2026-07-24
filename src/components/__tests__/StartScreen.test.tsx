@@ -222,7 +222,7 @@ describe('StartScreen — four primary action rows', () => {
     render()
     expect(container!.textContent).toContain('Paint a vehicle livery')
     expect(container!.textContent).toContain('Player profile banner')
-    expect(container!.textContent).toContain('A set of vehicle decals')
+    expect(container!.textContent).toContain('Vehicle decal set')
     expect(container!.textContent).toContain('Open saved project')
   })
 
