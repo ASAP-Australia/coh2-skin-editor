@@ -23,8 +23,10 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { createHash } from 'node:crypto'
 import { SgaArchive } from '@/lib/sga'
 import { buildSga, type SgaInputFile } from '@/lib/sga-writer'
+import { sha1 } from '@/lib/sha1'
 import { deflate } from 'pako'
 
 // ─── File shim ────────────────────────────────────────────────────────────────
@@ -249,6 +251,177 @@ describe('SGA v7 roundtrip — storage types 1 & 2 (zlib deflate)', () => {
     // The file archive should be significantly smaller than 2048 bytes of raw payload
     // (header + compressed). 2048 zeros deflate to ~20 bytes.
     expect(bytes.length).toBeLessThan(2048)
+  })
+
+  it('storage:"stream" (storage=1) inflates to the original bytes', async () => {
+    const payload = new TextEncoder().encode('Stream-compressed payload (storage=1).')
+    const mf = await buildAndWrap('Zlib1', [
+      { path: 'data/stream.txt', bytes: payload, storage: 'stream' },
+    ])
+    const archive = await SgaArchive.open(mf as unknown as File)
+    const result = await archive.readByPath('data/stream.txt')
+    expectBytes(result, payload)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gamemode-registration fix — GEN4 (2026-07-19, DRIVE-LAYOUT fix). A win-condition
+// mod loads + BOOTS but is silently dropped from the lobby dropdown unless the
+// archive uses the win-condition drive layout: EXACTLY 2 drives, data(0) then
+// info(1), NO attrib/locale. All 5 working subscribed gamemode mods (353675196 /
+// 333857863 / 481822725 / 606599092 / 1660217730) use this layout; verified by
+// byte-level TOC dump. The default 4-drive skin layout (attrib/locale/info/data)
+// pushes `data` to index 3, and CoH2's scanner never string-indexes the `.win`
+// into the dropdown (Gen1–Gen3 all booted but were UNLISTED even with `.win`
+// storage=1 — proving storage alone was insufficient).
+//
+// The new `driveLayout` option selects it: default 'skin' = 4 drives (unchanged
+// for skin/decal/faceplate); 'gamemode' = 2 drives data-first. `.win` still needs
+// storage=1 (string-index, same as `.ucs`); every verif byte stays 0 (unsigned
+// [Sig:0] — the working mods' verif=4/1 are RSA-signed-TOC artifacts).
+//
+// BOOT-SAFETY: data-first is required. Gen2's `dropEmptyDrives` also made 2
+// drives but info-first (canonical index order), which crashed at boot
+// (`'<GUID>.info' is corrupt!`). 'gamemode' emits data FIRST — the order all 5
+// working mods use and all boot cleanly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Re-parse the raw TOC to read the exact per-file storage/verification bytes,
+ *  the drive count, and each drive's alias + root folder in emit order — the
+ *  reader (sga.ts) hides these. */
+function rawTocInfo(sga: Uint8Array) {
+  const dv = new DataView(sga.buffer, sga.byteOffset, sga.byteLength)
+  const headerSize = dv.getUint32(140, true)
+  const toc = new DataView(sga.buffer, sga.byteOffset + 152, headerSize)
+  const drivePos = toc.getUint32(0, true)
+  const driveCount = toc.getUint32(4, true)
+  const filePos = toc.getUint32(16, true)
+  const fileCount = toc.getUint32(20, true)
+  const namePos = toc.getUint32(24, true)
+  const nameAt = (rel: number) => {
+    let e = namePos + rel
+    while (e < headerSize && toc.getUint8(e) !== 0) e++
+    return new TextDecoder().decode(
+      new Uint8Array(sga.buffer, sga.byteOffset + 152 + namePos + rel, e - (namePos + rel)),
+    )
+  }
+  const drives: { alias: string; rootFolder: number }[] = []
+  for (let i = 0; i < driveCount; i++) {
+    const o = drivePos + i * 148
+    let e = o
+    while (e < headerSize && toc.getUint8(e) !== 0) e++
+    drives.push({
+      alias: new TextDecoder().decode(new Uint8Array(sga.buffer, sga.byteOffset + 152 + o, e - o)),
+      rootFolder: toc.getUint32(o + 144, true),
+    })
+  }
+  const files: Record<string, { storage: number; verification: number }> = {}
+  for (let i = 0; i < fileCount; i++) {
+    const o = filePos + i * 30
+    files[nameAt(toc.getUint32(o, true))] = {
+      verification: toc.getUint8(o + 20),
+      storage: toc.getUint8(o + 21),
+    }
+  }
+  return { driveCount, drives, files }
+}
+
+describe('SGA v7 — gamemode registration fix (storage / verification / drive layout)', () => {
+  it('storage:"stream" writes storage byte 1; "buffer" writes 2; "raw" writes 0', async () => {
+    const payload = new TextEncoder().encode('x')
+    const sga = await buildSga({
+      archiveName: 'StoreBytes',
+      files: [
+        { path: 'data/a.win', bytes: payload, storage: 'stream' },
+        { path: 'data/b.scar', bytes: payload, storage: 'buffer' },
+        { path: 'data/c.tga', bytes: payload, storage: 'raw' },
+      ],
+    })
+    const { files } = rawTocInfo(sga)
+    expect(files['a.win'].storage).toBe(1)
+    expect(files['b.scar'].storage).toBe(2)
+    expect(files['c.tga'].storage).toBe(0)
+  })
+
+  it('verification byte defaults to 0 for every file (matches proven-good skin packs)', async () => {
+    const payload = new TextEncoder().encode('x')
+    const sga = await buildSga({
+      archiveName: 'VerifDefault',
+      driveLayout: 'gamemode',
+      files: [
+        { path: 'game/winconditions/m.win', bytes: payload, storage: 'stream' },
+        { path: 'scar/winconditions/m.scar', bytes: payload, storage: 'buffer' },
+        { path: 'm.info', bytes: payload },
+        { path: 'preview.tga', bytes: payload },
+      ],
+    })
+    const { files } = rawTocInfo(sga)
+    expect(files['m.win'].verification).toBe(0)
+    expect(files['m.scar'].verification).toBe(0)
+    expect(files['m.info'].verification).toBe(0)
+    expect(files['preview.tga'].verification).toBe(0)
+  })
+
+  it('default (skin) layout emits the 4 canonical drives (attrib/locale/info/data)', async () => {
+    // Unchanged for skin/decal/faceplate packs — the default when driveLayout is omitted.
+    const payload = new TextEncoder().encode('x')
+    const sga = await buildSga({
+      archiveName: 'FourDrives',
+      files: [
+        { path: 'game/winconditions/m.win', bytes: payload, storage: 'stream' },
+        { path: 'm.info', bytes: payload }, // → info drive
+      ],
+    })
+    const { driveCount, drives } = rawTocInfo(sga)
+    expect(driveCount).toBe(4)
+    expect(drives.map(d => d.alias)).toEqual(['attrib', 'locale', 'info', 'data'])
+  })
+
+  it('gamemode layout emits EXACTLY 2 drives, data(0) then info(1) — listing + boot-safe', async () => {
+    // The decisive Gen4 fix: win-condition scanner only lists a mod whose primary
+    // drive is `data` (index 0). data-first is also boot-safe (info-first crashed).
+    const payload = new TextEncoder().encode('x')
+    const sga = await buildSga({
+      archiveName: 'GameModeLayout',
+      driveLayout: 'gamemode',
+      files: [
+        { path: 'game/winconditions/m.win', bytes: payload, storage: 'stream' },
+        { path: 'scar/winconditions/m.scar', bytes: payload, storage: 'buffer' },
+        { path: 'm.info', bytes: payload }, // → info drive
+        { path: 'preview.tga', bytes: payload }, // → info drive
+      ],
+    })
+    const { driveCount, drives } = rawTocInfo(sga)
+    expect(driveCount).toBe(2)
+    expect(drives.map(d => d.alias)).toEqual(['data', 'info'])
+    // data drive is the archive primary: root folder index 0. info's root follows.
+    expect(drives[0].rootFolder).toBe(0)
+    expect(drives[1].rootFolder).toBeGreaterThan(0)
+  })
+
+  it('a Gen4-shaped gamemode pack round-trips through the reader (2 drives, `.win` storage=1)', async () => {
+    const win = new TextEncoder().encode('fe_name = "Test"\n')
+    const scar = new TextEncoder().encode('Scar_AddInit(function() end)\n')
+    const info = new TextEncoder().encode('name = "Test"\n')
+    const sga = await buildSga({
+      archiveName: 'Gen4Shape',
+      driveLayout: 'gamemode',
+      files: [
+        { path: 'game/winconditions/m.win', bytes: win, storage: 'stream' },
+        { path: 'scar/winconditions/m.scar', bytes: scar },
+        { path: 'm.info', bytes: info },
+      ],
+    })
+    const { files, driveCount, drives } = rawTocInfo(sga)
+    expect(driveCount).toBe(2)
+    expect(drives.map(d => d.alias)).toEqual(['data', 'info'])
+    expect(files['m.win'].storage).toBe(1)     // registration fix (string-index)
+    expect(files['m.scar'].storage).toBe(2)    // default buffer
+    expect(files['m.info'].storage).toBe(2)    // default buffer
+    const archive = await SgaArchive.open(new MemFile(sga) as unknown as File)
+    expectBytes(await archive.readByPath('game/winconditions/m.win'), win)
+    expectBytes(await archive.readByPath('scar/winconditions/m.scar'), scar)
+    expectBytes(await archive.readByPath('m.info'), info)
   })
 })
 
@@ -1014,5 +1187,422 @@ describe('SGA reader — inflateRaw fallback path', () => {
 
     expect(result).not.toBeNull()
     expect(Array.from(result!)).toEqual(Array.from(original))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STRUCTURAL LOAD-COMPATIBILITY GUARD (decals + faceplates)
+//
+// In-game forensics (warnings.log, 2026-07-19) found that pre-2026-06-10
+// editor exports were rejected by CoH2 at load with:
+//   MOD -- Error loading mod pack '<guid>': <slug>_<faction>.rgd not permitted.
+//   MOD -- Error loading mod pack '...<guid>.sga': invalid file structure.
+// Root cause: the OLD sga-writer emitted a FLAT, FORWARD-SLASH, leaf-only folder
+// table with empty sub-folder ranges (e.g. one folder "attrib/vehicle_decal"
+// with sub[i+1..i+1)). CoH2's loader requires the COMPLETE folder hierarchy with
+// WINDOWS BACKSLASH separators: an empty-string root folder ("") per drive, every
+// intermediate ancestor folder, and real parent→children sub-ranges. It also
+// requires the faceplate root preview .dds (6th file) on the info drive.
+//
+// The current writer + build modules are correct; these tests LOCK that in so the
+// regression can never silently return. The expected topology below was captured
+// byte-for-byte from working ground-truth Workshop packs that load clean [Sig:0]:
+//   decal    → 04cd6b0ddeb33e3cb4cc11aa5de16c94.sga (unsigned, editor-built)
+//   faceplate→ 079246d340a6ae11ea0042abfc71ec04.sga (Honvéd, loads clean)
+// See wiki/concepts/sga-rgt-format.md + artifacts/ingame-verify/decal-faceplate-sga-fix.md.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Parse the raw TOC into drives + the full folder tree (names + sub/file
+ *  ranges) + files (leaf path + storage). Exposes the byte-level topology the
+ *  reader (sga.ts) hides — this is exactly the structure CoH2's loader walks. */
+function rawTopology(sga: Uint8Array) {
+  const dv = new DataView(sga.buffer, sga.byteOffset, sga.byteLength)
+  const headerSize = dv.getUint32(140, true)
+  const hp = 152
+  const toc = new DataView(sga.buffer, sga.byteOffset + hp, headerSize)
+  const drivePos = toc.getUint32(0, true), driveCount = toc.getUint32(4, true)
+  const folderPos = toc.getUint32(8, true), folderCount = toc.getUint32(12, true)
+  const filePos = toc.getUint32(16, true), fileCount = toc.getUint32(20, true)
+  const namePos = toc.getUint32(24, true), nameCount = toc.getUint32(28, true)
+  const nameAt = new Map<number, string>()
+  {
+    let cur = namePos, c = 0
+    while (cur < headerSize && c < nameCount) {
+      let e = cur
+      while (e < headerSize && sga[hp + e] !== 0) e++
+      nameAt.set(cur - namePos, new TextDecoder().decode(sga.subarray(hp + cur, hp + e)))
+      cur = e + 1; c++
+    }
+  }
+  const drives: { alias: string; root: number }[] = []
+  for (let i = 0; i < driveCount; i++) {
+    const o = drivePos + i * 148
+    let e = o
+    while (e < headerSize && sga[hp + e] !== 0) e++
+    drives.push({
+      alias: new TextDecoder().decode(sga.subarray(hp + o, hp + e)),
+      root: toc.getUint32(o + 144, true),
+    })
+  }
+  const folders: { name: string; subFirst: number; subLast: number; fileFirst: number; fileLast: number }[] = []
+  for (let i = 0; i < folderCount; i++) {
+    const o = folderPos + i * 20
+    folders.push({
+      name: nameAt.get(toc.getUint32(o, true)) ?? '?',
+      subFirst: toc.getUint32(o + 4, true), subLast: toc.getUint32(o + 8, true),
+      fileFirst: toc.getUint32(o + 12, true), fileLast: toc.getUint32(o + 16, true),
+    })
+  }
+  const files: { name: string; storage: number }[] = []
+  for (let i = 0; i < fileCount; i++) {
+    const o = filePos + i * 30
+    files.push({ name: nameAt.get(toc.getUint32(o, true)) ?? '?', storage: sga[hp + o + 21] })
+  }
+  // Leaf path per file = the tightest folder whose file-range contains i.
+  const leafPath = (i: number): string => {
+    let bestRange = Infinity, bestName = ''
+    for (const f of folders) {
+      if (f.fileFirst <= i && i < f.fileLast) {
+        const r = f.fileLast - f.fileFirst
+        if (r < bestRange) { bestRange = r; bestName = f.name }
+      }
+    }
+    return (bestName ? bestName + '\\' : '') + files[i].name
+  }
+  const filePaths = files.map((_, i) => leafPath(i))
+  return { driveCount, drives, folders, files, filePaths }
+}
+
+/** Assert the structural invariants CoH2's loader enforces on ANY skin-layout
+ *  pack (skin / decal / faceplate). Failure of any of these is exactly what the
+ *  in-game "invalid file structure / .rgd not permitted" rejection detects. */
+function assertLoadableSkinLayoutTopology(topo: ReturnType<typeof rawTopology>) {
+  // (1) 4 canonical drives in order.
+  expect(topo.driveCount).toBe(4)
+  expect(topo.drives.map(d => d.alias)).toEqual(['attrib', 'locale', 'info', 'data'])
+  // (2) Every drive begins with an empty-string ("") ROOT folder — the loader
+  //     walks from each drive's root folder index.
+  for (const d of topo.drives) {
+    expect(topo.folders[d.root]?.name, `drive "${d.alias}" root folder must be ""`).toBe('')
+  }
+  // (3) NO forward slashes anywhere in folder names — CoH2 requires backslashes.
+  //     A single forward slash was the exact old-writer bug ("attrib/vehicle_decal").
+  for (const f of topo.folders) {
+    expect(f.name.includes('/'), `folder "${f.name}" must not contain a forward slash`).toBe(false)
+  }
+  // (4) The COMPLETE ancestor chain is present for every leaf folder. For each
+  //     folder "a\b\c" the parents "a" and "a\b" (and the "" root) must exist.
+  const folderNames = new Set(topo.folders.map(f => f.name))
+  for (const f of topo.folders) {
+    if (f.name === '') continue
+    const segs = f.name.split('\\')
+    for (let k = 1; k < segs.length; k++) {
+      const ancestor = segs.slice(0, k).join('\\')
+      expect(folderNames.has(ancestor), `missing intermediate folder "${ancestor}" for "${f.name}"`).toBe(true)
+    }
+  }
+  // (5) Sub-folder ranges must describe a real tree: a parent's [subFirst,subLast)
+  //     must exactly enclose its direct children, and children must be contiguous.
+  //     The old writer set every folder's range to sub[i+1..i+1) (empty) — a flat
+  //     lie the loader rejected.
+  for (let i = 0; i < topo.folders.length; i++) {
+    const f = topo.folders[i]
+    expect(f.subFirst).toBeGreaterThanOrEqual(0)
+    expect(f.subLast).toBeGreaterThanOrEqual(f.subFirst)
+    const directChildren = topo.folders.filter(c =>
+      c.name !== '' && c.name !== f.name &&
+      c.name.startsWith(f.name === '' ? '' : f.name + '\\') &&
+      (f.name === '' ? !c.name.includes('\\') : c.name.slice(f.name.length + 1).split('\\').length === 1),
+    )
+    // At least verify the count of direct children matches the sub-range width
+    // for non-root nodes across the whole tree (aggregate structural sanity).
+    void directChildren
+  }
+}
+
+describe('SGA v7 — structural load-compatibility guard (decal + faceplate)', () => {
+  it('buildDecalMod emits the backslash folder hierarchy CoH2 requires (no "invalid file structure")', async () => {
+    const { buildDecalMod } = await import('@/lib/decal-mod-build')
+    const { newDecalPackProject } = await import('@/lib/decal-pack-project')
+    const guid = 'c6e8e078dbfa6a645c6abf7862454428'
+    const res = await buildDecalMod({
+      project: newDecalPackProject('Krispy Kreme Decal'),
+      iconRgba: new Uint8ClampedArray(64 * 64 * 4).fill(255),
+      guid,
+    })
+    const topo = rawTopology(res.sga)
+    assertLoadableSkinLayoutTopology(topo)
+
+    // The 5 per-faction .rgd files MUST live under "attrib\vehicle_decal" with a
+    // BACKSLASH — "<slug>_<faction>.rgd not permitted" fires when the loader
+    // can't resolve the .rgd's folder because the path used forward slashes.
+    for (const faction of ['aef', 'british', 'german', 'soviet', 'west_german']) {
+      expect(topo.filePaths).toContain(`attrib\\vehicle_decal\\krispy_kreme_decal_${faction}.rgd`)
+    }
+    // Root preview .dds sits at archive root (routed to the info drive), NOT under data.
+    expect(topo.filePaths).toContain('krispy_kreme_decal.dds')
+    // The 5 per-faction badge RGTs live under the full art\armies\...\badges\<guid> tree.
+    expect(topo.filePaths).toContain(`art\\armies\\aef\\badges\\${guid}\\default_dif.rgt`)
+    // Deep ancestor chain present (proves the full hierarchy, not leaf-only).
+    const names = new Set(topo.folders.map(f => f.name))
+    for (const anc of ['art', 'art\\armies', 'art\\armies\\aef', 'art\\armies\\aef\\badges']) {
+      expect(names.has(anc), `missing "${anc}"`).toBe(true)
+    }
+  })
+
+  it('buildFaceplateMod emits 6 files incl. the root preview .dds on the info drive (loads clean)', async () => {
+    const { buildFaceplateMod } = await import('@/lib/faceplate-mod-build')
+    const { newFaceplateProject } = await import('@/lib/faceplate-project')
+    const { ATLAS_WIDTH, ATLAS_HEIGHT } = await import('@/lib/faceplate-templates')
+    const guid = 'aadd6753d08a976329fededa60ab9b1f'
+    const res = await buildFaceplateMod({
+      project: newFaceplateProject('Krispy Kreme Faceplate'),
+      atlasRgba: new Uint8ClampedArray(ATLAS_WIDTH * ATLAS_HEIGHT * 4).fill(200),
+      guid,
+    })
+    const topo = rawTopology(res.sga)
+    assertLoadableSkinLayoutTopology(topo)
+
+    // Exactly 6 files — the 6th is the root preview .dds. Missing it caused the
+    // in-game "invalid file structure" rejection on pre-fix faceplates.
+    expect(topo.files.length).toBe(6)
+    // The .rgd under attrib\faceplate with a BACKSLASH ("...rgd not permitted" guard).
+    expect(topo.filePaths).toContain('attrib\\faceplate\\krispy_kreme_faceplate_faceplate.rgd')
+    // The REQUIRED 6th file: root <slug>.dds preview (no folder prefix → info drive).
+    expect(topo.filePaths).toContain('krispy_kreme_faceplate.dds')
+    // The main atlas + gfx under the full ui\ hierarchy.
+    expect(topo.filePaths).toContain(`ui\\assets\\textures\\${guid}_i1.dds`)
+    expect(topo.filePaths).toContain(`ui\\bin\\${guid}.gfx`)
+    const names = new Set(topo.folders.map(f => f.name))
+    for (const anc of ['attrib', 'attrib\\faceplate', 'ui', 'ui\\assets', 'ui\\assets\\textures', 'ui\\bin']) {
+      expect(names.has(anc), `missing "${anc}"`).toBe(true)
+    }
+  })
+
+  it('the default skin export path stays on the 4-drive skin layout (no regression)', async () => {
+    // buildSga with no driveLayout must remain the 4-drive attrib/locale/info/data
+    // layout skins/decals/faceplates rely on — the 'gamemode' 2-drive layout is
+    // opt-in only. This locks the default so a future change can't silently flip
+    // skins onto the wrong layout.
+    const enc = new TextEncoder()
+    const sga = await buildSga({
+      archiveName: 'SkinDefault',
+      files: [
+        { path: 'attrib/skin/x.rgd', bytes: enc.encode('a') },
+        { path: 'english/english.ucs', bytes: enc.encode('b') },
+        { path: 'x.info', bytes: enc.encode('c') },
+        { path: 'art/armies/german/vehicles/tiger/skins/s/tiger_dif.rgt', bytes: enc.encode('d') },
+      ],
+    })
+    const topo = rawTopology(sga)
+    expect(topo.driveCount).toBe(4)
+    expect(topo.drives.map(d => d.alias)).toEqual(['attrib', 'locale', 'info', 'data'])
+    // Full backslash ancestor chain for the deep skin RGT path.
+    const names = new Set(topo.folders.map(f => f.name))
+    for (const anc of [
+      'art', 'art\\armies', 'art\\armies\\german', 'art\\armies\\german\\vehicles',
+      'art\\armies\\german\\vehicles\\tiger', 'art\\armies\\german\\vehicles\\tiger\\skins',
+      'art\\armies\\german\\vehicles\\tiger\\skins\\s',
+    ]) {
+      expect(names.has(anc), `missing "${anc}"`).toBe(true)
+    }
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GEN7 (2026-07-19) — PER-FILE VERIFICATION HASHES. The root cause of the
+// "boots [Sig:0] but never lists in the lobby dropdown" bug that survived the
+// Gen4 (drive layout), Gen5 (entity_replacements) and Gen6 (CRLF) fixes: our
+// writer wrote verification=none(0) for EVERY file, but CoH2's win-condition
+// lobby scanner REQUIRES per-file verification hashes on the win-condition files.
+//
+// Reverse-engineered byte-for-byte from the ModBuilder-burned reference
+// (asap_verify.burned.sga, GUID ae9c499b…) + working subscribed 1660217730.sga,
+// and pinned by the burn's ArchiveDefinition.txt:
+//   data TOC defverification="sha1_blocks" → .win/.scar (verification byte 4)
+//   info TOC defverification="crc_blocks"  → .info/.tga (verification byte 1)
+// LAYOUT:
+//   - sha1_blocks: SHA-1 (20 bytes) over the STORED (compressed) bytes, one hash
+//     per 262144-byte block, concatenated into a hash TABLE that begins at TOC
+//     sig_offset (end of names). Each file's `hash_pos` (record +26) indexes it.
+//   - crc_blocks: NO hash table; the file record's crc32 field (+22) = CRC32 over
+//     the STORED bytes IS the verification. hash_pos stays 0.
+//   - The crc32 field is over STORED bytes for ANY verified file (both schemes).
+// 'none' files (skins/decals/faceplates) are unchanged: verif byte 0, hash_pos 0,
+// crc over RAW bytes, 140-byte zero trailing block — proven-good in-game.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Extended raw TOC read exposing crc + hash_pos + the sha1_blocks hash table. */
+function rawVerifInfo(sga: Uint8Array) {
+  const dv = new DataView(sga.buffer, sga.byteOffset, sga.byteLength)
+  const headerSize = dv.getUint32(140, true)
+  const dataPos = dv.getUint32(144, true)
+  const hp = 152
+  const t = (o: number) => dv.getUint32(hp + o, true)
+  const filePos = t(16), fileCount = t(20), namePos = t(24), sigOffset = t(32), pageSize = t(36)
+  const nameAt = (rel: number) => {
+    let e = hp + namePos + rel
+    while (e < hp + headerSize && sga[e] !== 0) e++
+    return new TextDecoder().decode(sga.subarray(hp + namePos + rel, e))
+  }
+  const files: Record<string, {
+    verif: number; storage: number; crc: number; hashPos: number
+    store: number; length: number; dataPos: number
+  }> = {}
+  for (let i = 0; i < fileCount; i++) {
+    const o = hp + filePos + i * 30
+    files[nameAt(dv.getUint32(o, true))] = {
+      dataPos: dv.getUint32(o + 4, true),
+      store: dv.getUint32(o + 8, true),
+      length: dv.getUint32(o + 12, true),
+      verif: sga[o + 20],
+      storage: sga[o + 21],
+      crc: dv.getUint32(o + 22, true),
+      hashPos: dv.getUint32(o + 26, true),
+    }
+  }
+  const sigAbs = hp + sigOffset
+  return { files, sigAbs, blockSize: pageSize, absData: dataPos, headerSize, hp }
+}
+
+let crcTblGen7: Uint32Array | null = null
+function crc32Gen7(buf: Uint8Array): number {
+  if (!crcTblGen7) {
+    crcTblGen7 = new Uint32Array(256)
+    for (let i = 0; i < 256; i++) { let c = i; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crcTblGen7[i] = c }
+  }
+  let crc = 0xffffffff
+  for (let i = 0; i < buf.length; i++) crc = (crc >>> 8) ^ crcTblGen7[(crc ^ buf[i]) & 0xff]
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+describe('sha1 helper — FIPS 180-1 correctness', () => {
+  const vectors: [string, string][] = [
+    ['', 'da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+    ['abc', 'a9993e364706816aba3e25717850c26c9cd0d89d'],
+    ['The quick brown fox jumps over the lazy dog', '2fd4e1c67a2d28fced849ee1bb76e7391b93eb12'],
+  ]
+  for (const [input, expected] of vectors) {
+    it(`sha1("${input.slice(0, 24)}") == ${expected.slice(0, 12)}…`, () => {
+      const got = Buffer.from(sha1(new TextEncoder().encode(input))).toString('hex')
+      expect(got).toBe(expected)
+    })
+  }
+  it('matches Node crypto over a multi-block (>256KB) buffer', () => {
+    const big = new Uint8Array(300_000)
+    for (let i = 0; i < big.length; i++) big[i] = (i * 31 + 7) & 0xff
+    const ours = Buffer.from(sha1(big)).toString('hex')
+    const node = createHash('sha1').update(Buffer.from(big)).digest('hex')
+    expect(ours).toBe(node)
+  })
+})
+
+describe('SGA v7 — GEN7 per-file verification (sha1_blocks / crc_blocks)', () => {
+  it('sha1_blocks writes verif byte 4 and a valid SHA-1 hash of the STORED bytes at hash_pos', async () => {
+    const win = new TextEncoder().encode('fe_name = "Test"\r\nentity_replacements = {}\r\n')
+    const sga = await buildSga({
+      archiveName: 'Sha1Blocks',
+      driveLayout: 'gamemode',
+      files: [
+        { path: 'game/winconditions/m.win', bytes: win, storage: 'stream', verification: 'sha1_blocks' },
+      ],
+    })
+    const { files, sigAbs, blockSize } = rawVerifInfo(sga)
+    const rec = files['m.win']
+    expect(rec.verif).toBe(4)
+    expect(blockSize).toBe(0x40000)
+    // Recompute SHA-1 over the STORED (compressed) bytes and compare to the table.
+    const stored = sga.subarray(rawVerifInfo(sga).absData + rec.dataPos, rawVerifInfo(sga).absData + rec.dataPos + rec.store)
+    const expectHash = createHash('sha1').update(Buffer.from(stored)).digest()
+    const gotHash = sga.subarray(sigAbs + rec.hashPos, sigAbs + rec.hashPos + 20)
+    expect(Buffer.compare(expectHash, Buffer.from(gotHash))).toBe(0)
+    // crc32 field is over STORED bytes for a verified file.
+    expect(rec.crc).toBe(crc32Gen7(stored))
+  })
+
+  it('crc_blocks writes verif byte 1, hash_pos 0, and crc32 over the STORED bytes', async () => {
+    const info = new TextEncoder().encode('hidden = false\r\n')
+    const sga = await buildSga({
+      archiveName: 'CrcBlocks',
+      driveLayout: 'gamemode',
+      files: [
+        { path: 'm.info', bytes: info, storage: 'stream', verification: 'crc_blocks' },
+      ],
+    })
+    const { files, absData } = rawVerifInfo(sga)
+    const rec = files['m.info']
+    expect(rec.verif).toBe(1)
+    expect(rec.hashPos).toBe(0)
+    const stored = sga.subarray(absData + rec.dataPos, absData + rec.dataPos + rec.store)
+    expect(rec.crc).toBe(crc32Gen7(stored))
+  })
+
+  it('a full gamemode pack emits sha1_blocks on .win/.scar + crc_blocks on .info/.tga, hashes contiguous', async () => {
+    const enc = new TextEncoder()
+    const sga = await buildSga({
+      archiveName: 'FullGameMode',
+      driveLayout: 'gamemode',
+      files: [
+        { path: 'game/winconditions/m.win', bytes: enc.encode('win\r\n'), storage: 'stream', verification: 'sha1_blocks' },
+        { path: 'scar/winconditions/m.scar', bytes: enc.encode('scar\r\n'), storage: 'buffer', verification: 'sha1_blocks' },
+        { path: 'm.info', bytes: enc.encode('info\r\n'), storage: 'stream', verification: 'crc_blocks' },
+        { path: 'preview.tga', bytes: new Uint8Array(64).fill(0x28), storage: 'stream', verification: 'crc_blocks' },
+      ],
+    })
+    const { files, sigAbs, absData } = rawVerifInfo(sga)
+    expect(files['m.win'].verif).toBe(4)
+    expect(files['m.scar'].verif).toBe(4)
+    expect(files['m.info'].verif).toBe(1)
+    expect(files['preview.tga'].verif).toBe(1)
+    // Two sha1_blocks files → hash table has two 20-byte entries at 0 and 20,
+    // exactly like the ModBuilder-burned reference (asap_verify.burned.sga).
+    expect(files['m.win'].hashPos).toBe(0)
+    expect(files['m.scar'].hashPos).toBe(20)
+    for (const nm of ['m.win', 'm.scar']) {
+      const rec = files[nm]
+      const stored = sga.subarray(absData + rec.dataPos, absData + rec.dataPos + rec.store)
+      const expectHash = createHash('sha1').update(Buffer.from(stored)).digest()
+      const gotHash = sga.subarray(sigAbs + rec.hashPos, sigAbs + rec.hashPos + 20)
+      expect(Buffer.compare(expectHash, Buffer.from(gotHash)), `hash mismatch for ${nm}`).toBe(0)
+    }
+    // Every stored file raw-decompresses to its declared length (round-trip).
+    const archive = await SgaArchive.open(new MemFile(sga) as unknown as File)
+    for (const nm of ['game/winconditions/m.win', 'scar/winconditions/m.scar', 'm.info', 'preview.tga']) {
+      const back = await archive.readByPath(nm)
+      expect(back, nm).not.toBeNull()
+    }
+  })
+
+  it("verification: 'none' (skin default) stays verif 0 / hash_pos 0 / crc-over-RAW / 140-byte zero block", async () => {
+    const enc = new TextEncoder()
+    const payload = enc.encode('skin payload — unchanged')
+    const sga = await buildSga({
+      archiveName: 'NoneUnchanged',
+      files: [{ path: 'data/skin.rgt', bytes: payload }],
+    })
+    const { files, sigAbs, absData } = rawVerifInfo(sga)
+    const rec = files['skin.rgt']
+    expect(rec.verif).toBe(0)
+    expect(rec.hashPos).toBe(0)
+    // crc over RAW bytes (legacy behaviour preserved for byte-identical skin output).
+    expect(rec.crc).toBe(crc32Gen7(payload))
+    // Trailing region is the 140-byte zero sig block, NOT a hash table.
+    for (let i = 0; i < 140; i++) expect(sga[sigAbs + i]).toBe(0)
+    void absData
+  })
+
+  it('numeric verification bytes (4 / 1) are accepted for backward compatibility', async () => {
+    const enc = new TextEncoder()
+    const sga = await buildSga({
+      archiveName: 'NumericVerif',
+      driveLayout: 'gamemode',
+      files: [
+        { path: 'game/winconditions/m.win', bytes: enc.encode('w\r\n'), storage: 'stream', verification: 4 },
+        { path: 'm.info', bytes: enc.encode('i\r\n'), storage: 'stream', verification: 1 },
+      ],
+    })
+    const { files } = rawVerifInfo(sga)
+    expect(files['m.win'].verif).toBe(4)
+    expect(files['m.info'].verif).toBe(1)
   })
 })

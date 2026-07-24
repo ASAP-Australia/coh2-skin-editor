@@ -12,7 +12,7 @@
  * the parent.
  */
 
-import { Globe, Grid3x3, Lightbulb } from 'lucide-react'
+import { Globe, Image, Lightbulb } from 'lucide-react'
 import { type PresetId, SCENE_PRESETS } from '@/lib/scene-settings'
 
 interface Props {
@@ -22,7 +22,7 @@ interface Props {
 
 const PRESET_ICONS: Record<PresetId, React.ReactNode> = {
   in_game_field: <Globe size={20} />,
-  studio_grid: <Grid3x3 size={20} />,
+  studio_grid: <Image size={20} />,
   showcase: <Lightbulb size={20} />,
 }
 
@@ -36,7 +36,7 @@ export default function ScenePanel({ presetId, setPresetId }: Props) {
   // changing immediately on click + the scene actually swapping behind.
   return (
     <div
-      className="glass-hud fixed top-1/2 right-3 -translate-y-1/2 z-30 flex flex-col gap-2 p-1.5 rounded-2xl"
+      className="glass-hud fixed top-1/2 right-5 -translate-y-1/2 z-30 flex flex-col gap-2 p-1.5 rounded-2xl"
     >
       {PRESET_ORDER.map(id => {
         const active = presetId === id

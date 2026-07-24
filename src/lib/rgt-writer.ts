@@ -29,13 +29,36 @@
  */
 
 import { deflate } from 'pako'
-import { encodeBc1 } from './bc-encode'
+import { encodeBc1, encodeBc3 } from './bc-encode'
 
 export interface RgtOptions {
-  /** When false, store the top mip as raw BC3 bytes (no zlib). This produces a
+  /** When false, store the top mip as raw BC bytes (no zlib). This produces a
    *  deterministic, content-independent byte length — required for the key-pool
    *  patch workflow where the TOC must stay byte-identical across all user skins. */
   compress?: boolean
+  /**
+   * BC format to use for encoding.
+   *  - 'bc1' (default) — BC1/DXT1, format code 13. Correct for binary-mask decal
+   *    RGTs where the renderer applies faction tint at runtime (~2 MB per 2048²).
+   *  - 'bc3' — BC3/DXT5, format code 15. Required for the skin signed-patch
+   *    (patchExport) path because the bundled template_0001.sga was built with
+   *    BC3 slots (4,194,736 bytes per 2048² RGT). RSA signatures in the template
+   *    cannot be regenerated, so the patched bytes MUST match the pre-signed size.
+   */
+  format?: 'bc1' | 'bc3'
+  /**
+   * When false, omit the FBIF (FileBurnInfo) preamble chunk.
+   *
+   * The FBIF chunk is a 90-byte Relic metadata header that is required for
+   * unsigned custom-skin RGTs so the CoH2 engine recognises the file as valid.
+   * However, the pre-signed template_0001.sga slots were built WITHOUT an FBIF
+   * chunk — their legitimacy is established by the RSA signature instead. Omit
+   * FBIF when targeting those slots so the emitted RGT is byte-length-identical
+   * to the pre-signed slot (4,194,736 bytes for a 2048² BC3 RGT).
+   *
+   * Default: true (emit FBIF — correct for unsigned / decal paths).
+   */
+  fbif?: boolean
 }
 
 /** Build a complete .rgt byte stream from an HTML canvas. */
@@ -45,17 +68,22 @@ export function canvasToRgt(
   options?: RgtOptions,
 ): Uint8Array {
   const compress = options?.compress ?? true
+  const bcFormat = options?.format ?? 'bc1'
+  const emitFbif = options?.fbif ?? true
 
   // 1. Get RGBA pixels
   const ctx = canvas.getContext('2d')!
   const { width, height } = canvas
   const img = ctx.getImageData(0, 0, width, height)
 
-  // 2. Encode the top mip as BC1 (DXT1). Community decal packs are pure
-  //    white-on-black binary masks — no colour, no alpha gradient. BC1 with
-  //    1-bit alpha is the correct format; the renderer applies faction tint at
-  //    runtime. BC3 (DXT5) was wrong for this content type.
-  const dxt = encodeBc1(img.data, width, height)
+  // 2. Encode the top mip in the requested BC format.
+  //    BC1 (default): binary-mask decal RGTs — half the size, correct for
+  //    pure white-on-black content where the renderer applies faction tint.
+  //    BC3: skin signed-patch path — must match the 4,194,736-byte slots
+  //    pre-signed in template_0001.sga (RSA signatures cannot be regenerated).
+  const dxt = bcFormat === 'bc3'
+    ? encodeBc3(img.data, width, height)
+    : encodeBc1(img.data, width, height)
 
   // 3. Build the mip table. We emit ONE real mip (the top one) and pad
   //    the rest with empty entries pointing at zero-length zlib streams,
@@ -79,14 +107,14 @@ export function canvasToRgt(
   mips.push({ unc: dxt.length, cmp: topData })
 
   // 4. Build chunk payloads
-  // TFMT: width, height, ?, ?, format=13 (DXT1/BC1 in CoH2 codebase), ?, ?, byte
+  // TFMT: width, height, ?, ?, format (13=DXT1/BC1, 15=DXT5/BC3), ?, ?, byte
   const tfmt = new Uint8Array(25)
   const tfmtView = new DataView(tfmt.buffer)
   tfmtView.setUint32( 0, width, true)
   tfmtView.setUint32( 4, height, true)
   tfmtView.setUint32( 8, 1, true)            // unknown — common value
   tfmtView.setUint32(12, 2, true)            // unknown — common value
-  tfmtView.setUint32(16, 13, true)           // 13 = DXT1 (BC1)
+  tfmtView.setUint32(16, bcFormat === 'bc3' ? 15 : 13, true) // 13=DXT1, 15=DXT5
   tfmtView.setUint32(20, 0, true)
   tfmt[24] = 1
 
@@ -143,7 +171,7 @@ export function canvasToRgt(
   fhView.setUint32(28, 0x1c, true)
   fhView.setUint32(32, 1, true)
 
-  const body = concatChunks([fbif, tset])
+  const body = emitFbif ? concatChunks([fbif, tset]) : tset
   const out = new Uint8Array(fileHeader.length + body.length)
   out.set(fileHeader, 0)
   out.set(body, fileHeader.length)

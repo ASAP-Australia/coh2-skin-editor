@@ -170,6 +170,27 @@ interface Props {
    *  WebGL contexts anyway). Normal Viewport usage is byte-for-byte
    *  unchanged — this flag has no effect when false (the default). */
   warmupOnly?: boolean
+  /**
+   * Source for the badge/insignia atlas texture rendered via the baked TC1
+   * (TEXCOORD1) UV channel (Path A — exact in-game placement).
+   *
+   * When set, the decal is composited onto the 3D viewport by sampling the
+   * badge atlas through the vehicle's baked uv2 (TEXCOORD1) attribute, using
+   * a `material.onBeforeCompile` shader injection. This gives pixel-exact
+   * in-game placement for all 61 catalog vehicles.
+   *
+   * - For INSTALLED packs (decalPackRef.path set): pass the result of
+   *   `readInstalledDecalImage(path, faction)` — a DataURL for the raw badge
+   *   atlas SGA texture, uploaded with flipY=false.
+   * - For LOCAL packs: pass a 2048×2048 canvas with the decal rasterised at
+   *   pixel coords [585, 80, 104, 96] (the TC1 badge cluster cell).
+   * - null / undefined = no badge overlay (uDecalAlpha = 0.0, invisible).
+   *
+   * Replaces the old `bakeDecalOntoDiffuse` canvas-bake path for the 3D
+   * viewport preview. The export pipeline (`bakeDecalOntoDiffuse`) is
+   * unchanged and kept for on-disk mod artifact generation.
+   */
+  badgeDecalSource?: string | HTMLCanvasElement | null
 }
 
 // Map our preset tone-mapping enum to Three.js constants.
@@ -554,12 +575,32 @@ function createGroundTexture(): Texture {
 const MAX_ANISO = 16
 
 // Base radius (scene units) of the circular ground "slab" the vehicle sits
-// on. The geometry is built at this radius once; the per-vehicle load effect
-// then SCALES the slab in X/Z so the pad hugs each vehicle's footprint (a
-// fixed pad looked far too large around small cars). 4.2 ≈ half the King
-// Tiger's footprint diagonal, so scale ≈1 for the biggest vehicle and <1
-// for everything smaller.
+// on. The CylinderGeometry is BUILT once at `SLAB_BUILT_RADIUS` (below); the
+// per-vehicle load effect then rescales the slab mesh in X/Z (via
+// slabResizeRef) so the pad hugs each vehicle's actual footprint. This base
+// value only sets the geometry's authored radius — the effective on-screen
+// radius is computed per vehicle from its runtime bounding box.
 const SLAB_BASE_RADIUS = 4.2
+
+// The radius the slab CylinderGeometry is actually authored at. Mesh X/Z
+// scaling is expressed relative to THIS value (scale = wantedRadius / built).
+const SLAB_BUILT_RADIUS = SLAB_BASE_RADIUS * 0.75 // 3.15
+
+// Never shrink the pad below this — keeps small cars/halftracks sitting on a
+// readable disc rather than a tight coin. (≈ old constant pad radius.)
+const SLAB_MIN_RADIUS = SLAB_BUILT_RADIUS // 3.15
+
+// Fraction of extra breathing room around the vehicle's footprint so tracks /
+// gun barrel / stowage don't kiss the pad edge.
+const SLAB_FOOTPRINT_MARGIN = 1.22
+
+// Compute the pad radius that comfortably contains a vehicle whose world-space
+// bounding box has the given X and Z extents. Uses the XZ diagonal (worst-case
+// corner-to-corner footprint) so a vehicle parked at any yaw still fits.
+function slabRadiusForFootprint(sizeX: number, sizeZ: number): number {
+  const diagXZ = Math.hypot(sizeX, sizeZ)
+  return Math.max(SLAB_MIN_RADIUS, (diagXZ / 2) * SLAB_FOOTPRINT_MARGIN)
+}
 
 function clamp8(v: number): number {
   return v < 0 ? 0 : v > 255 ? 255 : v
@@ -659,6 +700,135 @@ interface CachedVehicleGroup {
 
 const vehicleGroupCache = new Map<string, CachedVehicleGroup>()
 
+// ── Path-A badge decal: TC1 tightness check ───────────────────────────────────
+// Determines whether a geometry should receive the badge decal overlay.
+//
+// Two vehicle formats exist:
+//
+// 1. TRIM v5 / single-group geometries: each submesh is its own BufferGeometry
+//    with group.length === 1 (one draw call per submesh). Wide-TC1 body polygons
+//    (hull shell, turret body, barrel) must be EXCLUDED at the mesh level so the
+//    badge atlas (installed pack, opaque everywhere) doesn't smear across the
+//    entire hull. We check uv2 aggregate span: tight = both axes < 0.2.
+//
+// 2. MRGM v8 / multi-group geometries: all submeshes share one BufferGeometry
+//    with geo.groups.length > 1. The aggregate TC1 span is always wide (full
+//    atlas range) because hull + hatches are merged. Per-mesh gating is
+//    impossible here. Instead we return true (badge shader enabled) and rely on
+//    the badge TEXTURE being a transparent-background wrapper canvas: only the
+//    badge-cell region [0.286,0.337]×[0.039,0.086] is opaque, so wide-TC1
+//    vertices sample transparent pixels and produce no composite. The wrapper
+//    is created in Editor.tsx for BOTH installed and local packs.
+function hasTightBadgeUv(geo: BufferGeometry): boolean {
+  const uv2 = geo.attributes.uv2 as BufferAttribute | undefined
+  if (!uv2 || uv2.count === 0) return false
+
+  // MRGM v8 merged geometry (multi-group): delegate gating to wrapper canvas.
+  if (geo.groups.length > 1) return true
+
+  // TRIM v5 single-group geometry: check aggregate TC1 span.
+  let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity
+  for (let i = 0; i < uv2.count; i++) {
+    const u = uv2.getX(i), v = uv2.getY(i)
+    if (u < uMin) uMin = u; if (u > uMax) uMax = u
+    if (v < vMin) vMin = v; if (v > vMax) vMax = v
+  }
+  return (uMax - uMin) < 0.2 && (vMax - vMin) < 0.2
+}
+
+// ── Path-A badge decal shader injection ───────────────────────────────────────
+// Injects into MeshPhysicalMaterial via onBeforeCompile to sample the badge
+// atlas through the baked TC1 UV channel (uv2 attribute, semantic 9).
+// The decal is alpha-composited over the diffuse in the fragment shader.
+//
+// Call this on every body-diffuse material (after __usesBodyDiffuse is set).
+// The shader reference is stored on mat.__badgeShader so uniforms can be
+// updated without a recompile when the user changes the decal.
+function injectBadgeShader(mat: MeshPhysicalMaterial): void {
+  // Pre-seed pending uniforms on the material object so applyBadgeUniforms can
+  // update them before the shader is compiled (onBeforeCompile is lazy — it fires
+  // on the first WebGL render, which may happen AFTER applyBadgeUniforms runs).
+  // onBeforeCompile reads from __badgePending to pick up decal state set earlier.
+  ;(mat as any).__badgePending = { // eslint-disable-line @typescript-eslint/no-explicit-any
+    uDecalTex:   null as CanvasTexture | null,
+    uDecalAlpha: 0.0,
+    uDecalTint:  new Color(1, 1, 1),
+  }
+
+  mat.onBeforeCompile = (shader) => {
+    // Read from __badgePending so decal state set before first render is applied.
+    const pending = (mat as any).__badgePending // eslint-disable-line @typescript-eslint/no-explicit-any
+    // Uniforms — seed from pending (may already have been set by applyBadgeUniforms)
+    shader.uniforms.uDecalTex   = { value: pending.uDecalTex }
+    shader.uniforms.uDecalAlpha = { value: pending.uDecalAlpha }
+    shader.uniforms.uDecalTint  = { value: pending.uDecalTint }
+
+    // Vertex shader: inject our own attribute + varying declarations.
+    // We do NOT rely on Three.js's USE_UV2 define (which requires a material
+    // to have a texture with .channel=2 to be enabled automatically).
+    // Instead we declare `attribute vec2 uv2` unconditionally — Three.js
+    // 0.184 declares it inside `#ifdef USE_UV2` but our custom attribute
+    // won't conflict because we are injecting BEFORE that block via 'void main()'.
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        'void main() {',
+        [
+          'attribute vec2 uv2;',
+          'varying vec2 vBadgeUv;',
+          'void main() {',
+        ].join('\n')
+      )
+      .replace(
+        // Insert vBadgeUv assignment after gl_Position is set.
+        // Using a reliable anchor: '#include <project_vertex>' is always present.
+        '#include <project_vertex>',
+        '#include <project_vertex>\nvBadgeUv = uv2;'
+      )
+
+    // Fragment shader: inject uniform/varying declarations + badge composite
+    // after the standard map_fragment include (which sets diffuseColor from mat.map).
+    shader.fragmentShader = [
+      'uniform sampler2D uDecalTex;',
+      'uniform float uDecalAlpha;',
+      'uniform vec3 uDecalTint;',
+      'varying vec2 vBadgeUv;',
+    ].join('\n') + '\n' + shader.fragmentShader.replace(
+      '#include <map_fragment>',
+      `#include <map_fragment>
+      // Path-A badge overlay: sample badge atlas through baked TC1 (uv2).
+      // Only active when uDecalAlpha > 0 (a decal pack is selected).
+      //
+      // BADGE CLUSTER BOUNDS CHECK (critical for MRGM v8 merged meshes):
+      // The tight TC1 badge cluster is U=[0.286,0.337] x V=[0.039,0.086].
+      // Vertices outside this range belong to wide-TC1 geometry (hull body,
+      // turret shell, barrel, skirts) and must NOT show the badge overlay —
+      // their TC1 coords point to non-badge regions of the full badge atlas.
+      // For MRGM v8 vehicles where all submeshes share one merged geometry,
+      // per-mesh gating is impossible; this shader-level UV bounds check is
+      // the definitive gate that works for all vehicle formats.
+      //
+      // The cluster bounds are probed from actual CoH2 vehicle files:
+      // all intact submeshes with tight TC1 cluster in [0.27,0.35]x[0.03,0.09].
+      // We use a slightly widened window (±0.01) to accommodate floating-point
+      // decoding variations across TRIM v5 and MRGM v8 formats.
+      if (uDecalAlpha > 0.0 &&
+          vBadgeUv.x >= 0.27 && vBadgeUv.x <= 0.35 &&
+          vBadgeUv.y >= 0.03 && vBadgeUv.y <= 0.09) {
+        vec4 badge = texture2D(uDecalTex, vBadgeUv);
+        vec3 tinted = badge.rgb * uDecalTint;
+        diffuseColor.rgb = mix(diffuseColor.rgb, tinted, badge.a * uDecalAlpha);
+      }`
+    )
+
+    // Store shader ref for live uniform updates (no recompile needed).
+    ;(mat as any).__badgeShader = shader // eslint-disable-line @typescript-eslint/no-explicit-any
+  }
+  // Unique cache key so Three.js always compiles the injected program separately
+  // from the standard MeshPhysicalMaterial program.
+  // Changed to v2 since the bounds-check logic changed the shader program.
+  mat.customProgramCacheKey = () => 'badge-overlay-v2'
+}
+
 // ── Pinned vehicle cache ──────────────────────────────────────────────────────
 // Holds faction-first vehicles (≤5). Never evicted — these stay warm for the
 // lifetime of the page so switching factions is instant.
@@ -701,6 +871,33 @@ function evictLruEntry(): void {
   vehicleGroupCache.delete(oldestKey)
 }
 
+// F12: per-faction lighting boost — British and AEF vehicles get 1.3× exposure
+// and hemi intensity so their lighter-toned paint reads as intended in the viewer.
+// Soviet, German, and West German stay at 1.0 (unchanged baseline).
+// Exported for unit testing.
+export const FACTION_LIGHT_BOOST: Record<string, number> = {
+  british: 1.3,
+  aef: 1.3,
+}
+
+// Per-faction badge `teamColour` tint (CoH2 `teamColour` Vector4f applied to
+// the national-insignia sample). In the base game files teamColour is all-zero
+// and the engine overrides it at draw time with the player-SLOT colour — which
+// is unknowable at edit time. These are the faction-REPRESENTATIVE stand-in
+// tints so decal previews read faction-coloured instead of ghost-white.
+// Values sourced from the llm-wiki page `coh2-vehicle-decal-rendering.md`
+// (§ "Faction tint constants"). `west_german` (OKW) shares the German tint per
+// that page ("German/OKW"). This is a representative preview, not literal
+// player-slot parity (assessment §2 #3). Faction keys match VehicleSpec.faction
+// literals: german | west_german | soviet | aef | british.
+export const FACTION_BADGE_TINT: Record<string, [number, number, number]> = {
+  german:      [0.85, 0.76, 0.52],
+  west_german: [0.85, 0.76, 0.52], // OKW shares German tint (wiki: "German/OKW")
+  soviet:      [0.70, 0.15, 0.10],
+  aef:         [0.80, 0.65, 0.40],
+  british:     [0.55, 0.72, 0.40],
+}
+
 export default function Viewport({
   root,
   vehicle,
@@ -728,6 +925,7 @@ export default function Viewport({
   preloadRef,
   faceDecalRef,
   warmupOnly = false,
+  badgeDecalSource,
 }: Props) {
   // Latest preset — held in a ref so the once-only render loop (defined
   // in the init useEffect) can read fresh values without being re-created on
@@ -748,6 +946,13 @@ export default function Viewport({
   const cameraInitialRef = useRef<typeof cameraInitial>(cameraInitial)
   // eslint-disable-next-line react-hooks/refs -- intentional "ref-as-latest-value" pattern
   cameraInitialRef.current = cameraInitial
+  // Latest vehicle faction — updated every render so the heavy preset effect
+  // can always read the current faction without it being in its dep array
+  // (which would cause unnecessary async cubemap re-loads on faction switches).
+  const factionRef = useRef<string | undefined>(vehicle?.faction)
+  // eslint-disable-next-line react-hooks/refs -- intentional "ref-as-latest-value" pattern
+  factionRef.current = vehicle?.faction
+
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const sceneRef = useRef<Scene | null>(null)
@@ -774,6 +979,13 @@ export default function Viewport({
    *  cause of camera-rotation jank. Anything that mutates the canvas must
    *  flip this true. */
   const overlayDirtyRef = useRef(true)
+  /**
+   * Badge decal atlas texture uploaded for the Path-A badge overlay.
+   * Created from `badgeDecalSource` and passed as `uDecalTex` uniform to all
+   * materials that have `__badgeShader` set (i.e. body-diffuse submeshes
+   * with baked TC1/uv2). Disposed and re-created whenever the source changes.
+   */
+  const badgeDecalTexRef = useRef<CanvasTexture | null>(null)
   /** Render-on-demand gate. We render only when something has changed:
    *  the camera moved, an overlay paint happened, an explode tween is
    *  in flight, the model loaded, etc. When the user is idle the loop
@@ -879,6 +1091,14 @@ export default function Viewport({
   const savedControlsTargetRef = useRef<Vector3 | null>(null)
   /** Bounding-box size of the full vehicle, set after each model load. */
   const vehicleSizeRef = useRef<Vector3>(new Vector3(5, 3, 8))
+  /** Resizes the ground slab in X/Z to hug the loaded vehicle's footprint,
+   *  keeping the grass texel density constant. Set inside the slab-build
+   *  effect (which owns the mesh + materials); called from both vehicle-load
+   *  paths (cache-hit + cold build) with the vehicle's world-space XZ extents.
+   *  Null until the slab exists / after teardown. */
+  const slabResizeRef = useRef<((sizeX: number, sizeZ: number) => void) | null>(
+    null,
+  )
 
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
@@ -900,7 +1120,15 @@ export default function Viewport({
       // DEV-only: lets external tools (Claude preview, Playwright) read the
       // canvas via toDataURL/readPixels. Three.js otherwise consumes the
       // swap-chain buffer on present, so screenshots come back blank.
-      preserveDrawingBuffer: import.meta.env.DEV,
+      //
+      // Also forced ON in the offscreen audit / verify capture pipeline
+      // (?audit=1): those drivers read the frame via canvas.toDataURL()
+      // (window.__auditFrame) because webContents.capturePage() is unreliable /
+      // slow on repeated calls in a hidden BrowserWindow. Without a preserved
+      // drawing buffer a production audit build would toDataURL() to black.
+      preserveDrawingBuffer: import.meta.env.DEV ||
+        (typeof location !== 'undefined' &&
+          new URLSearchParams(location.search).get('audit') === '1'),
     })
     // Cap pixel ratio at 1.5 — uncapped DPR on a 2× Retina display means
     // 4× the fragment-shader work per frame for almost no perceptible
@@ -1606,10 +1834,16 @@ export default function Viewport({
     //
     // Circular plinth. CylinderGeometry group order is: 0 = lateral side,
     // 1 = top cap, 2 = bottom cap. The top cap gets the grass texture; the
-    // curved side + bottom get tiled dirt. Radius 4.2 (Ø8.4) circumscribes
-    // even the King Tiger (longest ≈10 native → ~7.2 units at WORLD_SCALE,
-    // half-extent 3.6) with margin so tracks/barrel don't overhang the disc.
-    const SLAB_RADIUS = SLAB_BASE_RADIUS
+    // curved side + bottom get tiled dirt.
+    //
+    // The geometry is AUTHORED at SLAB_BUILT_RADIUS and then rescaled in X/Z
+    // per vehicle by slabResizeRef (installed below) so the pad hugs each
+    // vehicle's real footprint — a StuG sits on a tight disc, an Elefant /
+    // Jagdtiger gets a wider one so its tracks + barrel never overhang. The
+    // resize is idempotent and driven from BOTH load paths (cache-hit + cold
+    // build), so switching vehicles is consistent regardless of which path
+    // served the model.
+    const SLAB_RADIUS = SLAB_BUILT_RADIUS
     const SLAB_HEIGHT = 0.2
     const slabGeo = new CylinderGeometry(SLAB_RADIUS, SLAB_RADIUS, SLAB_HEIGHT, 64)
 
@@ -1656,6 +1890,52 @@ export default function Viewport({
     slab.visible = !!presetRef.current.showGround
     needsRenderRef.current = true
 
+    // ── Per-vehicle pad resize ────────────────────────────────────────────
+    // The slab geometry is authored at SLAB_RADIUS; we scale the MESH in X/Z
+    // so the pad hugs each vehicle's footprint. `topUvRepeat` tracks the grass
+    // top-cap UV repeat that keeps texel density constant as the pad grows —
+    // the CylinderGeometry top cap maps UV 0..1 across its diameter, so world
+    // metres per UV grows linearly with the mesh scale; setting repeat = scale
+    // holds the grass patch size fixed on the ground. Held here (captured by
+    // the season-swap + async hot-swap below) so every map that lands on the
+    // top material inherits the current repeat.
+    let topUvRepeat = 1
+    const applyTopUvRepeat = (tex: Texture) => {
+      tex.repeat.set(topUvRepeat, topUvRepeat)
+      tex.needsUpdate = true
+    }
+    slabResizeRef.current = (sizeX, sizeZ) => {
+      const mesh = groundMeshRef.current
+      if (!mesh) return
+      const wanted = slabRadiusForFootprint(sizeX, sizeZ)
+      const f = wanted / SLAB_RADIUS
+      if (Math.abs(mesh.scale.x - f) < 1e-3 && Math.abs(mesh.scale.z - f) < 1e-3)
+        return // already at this size — no-op (idempotent across load paths)
+      mesh.scale.x = f
+      mesh.scale.z = f
+      // Grass top: keep texel density constant → repeat scales with the pad.
+      topUvRepeat = f
+      const top = slabSummerTexRef.current
+      const topW = slabWinterTexRef.current
+      if (top) applyTopUvRepeat(top)
+      if (topW) applyTopUvRepeat(topW)
+      // Dirt side: circumference grew by f, so bump horizontal tiling to hold
+      // the dirt tile's world size (~1 m) constant around the wider rim.
+      const edgeMap = slabMatEdge.map
+      if (edgeMap) {
+        const SIDE_CIRC = 2 * Math.PI * SLAB_RADIUS * f
+        edgeMap.repeat.set(SIDE_CIRC / 1.0, SLAB_HEIGHT / 1.0)
+        edgeMap.needsUpdate = true
+      }
+      needsRenderRef.current = true
+    }
+    // If a vehicle bbox is already known (e.g. slab rebuilt on root change
+    // after a model was loaded), size the pad to it immediately.
+    {
+      const vs = vehicleSizeRef.current
+      if (vs && (vs.x > 0.01 || vs.z > 0.01)) slabResizeRef.current(vs.x, vs.z)
+    }
+
     // Atomic season swap — flips the slab's .map between cached summer and
     // winter textures (when both exist). Reads the refs dynamically, so once
     // the async loader publishes real summer/winter RGT textures below this
@@ -1666,7 +1946,9 @@ export default function Viewport({
       const summer = slabSummerTexRef.current
       const winter = slabWinterTexRef.current
       if (summer && winter) {
-        mat.map = s === 'winter' ? winter : summer
+        const next = s === 'winter' ? winter : summer
+        applyTopUvRepeat(next) // keep pad texel density after a season flip
+        mat.map = next
         mat.color.setHex(0xffffff)
         mat.needsUpdate = true
         needsRenderRef.current = true
@@ -1750,6 +2032,10 @@ export default function Viewport({
       // ── Hot-swap the real grass into the top material ─────────────────
       if (realSummer) {
         const oldTop = slabMatTop.map
+        // Inherit any pad resize that happened before this async completed so
+        // the freshly-loaded grass keeps constant texel density.
+        applyTopUvRepeat(realSummer)
+        if (realWinter) applyTopUvRepeat(realWinter)
         slabMatTop.map =
           seasonRef.current === 'winter' && realWinter ? realWinter : realSummer
         if (realWinter) slabMatTop.color.setHex(0xffffff)
@@ -1764,6 +2050,14 @@ export default function Viewport({
 
       // ── Hot-swap the dirt into the edge + bottom materials ────────────
       if (dirtTex) {
+        // Match the side tiling to the current pad scale (a resize may have
+        // widened the plinth before this async finished).
+        const padScale = groundMeshRef.current?.scale.x ?? 1
+        dirtTex.repeat.set(
+          (2 * Math.PI * SLAB_RADIUS * padScale) / 1.0,
+          SLAB_HEIGHT / 1.0,
+        )
+        dirtTex.needsUpdate = true
         slabMatEdge.map = dirtTex
         slabMatEdge.color.setHex(0x584636)
         slabMatEdge.needsUpdate = true
@@ -1777,8 +2071,10 @@ export default function Viewport({
 
     return () => {
       cancelled = true
-      // Drop the swap helper so a stale closure can't fire after teardown.
+      // Drop the swap + resize helpers so a stale closure can't fire after
+      // teardown (they hold references to the disposed slab mesh/materials).
       slabSeasonSwapRef.current = null
+      slabResizeRef.current = null
       // Tear down the slab on effect cleanup (root change / unmount).
       // Slab now uses a 6-material array (grass top + dark-earth sides),
       // so handle both single + array cases defensively.
@@ -2086,6 +2382,32 @@ export default function Viewport({
   }, [showCrew, vehicle?.faction, vehicleReadyTick, root])
 
   // =========================================================================
+  // Shared faction-boost helper — applies the per-faction lighting multiplier
+  // to the renderer and the HemisphereLight in lightsGroup.  Both the heavy
+  // preset effect (which rebuilds lights) and the lightweight boost effect
+  // (which handles faction switches) call this, so ANY lights rebuild
+  // automatically re-applies the correct faction multiplier.
+  //
+  // Values are ALWAYS absolute (basePreset × boost), never accumulated from
+  // the current renderer state, so the call is idempotent and drift-free.
+  // =========================================================================
+  const applyFactionBoostNow = useCallback(
+    (renderer: import('three').WebGLRenderer, lightsGroup: import('three').Group, effectivePreset: import('@/lib/scene-settings').ScenePreset) => {
+      const factionBoost = FACTION_LIGHT_BOOST[factionRef.current ?? ''] ?? 1.0
+      renderer.toneMappingExposure = effectivePreset.exposure * factionBoost
+      for (const child of lightsGroup.children) {
+        if ((child as import('three').HemisphereLight).isHemisphereLight) {
+          ;(child as import('three').HemisphereLight).intensity = effectivePreset.hemi.intensity * factionBoost
+          break
+        }
+      }
+    },
+    // factionRef is a stable ref — its .current is read at call time so no
+    // dep needed for faction identity. No other captured values.
+    [],
+  )
+
+  // =========================================================================
   // Active preset → renderer / lights / background / grid / autorotate
   //
   // Tears down the lights group and rebuilds it from the preset spec, swaps
@@ -2109,9 +2431,10 @@ export default function Viewport({
     // applySeasonOverrides() in scene-settings.ts for the data + sources.
     const effectivePreset = applySeasonOverrides(preset, season)
 
-    // Tone mapping + exposure
+    // Tone mapping — set mode now; exposure is set via applyFactionBoostNow
+    // after the lights are rebuilt so ANY dep change (including root/_envName/fog)
+    // that re-runs this effect automatically re-applies the faction multiplier.
     renderer.toneMapping = toneMappingFromMode(effectivePreset.toneMapping)
-    renderer.toneMappingExposure = effectivePreset.exposure
 
     // ── Lights: tear down + rebuild ─────────────────────────────────────
     while (lightsGroup.children.length > 0) {
@@ -2123,7 +2446,7 @@ export default function Viewport({
     const hemi = new HemisphereLight(
       effectivePreset.hemi.sky,
       effectivePreset.hemi.ground,
-      effectivePreset.hemi.intensity,
+      effectivePreset.hemi.intensity,  // faction boost applied by separate effect below
     )
     lightsGroup.add(hemi)
     // Only the In-Game Field preset gets a shadow-casting key.  Studio
@@ -2179,6 +2502,12 @@ export default function Viewport({
         lightsGroup.add(light)
       }
     }
+
+    // ── Faction boost — applied immediately after lights rebuild ─────────
+    // Call the shared helper so root/_envName/fog changes (which only
+    // appear in THIS effect's deps, not the boost effect's) also re-apply
+    // the correct per-faction multiplier after the lights are rebuilt.
+    applyFactionBoostNow(renderer, lightsGroup, effectivePreset)
 
     // ── Grid: swap ──────────────────────────────────────────────────────
     if (sceneGridRef.current) {
@@ -2246,7 +2575,15 @@ export default function Viewport({
 
     // ── Background ──────────────────────────────────────────────────────
     if (preset.background.kind === 'color') {
-      // Solid-colour preset — hide sky sphere, use scene.background directly.
+      // Solid-colour preset (studio_grid / showcase) — hide sky sphere, use
+      // scene.background directly.
+      // Null out the PMREM environment map so vehicles get NO env-map
+      // reflections in these presets.  Without this, switching from
+      // in_game_field (which sets scene.environment = pmremTexture) to
+      // studio/showcase left the old IBL texture still active, causing
+      // env-driven reflections even though studio/showcase use a controlled
+      // direct-light rig that should be reflection-free.
+      scene.environment = null
       if (skyMeshRef.current) skyMeshRef.current.visible = false
       scene.background = new Color(preset.background.hex)
     } else {
@@ -2521,6 +2858,37 @@ export default function Viewport({
     }
   }, [preset, root, season, _envName, fog])
 
+  // =========================================================================
+  // Per-faction lighting boost (F12)
+  //
+  // British and AEF vehicles get 1.3× exposure + hemi intensity so their
+  // lighter-toned paint reads as intended. All other factions stay at 1.0.
+  //
+  // Kept in a SEPARATE effect from the heavy preset effect above so that
+  // switching between factions NEVER re-triggers async cubemap loading or
+  // tears down/rebuilds the full lights rig.
+  //
+  // Values are ALWAYS derived from the base preset constants (absolute, not
+  // accumulated from renderer.toneMappingExposure) so running this effect
+  // any number of times for the same faction/preset/season yields identical
+  // renderer state — no drift, no compounding.
+  // =========================================================================
+  useEffect(() => {
+    const renderer = rendererRef.current
+    const lightsGroup = sceneLightsRef.current
+    if (!renderer || !lightsGroup) return
+
+    // Delegate to the shared helper so the formula is defined exactly once.
+    // effectivePreset is derived from module-level SCENE_PRESETS constants —
+    // these are never mutated, so base exposure and hemi.intensity are always
+    // the same absolute numbers regardless of how many times this runs.
+    const effectivePreset = applySeasonOverrides(preset, season)
+    applyFactionBoostNow(renderer, lightsGroup, effectivePreset)
+
+    needsRenderRef.current = true
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- vehicle?.faction is the only vehicle field read (via factionRef inside applyFactionBoostNow); adding whole vehicle object would re-run on any vehicle property change
+  }, [preset, season, vehicle?.faction, applyFactionBoostNow])
+
   // Env archive override is intentionally disabled — the Three.Sky shader
   // and the clean PBR ground look better than the CoH2 sky/terrain RGTs
   // pulled from ArtEnvironment.sga (which were the source of the "weird
@@ -2610,17 +2978,20 @@ export default function Viewport({
           if (cachedEntry.model) onModelLoaded?.(cachedEntry.model, cachedEntry.diffuseCanvas)
           setModelTick(t => t + 1)
 
-          // On a vehicle SWITCH the pad and camera are intentionally left
-          // UNTOUCHED: the ground pad stays a constant size for every vehicle
-          // and the camera keeps the user's current orbit/zoom — switching
-          // must not resize the pad or move the view. Both are set ONCE, on the
-          // first vehicle, in the build path below. We only frame here in the
-          // unlikely case the very first vehicle of the session landed in this
-          // cache-hit path before the build path ever ran.
+          // On a vehicle SWITCH the CAMERA is intentionally left UNTOUCHED —
+          // it keeps the user's current orbit/zoom and is framed ONCE, on the
+          // first vehicle, in the build path below. The GROUND PAD, however,
+          // resizes to fit each vehicle's footprint (slabResizeRef) so a tight
+          // StuG and a sprawling Elefant both sit correctly on the disc. We
+          // only frame the camera here in the unlikely case the very first
+          // vehicle of the session landed in this cache-hit path before the
+          // build path ever ran.
           {
             const cbox = new Box3().setFromObject(cachedEntry.group)
             const csize = cbox.getSize(new Vector3())
             vehicleSizeRef.current = csize.clone()
+            // Fit the pad to this vehicle's world-space XZ footprint.
+            slabResizeRef.current?.(csize.x, csize.z)
             if (!cameraFramedRef.current) {
               const ccenter = cbox.getCenter(new Vector3())
               // Group is centred by its area-weighted body centroid at X/Z=0,
@@ -2641,6 +3012,38 @@ export default function Viewport({
                 cameraRef.current.updateProjectionMatrix()
               }
               cameraFramedRef.current = true
+            }
+          }
+
+          // GPU pre-warm (instant-open fix): a cpuOnly warmer build has no GPU
+          // state on THIS renderer's context, so the first draw would otherwise
+          // synchronously upload textures + compile shaders — the visible
+          // "half-beat" hitch. Do it here, once per group, BEFORE reveal:
+          // upload textures (fast) and fire a NON-blocking compile on the LIVE
+          // scene (the group is already added; reparenting to a staging scene
+          // would empty the live scene). Mirrors buildVehicleIntoCache's GPU
+          // phase. __gpuWarmed is shared with the idle back-fill so neither
+          // double-compiles.
+          {
+            const warmGroup = cachedEntry.group
+            const wFlag = warmGroup as { __gpuWarmed?: boolean }
+            const wr = rendererRef.current
+            const wc = cameraRef.current
+            if (wr && wc && !wFlag.__gpuWarmed) {
+              warmGroup.traverse(o => {
+                const mesh = o as Mesh
+                if (!mesh.isMesh) return
+                const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+                mats.forEach(m => {
+                  const mat = m as MeshStandardMaterial
+                  ;[mat.map, (mat as MeshPhysicalMaterial).normalMap,
+                    (mat as MeshPhysicalMaterial).roughnessMap,
+                    (mat as MeshPhysicalMaterial).metalnessMap]
+                    .forEach(t => { if (t) wr.initTexture(t) })
+                })
+              })
+              wr.compileAsync(fastScene, wc).catch(() => {})
+              wFlag.__gpuWarmed = true
             }
           }
 
@@ -3281,6 +3684,13 @@ export default function Viewport({
           // looked "darker than it should be" before — we had a flat
           // roughness=0.85 with no gloss-driven highlights.
           roughness: Texture | null
+          // True when this is a 'turrets'-token material whose UV layout
+          // actually maps into the BODY atlas (no dedicated _turrets_dif TSET
+          // was found). False when the turret has its own separate atlas (e.g.
+          // stug_iii_turrets_dif) — in that case the overlay must NOT be bound
+          // to the turret mesh because the overlay is painted in body-UV space
+          // and the turret UVs index a completely different atlas layout.
+          sharesBodyAtlas: boolean
         }
         const getTexturesForMaterial = async (
           materialName: string | null,
@@ -3405,15 +3815,21 @@ export default function Viewport({
           // the body's maps as a benign visual upgrade.
           const bodyCache = texCache.get('__body__') as MaterialTextures | undefined
           const isNonBody = token !== ''
-          // Turret shares the body diffuse atlas (no dedicated tiger_turret_dif); its
-          // UVs map into the body atlas, so fall back to body diffuse rather than the
-          // flat olive fallback. Treads/wreck still stay null (their UVs tile).
-          const sharesBodyAtlas = token === 'turrets'
+          // sharesBodyAtlas: true only when this IS a turrets-token material AND
+          // no dedicated turret atlas was found (difPath === null). The 59 vehicles
+          // whose turret UVs map into the body atlas get difPath=null here, so they
+          // fall back to the body diffuse and receive the overlay correctly. The
+          // stug_iii superstructure has its own stug_iii_turrets_dif TSET, so
+          // difPath is non-null → sharesBodyAtlas=false → overlay is NOT bound to
+          // it (prevents the garbled UV mismatch regression introduced when
+          // __usesBodyDiffuse was set unconditionally for all turrets tokens).
+          const sharesBodyAtlas = token === 'turrets' && difPath === null
           const result: MaterialTextures = {
             diffuse: dTex ?? ((isNonBody && !sharesBodyAtlas) ? null : (bodyCache?.diffuse ?? null)),
             normal: nTex ?? bodyCache?.normal ?? null,
             specular: sTex ?? bodyCache?.specular ?? null,
             roughness: gTex ?? bodyCache?.roughness ?? null,
+            sharesBodyAtlas,
           }
           texCache.set(cacheKey, result)
           return result
@@ -3475,7 +3891,22 @@ export default function Viewport({
             map: subDiffuse,
             normalMap: subNormal,
             roughnessMap: subRoughness,
+            // CoH2's `_spc` is a spec/gloss RGB specular texture: it carries
+            // BOTH a per-pixel reflection strength AND a colour/tint (warmer
+            // metal on wear edges, cooler on painted panels). Three.js splits
+            // these into two slots, so we bind the same `_spc` texture to both:
+            //   • specularIntensityMap — scalar reflection strength (green ch.)
+            //   • specularColorMap     — RGB tint of the specular lobe
+            // Binding it to specularColorMap as well recovers the authored hue
+            // that the scalar-only bind discarded, so painted steel stops
+            // reading neutral-white in its highlights. The texture already
+            // decodes as RGBA; no separate decode is needed. Minor gamma note:
+            // specularColorMap is read as linear here (no sRGB re-decode) — the
+            // resulting tint error is visually minor vs. the flat-white loss it
+            // fixes (assessment §2 #2, naive single-texture variant).
             specularIntensityMap: subSpec,
+            specularColorMap: subSpec,
+            specularColor: new Color(0xffffff),
             color: subDiffuse ? 0xffffff : fallbackColor,
             metalness: 0,
             // If we have a roughness map we want it to fully drive roughness;
@@ -3521,8 +3952,19 @@ export default function Viewport({
             // Mark whether this submesh uses the BODY diffuse — only those
             // get the editable overlay rebound onto them. Tracks/wheels/wrecks
             // keep their own (non-editable) tile/wreck textures.
+            // For turrets: only bind the overlay when the turret actually SHARES
+            // the body atlas (no dedicated _turrets_dif TSET). Vehicles like
+            // stug_iii that have a separate stug_iii_turrets_dif atlas must NOT
+            // receive the body-UV-space overlay (their UVs index a different
+            // layout → garbled texture). tex.sharesBodyAtlas carries the
+            // per-submesh result from getTexturesForMaterial where difPath is known.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- custom property on Three.js MeshStandardMaterial to track body-diffuse binding
-          ;(mat as any).__usesBodyDiffuse = isBodyMaterial(sub.materialName)
+          ;(mat as any).__usesBodyDiffuse = isBodyMaterial(sub.materialName) || tex.sharesBodyAtlas
+          // Path-A badge overlay: inject onBeforeCompile shader on all body-diffuse
+          // submeshes so the badge atlas can be sampled through uv2 (TEXCOORD1).
+          if ((mat as any).__usesBodyDiffuse) { // eslint-disable-line @typescript-eslint/no-explicit-any
+            injectBadgeShader(mat)
+          }
           // Season tagging — paintable atlases (body, turret, panels) get
           // re-skinned by applySeasonToGroup on Summer↔Winter toggle. Tread/
           // wheel/wreck atlases are season-invariant so stay untagged.
@@ -3534,6 +3976,14 @@ export default function Viewport({
           ;(mat as any).__summerMap = subDiffuse
           const m = new Mesh(sub.geometry, mat)
           m.name = sub.name
+          // Path-A badge gating: mark whether this submesh's TC1 (uv2) is a
+          // tight badge-atlas cluster. Only tight-TC1 submeshes (hatches,
+          // fittings, skirts) receive the badge decal overlay — wide-TC1 body
+          // polygons (hull, turret shell, barrel) must be excluded to prevent
+          // the full badge atlas from smearing across the surface when an
+          // installed pack supplies a non-transparent atlas.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- custom badge-UV flag on Three.js Mesh
+          ;(m as any).__hasBadgeUv = (mat as any).__usesBodyDiffuse && hasTightBadgeUv(sub.geometry)
           // Vehicle submeshes both cast AND receive shadows.  Cast → the
           // chassis throws the deep contact shadow onto the ground that
           // the in-game render shows under every vehicle.  Receive →
@@ -3686,6 +4136,22 @@ export default function Viewport({
         // immediately. Guard against the group being removed/cancelled before
         // the async compile resolves. compileAsync is a no-op if
         // KHR_parallel_shader_compile is unavailable (falls back to sync).
+        //
+        // S6 FIX: compile on the live scene rather than a staging scene.
+        // The previous approach called `stagingScene.add(capturedGroup)` which
+        // REPARENTS the group out of the live scene (Three.js Object3D can only
+        // have one parent). The group was then temporarily absent from the live
+        // scene during the async compileAsync call (~1-2 s). Any render that
+        // fired in that window — such as the grass-RGT hot-swap (~2 s after
+        // mount) setting needsRenderRef.current = true — would render an empty
+        // scene, making the vehicle disappear. The re-add at the end recovered
+        // it, but only AFTER the blank frame had already been displayed.
+        //
+        // Fix: pass sceneRef.current directly to compileAsync. The group is
+        // already in the live scene at this point (added above), so Three.js
+        // compiles the same materials — the only difference is the group never
+        // leaves the live scene during compilation, so no render window exists
+        // where the vehicle is absent.
         if (rendererRef.current && cameraRef.current) {
           const renderer = rendererRef.current
           const camera = cameraRef.current
@@ -3695,23 +4161,13 @@ export default function Viewport({
             if (cancelled) return
             // Check the group is still in the live scene (not evicted/replaced)
             if (!sceneRef.current?.children.includes(capturedGroup)) return
-            const stagingScene = new Scene()
-            stagingScene.environment = sceneRef.current?.environment ?? null
-            stagingScene.add(capturedGroup)
+            const liveScene = sceneRef.current
             try {
-              await renderer.compileAsync(stagingScene, camera)
+              await renderer.compileAsync(liveScene, camera)
             } catch (e) {
               console.warn('[viewport] compileAsync failed (non-fatal):', e)
             }
-            stagingScene.remove(capturedGroup)
-            // CRITICAL: stagingScene.add() above reparented the group OUT of the
-            // live scene (an Object3D can only have one parent), and the remove()
-            // just orphaned it. Re-attach to the live scene or the vehicle never
-            // renders — it vanishes one microtask after scene.add(group) above.
             if (cancelled) return
-            if (sceneRef.current && capturedGroup.parent !== sceneRef.current) {
-              sceneRef.current.add(capturedGroup)
-            }
             if (!sceneRef.current?.children.includes(capturedGroup)) return
             // Force synchronous GPU texture upload for all textures in the group.
             capturedGroup.traverse(o => {
@@ -3735,17 +4191,13 @@ export default function Viewport({
         const finalBox = new Box3().setFromObject(group)
         const finalSize = finalBox.getSize(new Vector3())
 
-        // ── CONSTANT ground pad ───────────────────────────────────────────
-        // Every vehicle sits on the SAME pad size (scale 1 = SLAB_BASE_RADIUS,
-        // sized to fit the largest vehicle). Previously the pad was fitted to
-        // each vehicle's footprint, so it visibly resized on every switch — the
-        // user wants the pad to stay consistent across all vehicles.
-        const slabMesh = groundMeshRef.current
-        if (slabMesh) {
-          // Constant pad, reduced a quarter from the full base radius (0.75).
-          slabMesh.scale.x = 0.75
-          slabMesh.scale.z = 0.75
-        }
+        // Ground pad: resize to hug THIS vehicle's world-space XZ footprint so
+        // small vehicles sit on a tight disc and the largest (Elefant /
+        // Jagdtiger / Panzerwerfer) get a wider pad their tracks + barrel fit
+        // on. The slab is centred at X/Z=0 (position untouched); only its X/Z
+        // scale + grass/dirt UV density change. slabResizeRef is idempotent, so
+        // hitting this after the cache-hit path already sized it is a no-op.
+        slabResizeRef.current?.(finalSize.x, finalSize.z)
 
         // Target the body's centroid Y (which gives the best orbit pivot),
         // at X/Z=0 (the pad centre, where the model is now guaranteed to sit).
@@ -3915,6 +4367,91 @@ export default function Viewport({
     overlayDirtyRef.current = true
     needsRenderRef.current = true
   }, [overlayVersion])
+
+  // =========================================================================
+  // Path-A badge decal overlay via TC1 (uv2) shader uniforms
+  //
+  // When badgeDecalSource changes, create/update the badge atlas CanvasTexture
+  // and push it to all vehicle materials that have __badgeShader set.
+  // Badge texture is uploaded with flipY=false because TC1 V-coords are raw
+  // D3D values (V=0.039..0.086 = near-top of atlas). See PATH-A-PLAN.md §3.
+  // =========================================================================
+  useEffect(() => {
+    // Dispose previous badge texture
+    if (badgeDecalTexRef.current) {
+      badgeDecalTexRef.current.dispose()
+      badgeDecalTexRef.current = null
+    }
+
+    let tex: CanvasTexture | null = null
+
+    if (badgeDecalSource) {
+      if (typeof badgeDecalSource === 'string') {
+        // DataURL from installed pack — load into an Image then canvas
+        const img = new Image()
+        img.onload = () => {
+          const cv = document.createElement('canvas')
+          cv.width = img.width || 512
+          cv.height = img.height || 512
+          cv.getContext('2d')!.drawImage(img, 0, 0)
+          const t = new CanvasTexture(cv)
+          t.flipY = false           // D3D atlas: V=0 = top, no flip needed
+          t.colorSpace = SRGBColorSpace
+          badgeDecalTexRef.current = t
+          applyBadgeUniforms(t, 1.0)
+        }
+        img.src = badgeDecalSource
+        // Return early — applyBadgeUniforms runs in img.onload
+        return
+      } else {
+        // HTMLCanvasElement from local pack rasterisation
+        tex = new CanvasTexture(badgeDecalSource)
+        tex.flipY = false
+        tex.colorSpace = SRGBColorSpace
+        badgeDecalTexRef.current = tex
+        applyBadgeUniforms(tex, 1.0)
+      }
+    } else {
+      // No badge source — hide overlay
+      applyBadgeUniforms(null, 0.0)
+    }
+
+    function applyBadgeUniforms(badgeTex: CanvasTexture | null, alpha: number) {
+      if (!meshGroupRef.current) return
+      // Resolve the CURRENT vehicle's faction badge tint. factionRef is a stable
+      // ref kept in sync with vehicle?.faction every render (see factionRef
+      // declaration), so it reflects the live faction without adding vehicle to
+      // this effect's deps. Unknown/missing faction → white (no tint, prior
+      // behaviour). This drives the CoH2 `teamColour` badge tint (assessment §2 #3).
+      const tintRgb = FACTION_BADGE_TINT[factionRef.current ?? ''] ?? [1, 1, 1]
+      meshGroupRef.current.traverse(o => {
+        const mesh = o as Mesh
+        const mat = mesh.material as any // eslint-disable-line @typescript-eslint/no-explicit-any
+        // Only composite badge on submeshes with a tight TC1 badge-atlas cluster.
+        // Wide-TC1 body polygons (hull shell, turret body, barrel) must stay at
+        // alpha=0 to prevent the installed-pack atlas from smearing across the
+        // entire surface. __hasBadgeUv is set at model-build time in buildVehicleIntoCache.
+        const isTight = (mesh as any).__hasBadgeUv // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        // Always update __badgePending so onBeforeCompile picks up the current state
+        // even when the shader hasn't compiled yet (lazy first-render compilation).
+        if (mat?.__badgePending) {
+          mat.__badgePending.uDecalTex   = badgeTex
+          mat.__badgePending.uDecalAlpha = isTight ? alpha : 0.0
+          ;(mat.__badgePending.uDecalTint as Color).setRGB(tintRgb[0], tintRgb[1], tintRgb[2])
+        }
+
+        // Also update live shader uniforms if the shader has already compiled.
+        if (!mat?.__badgeShader) return
+        mat.__badgeShader.uniforms.uDecalTex.value = badgeTex
+        mat.__badgeShader.uniforms.uDecalAlpha.value = isTight ? alpha : 0.0
+        // Faction team-colour tint on the badge sample (CoH2 `teamColour`).
+        ;(mat.__badgeShader.uniforms.uDecalTint.value as Color).setRGB(tintRgb[0], tintRgb[1], tintRgb[2])
+      })
+      needsRenderRef.current = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- factionRef.current is read inside applyBadgeUniforms; vehicle?.faction is listed so the badge tint re-applies on a faction switch without pulling the whole vehicle object into deps
+  }, [badgeDecalSource, modelTick, vehicle?.faction]) // modelTick: re-apply when new model loads; faction: re-tint badge on faction switch
 
   // =========================================================================
   // Selected part / explodeAll → smart explode directions + isolate logic
@@ -4489,8 +5026,9 @@ export default function Viewport({
     }
     if (intact.length === 0) return // unsupported mesh format — skip silently
 
-    const texCache2 = new Map<string, { diffuse: import('three').Texture | null; normal: import('three').Texture | null; specular: import('three').Texture | null; roughness: import('three').Texture | null }>()
-    if (diffuse) texCache2.set('__body__', { diffuse, normal: normalTex, specular: null, roughness: null })
+    const texCache2 = new Map<string, { diffuse: import('three').Texture | null; normal: import('three').Texture | null; specular: import('three').Texture | null; roughness: import('three').Texture | null; sharesBodyAtlas: boolean }>()
+    // __body__ is never a turrets-token material, so sharesBodyAtlas=false for it.
+    if (diffuse) texCache2.set('__body__', { diffuse, normal: normalTex, specular: null, roughness: null, sharesBodyAtlas: false })
 
     const tsetsLower = model.textureSets.map(t => t.replace(/\\/g, '/').toLowerCase())
     const findTset2 = (predicate: (p: string) => boolean): string | null => {
@@ -4602,18 +5140,19 @@ export default function Viewport({
       ])
       const bodyCache2 = texCache2.get('__body__')
       const isNonBody = token !== ''
-      // Turret shares the body diffuse atlas (e.g. Tiger I has no dedicated
-      // tiger_turret_dif); its UVs map into the body atlas, so fall back to the
-      // body diffuse rather than the flat olive (0x9aa18b) fallback. Treads /
-      // wreck stay null (their UVs tile a small texture). MUST mirror the live
-      // path (getTexturesForMaterial) — without it, warmed turrets render
-      // untextured pale-green while the live build looks correct.
-      const sharesBodyAtlas = token === 'turrets'
+      // Mirrors the live path (getTexturesForMaterial): sharesBodyAtlas is true
+      // only for turrets-token materials where NO dedicated _turrets_dif TSET
+      // exists (difPath === null). The 59 vehicles whose turret UVs map into the
+      // body atlas get difPath=null → fall back to body diffuse + receive the
+      // overlay. The stug_iii superstructure finds stug_iii_turrets_dif so
+      // difPath is non-null → sharesBodyAtlas=false → no garbled-UV overlay.
+      const sharesBodyAtlas = token === 'turrets' && difPath === null
       const result = {
         diffuse: dTex ?? ((isNonBody && !sharesBodyAtlas) ? null : (bodyCache2?.diffuse ?? null)),
         normal: nTex ?? bodyCache2?.normal ?? null,
         specular: sTex ?? bodyCache2?.specular ?? null,
         roughness: gTex ?? bodyCache2?.roughness ?? null,
+        sharesBodyAtlas,
       }
       texCache2.set(cacheKey, result)
       return result
@@ -4639,7 +5178,16 @@ export default function Viewport({
         ...(subToken === 'tread' ? { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 } : {}),
       })
       if (tex.normal) mat.normalScale = new Vector2(1.0, -1.0)
-      ;(mat as any).__usesBodyDiffuse = tokenFor2(sub.materialName ?? sub.name) === '' // eslint-disable-line @typescript-eslint/no-explicit-any
+      // Mirror the live path: for turrets, only bind the overlay when the turret
+      // actually shares the body atlas (no dedicated _turrets_dif TSET found).
+      // tex.sharesBodyAtlas is set by getTexForMat2 when difPath===null for a
+      // turrets-token material (see sharesBodyAtlas comment above).
+      ;(mat as any).__usesBodyDiffuse = tokenFor2(sub.materialName ?? sub.name) === '' || tex.sharesBodyAtlas // eslint-disable-line @typescript-eslint/no-explicit-any
+      // Path-A badge overlay: inject onBeforeCompile shader on all body-diffuse
+      // submeshes (mirrors the live build path).
+      if ((mat as any).__usesBodyDiffuse) { // eslint-disable-line @typescript-eslint/no-explicit-any
+        injectBadgeShader(mat)
+      }
       // Season tagging — mirrors the live build path so warmed cache-hit
       // groups re-skin identically on Summer↔Winter toggle.
       ;(mat as any).__seasonPaint = subToken === '' || subToken === 'turrets' || subToken === 'panels' // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -4647,6 +5195,10 @@ export default function Viewport({
       ;(mat as any).__summerMap = tex.diffuse // eslint-disable-line @typescript-eslint/no-explicit-any
       const m = new Mesh(sub.geometry, mat)
       m.name = sub.name
+      // Path-A badge gating (mirrors live build path): only tight-TC1 submeshes
+      // receive the badge overlay. Wide-TC1 body polygons stay at alpha=0.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- custom badge-UV flag on Three.js Mesh
+      ;(m as any).__hasBadgeUv = (mat as any).__usesBodyDiffuse && hasTightBadgeUv(sub.geometry)
       m.castShadow = true
       m.receiveShadow = true
       group.add(m)
@@ -4832,6 +5384,18 @@ export default function Viewport({
       const r = rendererRef.current
       const c = cameraRef.current
       if (!r || !c) return // renderer gone (unmounted)
+      // I1 FIX: staging.add() reparents the group out of the live scene
+      // (Three.js groups have exactly one parent). If this group is currently
+      // displayed, moving it into a staging scene empties the live scene for
+      // the duration of compileAsync (~1-2 s), causing the tank to disappear.
+      // Skip the currently-displayed group entirely — the live run() path
+      // already compiled it on the live scene via compileAsync(sceneRef, camera).
+      if (entry.group === meshGroupRef.current) {
+        // Mark so the pump doesn't revisit it on the next modelTick.
+        ;(entry.group as { __gpuWarmed?: boolean }).__gpuWarmed = true
+        scheduleNext(pump)
+        return
+      }
       const staging = new Scene()
       staging.add(entry.group)
       r.compileAsync(staging, c).then(() => {

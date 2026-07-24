@@ -102,6 +102,13 @@ interface WorkshopItem {
   sgaPath: string | null
 }
 
+interface InstalledPack {
+  id: string
+  name: string
+  type: 'skin' | 'decal' | 'faceplate' | 'unknown'
+  path: string
+}
+
 interface StockArchive {
   id: string
   path: string
@@ -199,8 +206,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // items as seed templates when creating a new project.
   detectCoh2Workshop: (): Promise<string | null> => ipcRenderer.invoke('detect-coh2-workshop'),
 
-  listWorkshopItems: (root: string): Promise<WorkshopItem[]> =>
+  listWorkshopItems: (root?: string): Promise<WorkshopItem[]> =>
     ipcRenderer.invoke('list-workshop-items', root),
+
+  // Enumerate installed skin + decal packs by reading the .info name from
+  // each SGA under mods/skins/, mods/decals/subscriptions/, and
+  // mods/faceplates/subscriptions/. Falls back to auto-detecting the mods
+  // root when modsRoot is omitted.
+  listInstalledPacks: (modsRoot?: string): Promise<InstalledPack[]> =>
+    ipcRenderer.invoke('list-installed-packs', modsRoot),
 
   // Enumerate the stock CoH2 archives that ship with the base game.
   // Reads <installRoot>/CoH2/Archives/*.sga and returns id + path + size
@@ -210,6 +224,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('list-stock-archives', installRoot),
 
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('pick-directory'),
+
+  // Returns process.resourcesPath so the renderer can resolve extraResources
+  // paths (e.g. keys/template_0001.sga bundled outside the asar).
+  getResourcesPath: (): Promise<string> => ipcRenderer.invoke('get-resources-path'),
 
   // File system
   readFile: (p: string): Promise<ArrayBuffer> => ipcRenderer.invoke('read-file', p),

@@ -5,11 +5,9 @@
  * vanilla diffuse texture, one faction at a time. Left/right arrows switch
  * tanks. Drag-to-rotate via Viewport's OrbitControls.
  *
- * UV approximation: All heavy tanks use the King Tiger hullSideRight rect
- * (896, 1152, 512, 512) in the 2048² overlay canvas as the badge zone.
- * This is correct for the King Tiger. For Tiger, IS-2, Pershing, and Churchill
- * it is an approximate placement — exact per-tank UV region JSON files are a
- * future refinement (see FUTURE: add vehicle-uv-regions JSON for each tank).
+ * UV resolution: badge placement is looked up per-vehicle from
+ * vehicle-uv-registry.ts (Wikinger ground-truth JSON overrides; falls back
+ * to DEFAULT_BADGE_RECT for vehicles without a hand-authored entry).
  */
 
 import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react'
@@ -20,9 +18,13 @@ import { FACTION_LABELS, FACTION_COLORS } from '@/lib/factions'
 import { compositePartLayers } from '@/lib/atlas-parts'
 import { SCENE_PRESETS } from '@/lib/scene-settings'
 import type { VehicleSpec } from '@/lib/vehicles'
+import { resolveDecalUvRect, DEFAULT_BADGE_RECT } from '@/lib/vehicle-uv-registry'
 
 // Lazy-import Viewport to avoid bundling Three.js into the main chunk.
 const Viewport = React.lazy(() => import('@/components/Viewport'))
+// Degrades to an inline placeholder instead of white-screening on machines
+// with no/broken WebGL.
+import ViewportGuard from '@/components/ViewportGuard'
 
 // Heavy tank per faction (verified against src/lib/vehicles.ts).
 const HEAVY_TANK_IDS: Record<DecalFaction, string> = {
@@ -37,10 +39,10 @@ const HEAVY_TANK_IDS: Record<DecalFaction, string> = {
 const CAROUSEL_ORDER: DecalFaction[] = ['german', 'west_german', 'soviet', 'aef', 'british']
 
 // Badge placement rect in the 2048² overlay canvas.
-// Verified correct for King Tiger (king_tiger_sdkfz_182.json hullSideRight).
-// Used as an approximation for all other heavy tanks.
-// FUTURE: load per-tank UV region JSON and use the actual rect per vehicle.
-const BADGE_RECT = { x: 896, y: 1152, w: 512, h: 512 }
+// Resolved per-vehicle from the shared vehicle-uv-registry (JSON overrides
+// with Wikinger ground-truth rects; falls back to DEFAULT_BADGE_RECT for
+// vehicles without a hand-authored entry).
+// NOTE: resolved lazily per buildOverlay call since vehicle changes with faction.
 
 // Hardcoded approximate RGB tint values per faction.
 // The engine applies the real faction tint at runtime; these are preview-only.
@@ -105,13 +107,20 @@ export default function AtlasPreview3D({ project, activePartIndex, installRoot }
       // Draw vanilla diffuse as base.
       ctx.drawImage(vanilla, 0, 0, 2048, 2048)
 
+      // Resolve the badge rect for the current vehicle from the shared registry.
+      // Falls back to DEFAULT_BADGE_RECT for vehicles without a JSON override.
+      const vehicleId = vehicle ? vehicle.id : 'king_tiger_sdkfz_182'
+      const badgeRect = resolveDecalUvRect(vehicleId) ?? DEFAULT_BADGE_RECT
+
       // Draw the part mask tinted with faction color into the badge rect.
       const maskCanvas = document.createElement('canvas')
-      maskCanvas.width = BADGE_RECT.w
-      maskCanvas.height = BADGE_RECT.h
+      maskCanvas.width = badgeRect.w
+      maskCanvas.height = badgeRect.h
       const mCtx = maskCanvas.getContext('2d')!
 
-      // Resize part RGBA to badge rect size.
+      // Resize part RGBA to badge rect size with high-quality smoothing
+      // (matches the verified Editor bake path: rasteriseDecal + supersample
+      // downscale with imageSmoothingQuality 'high').
       const partCanvas = document.createElement('canvas')
       partCanvas.width = def.region.w
       partCanvas.height = def.region.h
@@ -121,11 +130,13 @@ export default function AtlasPreview3D({ project, activePartIndex, installRoot }
         0,
         0
       )
-      mCtx.drawImage(partCanvas, 0, 0, BADGE_RECT.w, BADGE_RECT.h)
+      mCtx.imageSmoothingEnabled = true
+      mCtx.imageSmoothingQuality = 'high'
+      mCtx.drawImage(partCanvas, 0, 0, badgeRect.w, badgeRect.h)
 
       // Apply faction tint (multiply-ish): tint opaque pixels with faction color.
       const [tr, tg, tb] = FACTION_RGB[currentFaction]
-      const imgData = mCtx.getImageData(0, 0, BADGE_RECT.w, BADGE_RECT.h)
+      const imgData = mCtx.getImageData(0, 0, badgeRect.w, badgeRect.h)
       const px = imgData.data
       for (let i = 0; i < px.length; i += 4) {
         if (px[i + 3] > 10) {  // only opaque pixels
@@ -137,14 +148,14 @@ export default function AtlasPreview3D({ project, activePartIndex, installRoot }
       mCtx.putImageData(imgData, 0, 0)
 
       // Composite tinted mask onto overlay at badge rect.
-      ctx.drawImage(maskCanvas, BADGE_RECT.x, BADGE_RECT.y, BADGE_RECT.w, BADGE_RECT.h)
+      ctx.drawImage(maskCanvas, badgeRect.x, badgeRect.y, badgeRect.w, badgeRect.h)
 
       setOverlayCanvas(overlay)
       setOverlayVersion(v => v + 1)
     } finally {
       setBaking(false)
     }
-  }, [project, activePartIndex, currentFaction])
+  }, [project, activePartIndex, currentFaction, vehicle])
 
   // Rebuild overlay when project/part/faction changes.
   useEffect(() => {
@@ -207,22 +218,24 @@ export default function AtlasPreview3D({ project, activePartIndex, installRoot }
 
       {/* 3D Viewport */}
       <Suspense fallback={<div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.3)' }}>Loading...</div>}>
-        <Viewport
-          root={installRoot}
-          vehicle={vehicle}
-          overlayCanvas={overlayCanvas}
-          overlayVersion={overlayVersion}
-          onModelLoaded={handleModelLoaded}
-          selectedPart={null}
-          explodeAll={false}
-          season="summer"
-          envArchive={null}
-          envName=""
-          controlsEnabled={true}
-          preset={scenePreset}
-          showCrew={false}
-          showDestroyed={false}
-        />
+        <ViewportGuard label="Atlas preview">
+          <Viewport
+            root={installRoot}
+            vehicle={vehicle}
+            overlayCanvas={overlayCanvas}
+            overlayVersion={overlayVersion}
+            onModelLoaded={handleModelLoaded}
+            selectedPart={null}
+            explodeAll={false}
+            season="summer"
+            envArchive={null}
+            envName=""
+            controlsEnabled={true}
+            preset={scenePreset}
+            showCrew={false}
+            showDestroyed={false}
+          />
+        </ViewportGuard>
       </Suspense>
     </div>
   )

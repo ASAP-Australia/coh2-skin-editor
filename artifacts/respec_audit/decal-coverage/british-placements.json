@@ -1,0 +1,178 @@
+{
+  "_meta": {
+    "verdict": "TEMPLATE-ONLY (shared Churchill UV space)",
+    "tanksurface_sbs_md5": "f406640af04c81bfa50b3bda3fa9339f",
+    "tanksurface_graph_name": "churchill",
+    "tanksurface_mesh_refs": ["churchill_allposed.obj", "churchill_default.obj"],
+    "tanksurface_shared_by": ["cromwell", "comet", "sexton", "shermanfirefly", "valentine"],
+    "centaur_tanksurface_md5": "a7379bf06e2db75994b0d88d5530c332",
+    "centaur_tanksurface_graph_name": "churchill",
+    "centaur_tanksurface_mesh_refs": ["churchill_allposed.obj", "churchill_default.obj"],
+    "uv_space": "Churchill atlas UV (tanksurface.sbs 'churchill' graph bakes onto churchill_allposed.obj / churchill_default.obj for ALL vehicles that include it)",
+    "coord_system_note": "Substance Designer 'transformation 2D' node: offset=[u,v] in normalised UV units ×100 approximately; matrix22=[a,b,c,d] is the 2×2 rotation+scale matrix. The coordinate range observed: offset roughly [-35..+35], matrix22 diagonal magnitudes 17–78. All coords are in the Churchill UV atlas, NOT in each vehicle's own UV space.",
+    "per_vehicle_top_level_transforms": {
+      "note": "Each top-level per-vehicle .sbs DOES contain distinct per-vehicle decal transform values (confirmed), but these are placed onto each vehicle's OWN mesh UV (armouredcar→PaintPosed.obj, valentine→valentine_mesh.obj, sexton→sexton.obj, etc.). They are SEPARATE layers from tanksurface. There is no contradiction: BOTH exist—tanksurface carries Churchill-UV decals, and the top-level graph carries vehicle-own-UV decals for the additional decal variants unique to that vehicle.",
+      "armouredcar_own_uv_obj": "PaintPosed.obj / RefPosed.obj",
+      "centaur_own_uv_obj": "centaur_aa.obj",
+      "churchill_own_uv_obj": "churchill_allposed.obj / churchill_default.obj",
+      "comet_own_uv_obj": "comet_retexture.obj",
+      "cromwell_own_uv_obj": "cromwell_geo.obj / cromwell_geo_updated_uvs.obj",
+      "sexton_own_uv_obj": "sexton.obj / sexton_new_uvs.obj",
+      "shermanfirefly_own_uv_obj": "sherman_firefly.obj",
+      "valentine_own_uv_obj": "valentine_mesh.obj"
+    },
+    "folder_to_vehicle_id": {
+      "armouredcar": "aec_armoured_car",
+      "centaur":     "centaur",
+      "churchill":   "churchill",
+      "comet":       "comet",
+      "cromwell":    "cromwell",
+      "sexton":      "sexton",
+      "shermanfirefly": "sherman_firefly",
+      "valentine":   "valentine"
+    },
+    "conversion_math_note": "NOT applicable — UV space is Churchill-atlas-only in tanksurface. Converting per-vehicle top-level transforms requires knowing each vehicle's own UV atlas dimensions and obj UV layout, which varies per vehicle. No uniform conversion formula exists."
+  },
+  "tanksurface_shared_decal_transforms": {
+    "_note": "These live inside tanksurface.sbs (graph='churchill'), which is bitwise-identical across cromwell/comet/sexton/shermanfirefly/valentine (MD5 f406640af04c81bfa50b3bda3fa9339f). Centaur has a different MD5 but identical graph structure and identical transform values (verified above). All place decals onto Churchill UV atlas.",
+    "british_crest_01": [
+      { "transformNodeUid": "1220501488", "offset": [0.840179, 10.8533], "matrix22": [23.6126, 0, 0, 23.6126] }
+    ],
+    "british_decal_heavy_01": [
+      { "transformNodeUid": "1220505455", "offset": [-5.73255, -15.0657], "matrix22": [-40.1499, -4.13553e-6, 3.51002e-6, -47.3049] },
+      { "transformNodeUid": "1220526007", "offset": [8.33615, -3.43216], "matrix22": [-1.75501e-6, 47.3049, -40.1499, -2.06777e-6] },
+      { "transformNodeUid": "1220527169", "offset": [-8.83533, -21.6736], "matrix22": [2.2262e-6, -47.3049, 40.1499, 3.73128e-6] },
+      { "transformNodeUid": "1220563115", "offset": [-13.8505, 19.4873], "matrix22": [43.3924, 6.26738e-6, -4.30273e-6, 51.1253] }
+    ],
+    "british_crest_02": [
+      { "transformNodeUid": "1220507808", "offset": [-10.9719, -9.7312], "matrix22": [-44.5823, 0, 0, -44.5823] }
+    ],
+    "british_canada_bars": [
+      { "transformNodeUid": "1220515936", "offset": [3.74346, 1.49336], "matrix22": [0, -17.4802, 17.4802, 0] },
+      { "transformNodeUid": "1220518253", "offset": [3.74346, -8.19563], "matrix22": [0, -17.4802, 17.4802, 0] },
+      { "transformNodeUid": "1220524155", "offset": [-2.77547, 12.8176], "matrix22": [-17.4802, 0, 0, -37.1264] }
+    ],
+    "british_blackdiamond": [
+      { "transformNodeUid": "1220521937", "offset": [-7.12789, -13.2211], "matrix22": [-41.4743, 0, 0, -41.4743] }
+    ]
+  },
+  "per_vehicle_top_level_decal_transforms": {
+    "_note": "Transforms extracted from each vehicle's own top-level .sbs graph. Each vehicle references its own mesh OBJ (distinct per vehicle), so these coords are in that vehicle's own UV space — NOT Churchill UV. Values are genuinely distinct per vehicle.",
+    "valentine": {
+      "vehicleId": "valentine",
+      "graphName": "valentine_command",
+      "ownMesh": "valentine_mesh.obj",
+      "placements": [
+        { "decalName": "british_blackdiamond", "offset": [-0.963071, 12.3487], "matrix22": [59.3537, 0, 0, 60.6861] },
+        { "decalName": "british_decal_medium_01", "offset": [-4.36664, -5.00927], "matrix22": [-33.9496, 3.23697e-6, -2.96797e-6, -37.0267] },
+        { "decalName": "british_crest_03", "offset": [17.7226, 3.2976], "matrix22": [38.23, 0, 0, 37.5274] },
+        { "decalName": "british_decal_medium_01", "offset": [14.5842, 3.6687], "matrix22": [39.1622, 5.07249e-6, -3.88327e-6, 41.3782] },
+        { "decalName": "british_decal_a_squadron_red", "offset": [12.494, -5.64613], "matrix22": [0.198518, 44.3457, -43.0759, 0.20437] },
+        { "decalName": "british_crest_02", "offset": [5.97926, -12.7074], "matrix22": [-66.5431, 1.0891e-5, -1.16348e-5, -62.2891] },
+        { "decalName": "british_decal_a_squadron_red", "offset": [6.16269, -1.87768], "matrix22": [-1.98204, 47.7856, -50.0212, -1.89346] }
+      ]
+    },
+    "armouredcar": {
+      "vehicleId": "aec_armoured_car",
+      "graphName": "aec_armouredcar_page",
+      "ownMesh": "PaintPosed.obj",
+      "placements": [
+        { "decalName": "british_decal_medium_02", "offset": [4.38157, -21.9051], "matrix22": [47.7446, 6.3208e-6, -4.73428e-6, 51.5611] },
+        { "decalName": "british_decal_a_squadron_yellow", "offset": [-15.0847, -17.6619], "matrix22": [39.7637, 0, 0, -39.7637] },
+        { "decalName": "british_decal_medium_02", "offset": [3.03341, -20.6103], "matrix22": [-2.0218e-6, -47.4228, 46.2533, -2.07291e-6] },
+        { "decalName": "british_crest_03", "offset": [9.10479, -22.2319], "matrix22": [51.5417, 0, 0, 52.1033] },
+        { "decalName": "british_blackdiamond", "offset": [-16.4183, -8.97302], "matrix22": [-37.8489, 1.65442e-6, -1.65442e-6, -37.8489] },
+        { "decalName": "british_crest_03", "offset": [9.90517, -23.8468], "matrix22": [-53.0051, 4.31777e-6, -4.63385e-6, -49.3896] },
+        { "decalName": "british_crest_02", "offset": [12.9996, -30.5665], "matrix22": [-63.2839, 0, 0, -63.2839] }
+      ]
+    },
+    "centaur": {
+      "vehicleId": "centaur",
+      "graphName": "centaur_aa",
+      "ownMesh": "centaur_aa.obj",
+      "placements": [
+        { "decalName": "british_blackdiamond", "offset": [-15.8973, 8.13675], "matrix22": [-53.1961, 1.85505e-6, -2.32527e-6, -42.4387] },
+        { "decalName": "british_decal_heavy_01", "offset": [8.82453, -20.1467], "matrix22": [47.7446, 8.08637e-6, -4.73428e-6, 65.9635] },
+        { "decalName": "british_crest_02", "offset": [-20.7174, -25.9472], "matrix22": [-77.7049, 0, 0, -77.7049] },
+        { "decalName": "british_crest_03", "offset": [11.5371, -19.6725], "matrix22": [43.8491, 0, 0, 64.1027] },
+        { "decalName": "british_crest_03", "offset": [-35.2318, -21.5742], "matrix22": [-63.3937, 5.54205e-6, -5.54205e-6, -63.3937] }
+      ]
+    },
+    "churchill": {
+      "vehicleId": "churchill",
+      "graphName": "churchill",
+      "ownMesh": "churchill_allposed.obj",
+      "_note": "churchill.sbs top-level IS the tanksurface content — same graph and OBJ. Transforms identical to tanksurface_shared_decal_transforms above.",
+      "placements": [
+        { "decalName": "british_crest_01", "offset": [0.840179, 10.8533], "matrix22": [23.6126, 0, 0, 23.6126] },
+        { "decalName": "british_decal_heavy_01", "offset": [-5.73255, -15.0657], "matrix22": [-40.1499, -4.13553e-6, 3.51002e-6, -47.3049] },
+        { "decalName": "british_crest_02", "offset": [-10.9719, -9.7312], "matrix22": [-44.5823, 0, 0, -44.5823] },
+        { "decalName": "british_canada_bars", "offset": [3.74346, 1.49336], "matrix22": [0, -17.4802, 17.4802, 0] },
+        { "decalName": "british_canada_bars", "offset": [3.74346, -8.19563], "matrix22": [0, -17.4802, 17.4802, 0] },
+        { "decalName": "british_blackdiamond", "offset": [-7.12789, -13.2211], "matrix22": [-41.4743, 0, 0, -41.4743] },
+        { "decalName": "british_canada_bars", "offset": [-2.77547, 12.8176], "matrix22": [-17.4802, 0, 0, -37.1264] },
+        { "decalName": "british_decal_heavy_01", "offset": [8.33615, -3.43216], "matrix22": [-1.75501e-6, 47.3049, -40.1499, -2.06777e-6] },
+        { "decalName": "british_decal_heavy_01", "offset": [-8.83533, -21.6736], "matrix22": [2.2262e-6, -47.3049, 40.1499, 3.73128e-6] },
+        { "decalName": "british_decal_heavy_01", "offset": [-13.8505, 19.4873], "matrix22": [43.3924, 6.26738e-6, -4.30273e-6, 51.1253] }
+      ]
+    },
+    "comet": {
+      "vehicleId": "comet",
+      "graphName": "comet",
+      "ownMesh": "comet_retexture.obj",
+      "placements": [
+        { "decalName": "british_decal_heavy_01", "offset": [7.53642, -11.725], "matrix22": [38.2326, 0, 0, 38.2326] },
+        { "decalName": "british_decal_heavy_01", "offset": [-8.69767, -15.0608], "matrix22": [-43.8833, -0.0830547, 0.0830547, -43.8833] },
+        { "decalName": "british_crest_01", "offset": [-5.1503, -11.7442], "matrix22": [-3.67067, 23.5069, -23.9887, -3.59695] },
+        { "decalName": "british_canada_bars", "offset": [3.36164, 0.0749456], "matrix22": [-7.65361e-7, 25.9996, -17.5094, -1.13648e-6] },
+        { "decalName": "british_canada_bars", "offset": [3.34102, 11.7325], "matrix22": [-7.65361e-7, 25.9996, -17.5094, -1.13648e-6] },
+        { "decalName": "british_crest_02", "offset": [-9.76873, -18.5291], "matrix22": [-55.9216, -8.24635e-6, 8.24635e-6, -55.9216] },
+        { "decalName": "british_crest_02", "offset": [6.48737, -7.23099], "matrix22": [39.8273, 0.0623906, -0.0623906, 39.8273] }
+      ]
+    },
+    "cromwell": {
+      "vehicleId": "cromwell",
+      "graphName": "cromwell",
+      "ownMesh": "cromwell_geo.obj",
+      "placements": [
+        { "decalName": "british_blackdiamond", "offset": [-15.8973, 8.13675], "matrix22": [-53.1961, 1.85505e-6, -2.32527e-6, -42.4387] },
+        { "decalName": "british_decal_heavy_01", "offset": [8.82453, -20.1467], "matrix22": [47.7446, 8.08637e-6, -4.73428e-6, 65.9635] },
+        { "decalName": "british_crest_02", "offset": [-20.7174, -25.9472], "matrix22": [-77.7049, 0, 0, -77.7049] },
+        { "decalName": "british_crest_03", "offset": [11.5371, -19.6725], "matrix22": [43.8491, 0, 0, 64.1027] },
+        { "decalName": "british_crest_03", "offset": [-11.4843, -21.1913], "matrix22": [-63.3937, 5.54205e-6, -5.54205e-6, -63.3937] }
+      ]
+    },
+    "sexton": {
+      "vehicleId": "sexton",
+      "graphName": "sexton",
+      "ownMesh": "sexton.obj",
+      "placements": [
+        { "decalName": "british_decal_medium_01", "offset": [6.24056, 25.7891], "matrix22": [-1.75501e-6, 47.3049, -40.1499, -2.06777e-6] },
+        { "decalName": "british_crest_02", "offset": [25.3139, 6.49345], "matrix22": [61.1404, 5.34507e-6, -5.34507e-6, 61.1404] },
+        { "decalName": "british_blackdiamond", "offset": [-29.0957, -15.4517], "matrix22": [-61.6403, 0, 0, -61.6403] },
+        { "decalName": "british_crest_01", "offset": [-8.82093, -16.4348], "matrix22": [44.6454, 0, 0, 44.6454] },
+        { "decalName": "british_decal_medium_01", "offset": [15.4072, 6.12659], "matrix22": [51.1878, 7.39331e-6, -5.07571e-6, 60.3099] },
+        { "decalName": "british_canada_bars", "offset": [4.18725, 16.211], "matrix22": [-34.9518, 0.476611, -0.412373, -40.3964] },
+        { "decalName": "british_canada_bars", "offset": [-16.1896, -3.75302], "matrix22": [-34.3201, 1.59834e-6, -1.50018e-6, -36.5658] },
+        { "decalName": "british_decal_medium_01", "offset": [-14.7268, -21.8133], "matrix22": [50.6496, 7.31557e-6, -5.02235e-6, 59.6757] },
+        { "decalName": "british_decal_medium_01", "offset": [-22.7696, -8.19436], "matrix22": [-40.1499, -4.13553e-6, 3.51002e-6, -47.3049] },
+        { "decalName": "british_canada_bars", "offset": [3.149, -10.1196], "matrix22": [0, -17.4802, 17.4802, 0] }
+      ]
+    },
+    "shermanfirefly": {
+      "vehicleId": "sherman_firefly",
+      "graphName": "sherman_firefly",
+      "ownMesh": "sherman_firefly.obj",
+      "placements": [
+        { "decalName": "british_blackdiamond", "offset": [-15.3169, 20.532], "matrix22": [-53.5375, 2.95915e-6, -2.34019e-6, -67.6976] },
+        { "decalName": "british_decal_medium_02", "offset": [-6.26759, -15.367], "matrix22": [1.5453e-6, -37.4176, 27.8699, 2.9514e-6] },
+        { "decalName": "british_crest_02", "offset": [10.5755, -23.293], "matrix22": [61.0162, -6.71183e-6, 5.33421e-6, 76.7744] },
+        { "decalName": "british_crest_03", "offset": [-13.9736, -9.13111], "matrix22": [-41.5594, 3.63324e-6, -3.63324e-6, -41.5594] },
+        { "decalName": "british_decal_a_squadron_yellow", "offset": [-8.08576, -17.3881], "matrix22": [-1.60964, 45.7185, -42.4082, -1.73528] },
+        { "decalName": "british_decal_medium_02", "offset": [-5.2009, -9.98419], "matrix22": [-41.8064, -1.60418e-6, 4.90626e-7, -45.6178] },
+        { "decalName": "british_decal_a_squadron_yellow", "offset": [4.73907, 3.27079], "matrix22": [0.730466, -41.4055, 38.4075, 0.787481] },
+        { "decalName": "british_canada_bars", "offset": [-9.95901, -9.35732], "matrix22": [-20.9054, 0.816829, -0.645975, -26.4346] }
+      ]
+    }
+  }
+}

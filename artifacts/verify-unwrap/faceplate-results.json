@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-07-20T06:24:24.907Z",
+  "pipeline": "headless: node-canvas composite → encodeBc3 → wrapBc3InDds → decodeBc3",
+  "atlas": {
+    "width": 692,
+    "height": 204,
+    "bannerRect": {
+      "x": 0,
+      "y": 0,
+      "width": 624,
+      "height": 204
+    },
+    "iconRect": {
+      "x": 624,
+      "y": 0,
+      "width": 64,
+      "height": 64
+    }
+  },
+  "layers": [
+    "image layer: diagonal gradient + procedural dither (624×204 smooth fill)",
+    "shape layer: bordered rectangle + filled circle (hard edges)",
+    "text layer: \"FACEPLATE\" banner + accented subtitle (AA glyph edges)",
+    "icon sub-rect: emblem triangle on dark field (64×64)"
+  ],
+  "thresholds": {
+    "meanPerChannel": 4,
+    "maxPerChannelExclEdges": 48
+  },
+  "deltas": {
+    "meanPerChannelAll": 3.4964,
+    "maxPerChannelAll": 128,
+    "meanPerChannelNonEdge": 1.6911,
+    "maxPerChannelNonEdge": 22
+  },
+  "blocks": {
+    "total": 8823,
+    "hardEdge": 1977,
+    "hardEdgePct": 22.41
+  },
+  "dds": {
+    "totalBytes": 141296,
+    "headerBytes": 128,
+    "payloadBytes": 141168,
+    "magic": "DDS ",
+    "width": 692,
+    "height": 204,
+    "fourCC": "DXT5",
+    "linearSize": 141168,
+    "expectedBc3Len": 141168,
+    "checks": {
+      "magicOk": true,
+      "widthOk": true,
+      "heightOk": true,
+      "fourCCOk": true,
+      "linearSizeOk": true,
+      "payloadLenOk": true
+    },
+    "allOk": true
+  },
+  "checks": {
+    "meanOk": true,
+    "maxOk": true,
+    "ddsAllOk": true
+  },
+  "verdict": "PASS",
+  "limitation": "Pure-JS pipeline: the export encoder (encodeBc3) and container wrapper (wrapBc3InDds) run headlessly — this exercises the ACTUAL export code, not a reimplementation. No native/binary encoder is involved, so the round-trip is complete with no unverified stages."
+}

@@ -7,6 +7,14 @@
  *   - Schema migration: v5→v6 populates parts correctly
  *   - ATLAS_PART_DEFS has 6 parts with correct indices
  *   - decalPackLayerCount counts from parts[] on v6, decals[] on v5
+ *
+ * S5 reference-panel regression tests:
+ *   - compositePartLayers returns an RGBA buffer sized to partW × partH
+ *     (not to DECAL_PACK_SIZE × DECAL_PACK_SIZE) — the reference panel
+ *     must downscale from the part's native dimensions, not render at a
+ *     wrong size that would crop out most of the content.
+ *   - Each ATLAS_PART_DEF's region dimensions are the correct source for
+ *     the reference crop (not a hardcoded 128×128).
  */
 
 import { describe, it, expect } from 'vitest'
@@ -164,3 +172,36 @@ describe('decalPackLayerCount', () => {
 
 // Helper type for the v5 project shape (no parts field).
 type CohProjV5 = Omit<Coh2DecalPackProject, 'version' | 'parts' | 'activePartIndex' | 'activeFaction'> & { version: 5 }
+
+// ── S5 reference-panel: crop rect correctness ────────────────────────────────
+// The reference preview composites at partW × partH (the part's native atlas
+// dimensions from ATLAS_PART_DEFS[i].region), then downscales to 128×128.
+// This suite verifies that ATLAS_PART_DEFS provides non-128 dimensions for
+// most parts (so a hardcoded 128×128 would be wrong), and that
+// compositePartLayers returns a buffer of exactly partW * partH * 4 bytes.
+
+import { compositePartLayers } from '../atlas-parts'
+import { DECAL_PACK_SIZE } from '../decal-pack-project'
+
+describe('S5 reference panel — crop rect uses part native dimensions', () => {
+  it('DECAL_PACK_SIZE is 128', () => {
+    expect(DECAL_PACK_SIZE).toBe(128)
+  })
+
+  it('at least 4 of 6 parts have dimensions != 128×128 (hardcoded crop would be wrong)', () => {
+    const nonSquare128 = ATLAS_PART_DEFS.filter(
+      d => d.region.w !== DECAL_PACK_SIZE || d.region.h !== DECAL_PACK_SIZE
+    )
+    expect(nonSquare128.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it.each(
+    ATLAS_PART_DEFS.map((def, i) => ({ i, name: def.name, w: def.region.w, h: def.region.h }))
+  )(
+    'compositePartLayers for part $i ($name) returns buffer sized $w × $h × 4',
+    async ({ w, h }) => {
+      const rgba = await compositePartLayers([], w, h, {})
+      expect(rgba.length).toBe(w * h * 4)
+    }
+  )
+})

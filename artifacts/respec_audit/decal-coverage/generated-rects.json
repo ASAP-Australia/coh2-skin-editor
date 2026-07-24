@@ -1,0 +1,602 @@
+{
+  "tiger": {
+    "x": 996,
+    "y": 1128,
+    "w": 320,
+    "h": 320,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "german",
+    "semantic_key": "hullSideRight"
+  },
+  "elefant": {
+    "x": 870,
+    "y": 1231,
+    "w": 320,
+    "h": 313,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "german",
+    "semantic_key": "hullSideRight"
+  },
+  "brummbar": {
+    "x": 870,
+    "y": 1231,
+    "w": 320,
+    "h": 313,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "german",
+    "semantic_key": "hullSideRight"
+  },
+  "stug_iii": {
+    "x": 1395,
+    "y": 1635,
+    "w": 330,
+    "h": 310,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "german",
+    "semantic_key": "hullSideRight"
+  },
+  "ostwind_flak_panzer": {
+    "x": 870,
+    "y": 1231,
+    "w": 320,
+    "h": 313,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "german",
+    "semantic_key": "hullSideRight"
+  },
+  "panzerwerfer": {
+    "x": 220,
+    "y": 930,
+    "w": 310,
+    "h": 310,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "german",
+    "semantic_key": "hullSideRight"
+  },
+  "halftrack": {
+    "x": 1128,
+    "y": 1308,
+    "w": 313,
+    "h": 303,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "soviet",
+    "semantic_key": "hullSideRight"
+  },
+  "sdkfz_250": {
+    "x": 870,
+    "y": 1231,
+    "w": 320,
+    "h": 313,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "german",
+    "semantic_key": "hullSideRight"
+  },
+  "sdkfz_222": {
+    "x": 870,
+    "y": 1231,
+    "w": 320,
+    "h": 313,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "german",
+    "semantic_key": "hullSideRight"
+  },
+  "opel_blitz": {
+    "x": 870,
+    "y": 1231,
+    "w": 320,
+    "h": 313,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "german",
+    "semantic_key": "hullSideRight"
+  },
+  "king_tiger_sdkfz_182": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "jagdtiger": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "sturmtiger": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "panther_ausf_g": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "jagdpanzer_iv_sdkfz_162": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "panzer_iv_sdkfz_ausf_i": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "hetzer": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "puma_sdkfz_234": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "panzer_ii_luchs_sdkfz_123": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "kubelwagen": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "halftrack_sdkfz_251": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "halftrack_sdkfz_251_flak": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "halftrack_sdkfz_251_infrared": {
+    "x": 410,
+    "y": 1320,
+    "w": 360,
+    "h": 340,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "west_german",
+    "semantic_key": "hullSideRight"
+  },
+  "is2m_heavy_tank": {
+    "x": 1128,
+    "y": 1308,
+    "w": 313,
+    "h": 303,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "soviet",
+    "semantic_key": "hullSideRight"
+  },
+  "isu152": {
+    "x": 1128,
+    "y": 1308,
+    "w": 313,
+    "h": 303,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "soviet",
+    "semantic_key": "hullSideRight"
+  },
+  "kv1_heavy_tank": {
+    "x": 1200,
+    "y": 1370,
+    "w": 280,
+    "h": 280,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "soviet",
+    "semantic_key": "hullSideRight"
+  },
+  "kv2_heavy_tank": {
+    "x": 1235,
+    "y": 1300,
+    "w": 320,
+    "h": 310,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "soviet",
+    "semantic_key": "hullSideRight"
+  },
+  "t34_76": {
+    "x": 0,
+    "y": 342,
+    "w": 276,
+    "h": 320,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "soviet",
+    "semantic_key": "hullFront"
+  },
+  "t_34_85": {
+    "x": 0,
+    "y": 150,
+    "w": 280,
+    "h": 340,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "soviet",
+    "semantic_key": "hullFront"
+  },
+  "t70m_light_tank": {
+    "x": 1128,
+    "y": 1308,
+    "w": 313,
+    "h": 303,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "soviet",
+    "semantic_key": "hullSideRight"
+  },
+  "su85": {
+    "x": 951,
+    "y": 1256,
+    "w": 340,
+    "h": 320,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "soviet",
+    "semantic_key": "hullSideRight"
+  },
+  "su-76m": {
+    "x": 1128,
+    "y": 1308,
+    "w": 313,
+    "h": 303,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "soviet",
+    "semantic_key": "hullSideRight"
+  },
+  "m3a1_scout_car": {
+    "x": 1128,
+    "y": 1308,
+    "w": 313,
+    "h": 303,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "soviet",
+    "semantic_key": "hullSideRight"
+  },
+  "us6_truck": {
+    "x": 1128,
+    "y": 1308,
+    "w": 313,
+    "h": 303,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "soviet",
+    "semantic_key": "hullSideRight"
+  },
+  "m26_pershing": {
+    "x": 1190,
+    "y": 260,
+    "w": 270,
+    "h": 270,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m4a3e8_sherman_easy_8": {
+    "x": 1700,
+    "y": 1236,
+    "w": 320,
+    "h": 320,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m4a3_sherman_76mm": {
+    "x": 1300,
+    "y": 1340,
+    "w": 260,
+    "h": 260,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m4a1_sherman_calliope": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m10_tank_destroyer": {
+    "x": 50,
+    "y": 900,
+    "w": 260,
+    "h": 260,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m36_tank_destroyer": {
+    "x": 905,
+    "y": 775,
+    "w": 280,
+    "h": 280,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m5a1_stuart": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m8_greyhound": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m7b1_priest": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m3_halftrack": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m15a1_aa_halftrack": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m8a1_hmc": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m20_utility_car": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "m21_mortar_halftrack": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "dodge_wc51": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "dodge_wc54_ambulance": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "sherman_m4a3": {
+    "x": 1029,
+    "y": 902,
+    "w": 278,
+    "h": 278,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "aef",
+    "semantic_key": "hullSideRight"
+  },
+  "churchill": {
+    "x": 827,
+    "y": 870,
+    "w": 270,
+    "h": 260,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "british",
+    "semantic_key": "hullSideRight"
+  },
+  "comet": {
+    "x": 827,
+    "y": 870,
+    "w": 270,
+    "h": 260,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "british",
+    "semantic_key": "hullSideRight"
+  },
+  "cromwell": {
+    "x": 1610,
+    "y": 1360,
+    "w": 260,
+    "h": 260,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "british",
+    "semantic_key": "hullSideRight"
+  },
+  "centaur": {
+    "x": 827,
+    "y": 870,
+    "w": 270,
+    "h": 260,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "british",
+    "semantic_key": "hullSideRight"
+  },
+  "sherman_firefly": {
+    "x": 45,
+    "y": 380,
+    "w": 280,
+    "h": 260,
+    "source": "authored",
+    "confidence": 1.0,
+    "faction": "british",
+    "semantic_key": "hullSideRight"
+  },
+  "valentine": {
+    "x": 827,
+    "y": 870,
+    "w": 270,
+    "h": 260,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "british",
+    "semantic_key": "hullSideRight"
+  },
+  "sexton": {
+    "x": 827,
+    "y": 870,
+    "w": 270,
+    "h": 260,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "british",
+    "semantic_key": "hullSideRight"
+  },
+  "aec_armoured_car": {
+    "x": 827,
+    "y": 870,
+    "w": 270,
+    "h": 260,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "british",
+    "semantic_key": "hullSideRight"
+  },
+  "bren_carrier": {
+    "x": 827,
+    "y": 870,
+    "w": 270,
+    "h": 260,
+    "source": "fallback",
+    "confidence": 0.2,
+    "faction": "british",
+    "semantic_key": "hullSideRight"
+  }
+}

@@ -8,6 +8,7 @@ import {
   detectWorkshopPath,
   listWorkshopItems,
   listStockArchives,
+  listInstalledPacks,
 } from './detect-coh2'
 import {
   initSteam,
@@ -403,12 +404,18 @@ if (process.env.ELECTRON_DEBUG_PORT) {
 
 let mainWindow: BrowserWindow | null = null
 
-/** True iff the user has explicitly opted into transparent rounded
- *  window corners. Disabled by default because Electron's transparency
- *  on Linux is X11-only — on Wayland it paints grey corners and
- *  breaks the WebGL canvas. Set COH2_ROUND_WINDOW=1 (and ideally also
- *  ELECTRON_OZONE_PLATFORM_HINT=x11 on Wayland) to enable. */
-const ROUND_WINDOW = process.env.COH2_ROUND_WINDOW === '1'
+/** Glass-border window — OPAQUE.
+ *
+ *  The "glass card on a dark page" effect (matching the lab01.dev reference)
+ *  is entirely web content: a dark opaque BrowserWindow whose body paints a
+ *  dark surround (#1a1a1a) and whose renderer floats a styled glass CARD
+ *  (.glass-frame / .glass-frame-inner + a blurred spotlight) inside it.
+ *
+ *  Why opaque, not transparent: `transparent:true` only composites reliably
+ *  on X11/XWayland, and forcing XWayland on this AMD/RADV GPU segfaulted the
+ *  GPU process (exit 139) → blank window. An opaque window renders reliably
+ *  on native Wayland, and because the whole effect is in web content it can
+ *  be screenshot-verified via CDP. */
 
 function createWindow() {
   // HEADLESS_HIDE_ONLY=1 — hide the window the same way HEADLESS_SCREENSHOT
@@ -456,18 +463,18 @@ function createWindow() {
     show: false,
     paintWhenInitiallyHidden: true,
     frame: false,
-    // Rounded-window mode: BrowserWindow goes transparent so the four
-    // corners can be clipped by CSS `border-radius` on `body.is-electron`.
-    // On Wayland this typically doesn't work — the compositor paints the
-    // transparent area grey and the WebGL canvas fails to composite.
-    // Force XWayland via ELECTRON_OZONE_PLATFORM_HINT=x11 (or run in an
-    // X11 session) for reliable transparency, or use KWin's window-rule
-    // "Force rounded corners" for a Wayland-native solution that doesn't
-    // require app changes. Default-off: opaque window, no rounded
-    // corners, three.js renders normally.
-    transparent: ROUND_WINDOW,
-    backgroundColor: ROUND_WINDOW ? '#00000000' : '#0a0b0e',
-    hasShadow: !ROUND_WINDOW,
+    // TRANSPARENT window so rounded corners show the desktop and the
+    // glass-frame drop-shadow floats. The earlier opaque mode (#1a1a1a)
+    // was a workaround for a GPU crash caused by `ozone-platform=x11`
+    // (forced XWayland) segfaulting the AMD/RADV GPU process — NOT by
+    // transparency itself. With XWayland force removed and the app running
+    // on native Wayland, transparent:true renders correctly.
+    // `hasShadow:false` lets the CSS box-shadow on .glass-frame be the
+    // only visible shadow (it sits in the 10px #root margin around the
+    // card). `frame:false` keeps the custom WindowControls pill.
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
     titleBarStyle: 'hidden',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -520,7 +527,17 @@ function createWindow() {
   //    .sga (or null when the folder is empty). The renderer then opens
   //    the SGA via the existing read-file-range path to extract preview
   //    thumbnails — this handler stays cheap (no archive parsing).
-  ipcMain.handle('list-workshop-items', (_e, root: string) => listWorkshopItems(root))
+  ipcMain.handle('list-workshop-items', (_e, root?: string) => listWorkshopItems(root || detectWorkshopPath() || ''))
+
+  // ── Enumerate installed skin + decal packs from the mods directories.
+  //    Reads mods/skins/*.sga, mods/decals/subscriptions/*.sga, and
+  //    mods/faceplates/subscriptions/*.sga; parses the .info embedded in
+  //    each archive to extract the human-readable pack name. Cheap: only
+  //    the TOC + single .info file are read; results are mtime-cached.
+  //    Falls back to basename-derived name when no .info is present.
+  ipcMain.handle('list-installed-packs', (_e, modsRoot?: string) =>
+    listInstalledPacks(modsRoot || detectModsPath() || ''),
+  )
 
   // ── Enumerate the stock CoH2 archives that ship with the base game.
   //    Reads <installRoot>/CoH2/Archives/*.sga and returns id + path +
@@ -715,6 +732,10 @@ function createWindow() {
     return fs.existsSync(filePath)
   })
 
+  // Expose the Electron resources directory to the renderer so it can resolve
+  // bundled extraResources paths (e.g. keys/template_0001.sga).
+  ipcMain.handle('get-resources-path', () => process.resourcesPath)
+
   // ── Load ──────────────────────────────────────────────────────────────
   if (process.env.NODE_ENV === 'development') {
     // In dev, Vite serves under the same base path it would for GitHub
@@ -843,14 +864,6 @@ function createWindow() {
   }
 }
 
-// Command-line switches MUST be applied before app.whenReady() — Chromium
-// reads them once at startup. When the user has opted into rounded corners
-// we enable transparent visuals (X11). No effect on macOS/Windows / when
-// the flag is off.
-if (ROUND_WINDOW) {
-  app.commandLine.appendSwitch('enable-transparent-visuals')
-}
-
 // ── Linux/Wayland console-noise suppression ─────────────────────────────
 // On KDE Plasma + Wayland with a Mesa/RADV stack, Chromium emits two
 // classes of stderr noise on every launch:
@@ -884,13 +897,53 @@ if (process.platform === 'linux') {
   // Force ANGLE->GL backend (skip Vulkan entirely on the GPU process).
   app.commandLine.appendSwitch('use-gl', 'angle')
   app.commandLine.appendSwitch('use-angle', 'gl')
+
+  // Required for true-alpha framebuffer on native Wayland (transparent:true).
+  // NO ozone-platform=x11 or ozone-platform-hint=x11 — forcing XWayland on
+  // this AMD/RADV GPU segfaulted the GPU process (exit 139) → blank window.
+  // The app runs on native Wayland exclusively.
+  app.commandLine.appendSwitch('enable-transparent-visuals')
 }
 
+// ── SHOWCASE=1 gate ───────────────────────────────────────────────────────────
+// Editor-render showcase: loads the app at ?audit=1&showcase=1, mounts
+// AuditRunner's showcase mode (real Viewport + real overlayCanvas camo diffuse +
+// real TC1 badge decal), and captures plain/camo/decal/camo+decal PNGs for ONE
+// vehicle. DO NOT launch CoH2; reads SGAs read-only.
+if (process.env.SHOWCASE === '1') {
+  import('./showcase-capture').then(({ runShowcaseCapture }) => {
+    runShowcaseCapture()
+      .then(() => console.log('[showcase] Capture complete.'))
+      .catch(e => { console.error('[showcase] Capture failed:', e); process.exit(1) })
+  }).catch(e => {
+    console.error('[showcase] Failed to load showcase-capture module:', e)
+    process.exit(1)
+  })
+// ── VERIFY_VISUAL=1 gate ──────────────────────────────────────────────────────
+// Phase-2 visual unwrap verifier: loads the app at ?audit=1&verify=1, mounts
+// AuditRunner's verify mode (real Viewport + real TC1 badge shader), and
+// captures base/cal PNG pairs for all 61 vehicles. DO NOT launch CoH2; reads
+// SGAs read-only. Kept as its own gate so existing audit modes are untouched.
+} else if (process.env.VERIFY_VISUAL === '1') {
+  import('./verify-visual-capture').then(({ runVerifyVisualCapture }) => {
+    runVerifyVisualCapture()
+      .then(() => {
+        console.log('[verify-visual] Capture complete, exiting.')
+        app.quit()
+      })
+      .catch(e => {
+        console.error('[verify-visual] Capture failed:', e)
+        process.exit(1)
+      })
+  }).catch(e => {
+    console.error('[verify-visual] Failed to load verify-visual-capture module:', e)
+    process.exit(1)
+  })
 // ── AUDIT_REAL=1 gate ─────────────────────────────────────────────────────────
 // Real-pipeline audit: loads the actual app at ?audit=1, mounts the real
 // Viewport (MeshPhysicalMaterial + IBL + normalMap etc.), captures via
 // webContents.capturePage(). DO NOT launch CoH2; reads SGAs read-only.
-if (process.env.AUDIT_REAL === '1') {
+} else if (process.env.AUDIT_REAL === '1') {
   import('./audit-capture-real').then(({ runAuditCaptureReal }) => {
     runAuditCaptureReal()
       .then(() => {

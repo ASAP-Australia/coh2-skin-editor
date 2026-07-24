@@ -2,11 +2,11 @@
  * CanvasPlaceholder — shown inside the canvas wrapper when there is no content
  * to display (no layers, or no active decal image).
  *
- * Visual recipe:
- *   - Soft off-white background (#ececec), no hatching — the diagonal arrows
- *     serve as the visual "empty canvas" cue instead.
- *   - Dashed inset border (2px dashed rgba(0,0,0,0.30)) that outlines the
- *     exact canvas dimensions.
+ * Visual recipe (dark-mode):
+ *   - Dark surface background (#1a1c22 — one step lighter than the editor
+ *     base #0a0b0e so the canvas frame reads as a distinct working area).
+ *   - Dashed inset border (2px dashed rgba(255,255,255,0.12)) that outlines
+ *     the exact canvas dimensions against the dark base.
  *   - A small center dot at 50%/50%.
  *   - Four diagonal arrows (SVG) from the center dot toward each corner.
  *   - Dimension label horizontally centered at the top.
@@ -33,9 +33,11 @@ export default function CanvasPlaceholder({ width, height, label }: Props) {
   const containerStyle: CSSProperties = {
     position: 'absolute',
     inset: 0,
-    background: '#ececec',
-    outline: '2px dashed rgba(0,0,0,0.30)',
-    outlineOffset: -2,
+    // Transparent — the canvas div behind already carries the dark checker
+    // background (#141620 / #1c1f2d), so the placeholder just overlays its
+    // arrows without doubling the background fill.
+    // No border: the red OOB tint and drop shadow define the surface edge.
+    background: 'transparent',
     borderRadius: 'inherit',
     pointerEvents: 'none',
     zIndex: 0,
@@ -47,11 +49,11 @@ export default function CanvasPlaceholder({ width, height, label }: Props) {
     left: '50%',
     transform: 'translateX(-50%)',
     font: '11px/1 monospace',
-    color: 'rgba(0,0,0,0.55)',
+    color: 'rgba(247,247,250,0.50)',
     letterSpacing: '0.04em',
     userSelect: 'none',
     padding: '2px 6px',
-    background: 'rgba(255,255,255,0.6)',
+    background: 'rgba(255,255,255,0.06)',
     borderRadius: 4,
     whiteSpace: 'nowrap',
   }
@@ -67,11 +69,11 @@ export default function CanvasPlaceholder({ width, height, label }: Props) {
     left: '50%',
     transform: 'translateX(-50%)',
     font: '10px/1 monospace',
-    color: 'rgba(0,0,0,0.45)',
+    color: 'rgba(247,247,250,0.35)',
     letterSpacing: '0.02em',
     userSelect: 'none',
     padding: '2px 6px',
-    background: 'rgba(255,255,255,0.55)',
+    background: 'rgba(255,255,255,0.04)',
     borderRadius: 4,
     whiteSpace: 'nowrap',
     fontStyle: 'italic',
@@ -85,7 +87,7 @@ export default function CanvasPlaceholder({ width, height, label }: Props) {
     width: 6,
     height: 6,
     borderRadius: '50%',
-    background: 'rgba(0,0,0,0.35)',
+    background: 'rgba(247,247,250,0.35)',
   }
 
   // Arrow geometry constants (in SVG-user-units / px at 1:1 scale).
@@ -149,7 +151,7 @@ export default function CanvasPlaceholder({ width, height, label }: Props) {
             <polyline
               points="1,1 5,5 1,9"
               fill="none"
-              stroke="rgba(0,0,0,0.30)"
+              stroke="rgba(247,247,250,0.35)"
               strokeWidth="1.5"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -164,7 +166,7 @@ export default function CanvasPlaceholder({ width, height, label }: Props) {
             y1={l.y1}
             x2={l.x2}
             y2={l.y2}
-            stroke="rgba(0,0,0,0.30)"
+            stroke="rgba(247,247,250,0.35)"
             strokeWidth="1.5"
             strokeLinecap="round"
             vectorEffect="non-scaling-stroke"

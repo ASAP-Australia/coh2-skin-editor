@@ -217,6 +217,10 @@ interface BaseLayer {
    *  Supported on ImageLayer and PaintLayer in this wave. TextLayer and
    *  ShapeLayer clipping support is deferred to Wave 3 (TODO). */
   clippedToLayerBelow?: boolean
+  /** Optional user-supplied display name for the layer. When absent the
+   *  editor derives a display label from layer content (text, shape type,
+   *  etc.). Stored here so all layer kinds support rename. v7 addition. */
+  name?: string
 }
 
 /**
@@ -319,6 +323,11 @@ export interface ShapeLayer extends BaseLayer {
    *  The composer builds a Canvas2D gradient from `stops` and assigns it as
    *  `ctx.fillStyle` before filling the shape path. */
   gradientFill?: GradientFill
+  /** Corner radius in canvas pixels — only applies to `rectangle` shapes.
+   *  When absent or 0 the rectangle has sharp corners (original behaviour).
+   *  Renders via roundRect() in the export path and Konva Rect.cornerRadius
+   *  in the live preview so both paths stay in sync. */
+  cornerRadius?: number
 }
 
 /** Identity values for every filter slot. Used to seed sliders and to
@@ -456,6 +465,9 @@ export interface Coh2FaceplateProject {
    *  PublishToWorkshopDialog. Absent / undefined = not yet published.
    *  ≤5×10⁹ = real Workshop ID; ≥1×10¹⁵ = fake locally-generated ID. */
   workshopId?: string
+  /** Last-used Workshop visibility (0=Public, 1=FriendsOnly, 2=Private, 3=Unlisted).
+   *  Persisted so reopening the publish popover pre-selects the same option. */
+  workshopVisibility?: 0 | 1 | 2 | 3
   /** Stable 32-hex-char mod-identity GUID. Generated ONCE when the project is
    *  created and reused on every export/publish so the built SGA keeps the
    *  SAME internal mod identity (attrib pbgid, `.gfx` + `.dds` asset paths)
@@ -543,6 +555,68 @@ const ACTIVE_KEY = 'coh2-faceplate-active-project'
 const PROJECT_KEY_PREFIX = 'coh2.faceplate.'
 const RECENT_KEY = 'coh2.recentFaceplates'
 const RECENT_MAX = 12
+const INDEX_KEY = 'coh2.faceplateIndex.v1'
+
+// ---------------------------------------------------------------------------
+// Metadata index
+// ---------------------------------------------------------------------------
+
+export interface FaceplateIndexEntry {
+  name: string
+  lastEditedAt: number
+  workshopId: string | null
+}
+
+function readFaceplateIndex(): Record<string, FaceplateIndexEntry> {
+  try {
+    const raw = localStorage.getItem(INDEX_KEY)
+    if (!raw) return {}
+    return JSON.parse(raw) as Record<string, FaceplateIndexEntry>
+  } catch {
+    return {}
+  }
+}
+
+function writeFaceplateIndex(index: Record<string, FaceplateIndexEntry>): void {
+  try {
+    localStorage.setItem(INDEX_KEY, JSON.stringify(index))
+  } catch {
+    /* quota — non-fatal */
+  }
+}
+
+export function upsertFaceplateIndexEntry(id: string, entry: FaceplateIndexEntry): void {
+  const index = readFaceplateIndex()
+  index[id] = entry
+  writeFaceplateIndex(index)
+}
+
+export function removeFaceplateIndexEntry(id: string): void {
+  const index = readFaceplateIndex()
+  delete index[id]
+  writeFaceplateIndex(index)
+}
+
+/** Return the index entry for `id`, backfilling from the blob if missing. */
+export function getFaceplateMeta(id: string): FaceplateIndexEntry | null {
+  const index = readFaceplateIndex()
+  if (index[id]) return index[id]
+  const p = loadFaceplateById(id)
+  if (!p) return null
+  const cached = getRecentFaceplates().find(e => e.id === id)
+  const entry: FaceplateIndexEntry = {
+    name: p.packName || cached?.name || 'Untitled faceplate',
+    lastEditedAt:
+      cached?.lastEditedAt ??
+      (() => {
+        const t = Date.parse(p.modifiedAt ?? '')
+        return Number.isFinite(t) ? t : 0
+      })(),
+    workshopId: (p as { workshopId?: string }).workshopId ?? null,
+  }
+  upsertFaceplateIndexEntry(id, entry)
+  return entry
+}
 
 /** Generate a stable 32-hex-char mod-identity GUID for a faceplate project.
  *  Mirrors `generateGuid()` in faceplate-mod-build.ts but is kept inline here
@@ -736,6 +810,11 @@ export function persistFaceplate(p: Coh2FaceplateProject): void {
     localStorage.setItem(PROJECT_KEY_PREFIX + p.id, json)
     localStorage.setItem(ACTIVE_KEY, p.id)
     trackRecentFaceplate(p)
+    upsertFaceplateIndexEntry(p.id, {
+      name: p.packName,
+      lastEditedAt: Date.now(),
+      workshopId: (p as { workshopId?: string }).workshopId ?? null,
+    })
   } catch (e) {
     console.warn('persistFaceplate failed', e)
   }
@@ -764,6 +843,21 @@ export function loadFaceplateById(id: string): Coh2FaceplateProject | null {
   } catch {
     return null
   }
+}
+
+/** Trigger a download of the project as a `.coh2faceplate` file.
+ *  Round-trippable: the resulting file can be re-imported by readFaceplateFile. */
+export function downloadFaceplate(p: Coh2FaceplateProject): void {
+  const filename = (p.packName ?? 'faceplate').replace(/[^a-z0-9_-]+/gi, '_') + '.coh2faceplate'
+  const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 /** Read a `.coh2faceplate` file from disk. Validates magic.
@@ -931,26 +1025,50 @@ export function listAllFaceplates(): RecentFaceplateEntry[] {
   const entries: RecentFaceplateEntry[] = []
   try {
     const cached = new Map<string, RecentFaceplateEntry>(getRecentFaceplates().map(e => [e.id, e]))
+    const index = readFaceplateIndex()
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
       if (!key || !key.startsWith(PROJECT_KEY_PREFIX)) continue
       const id = key.slice(PROJECT_KEY_PREFIX.length)
-      const project = loadFaceplateById(id)
-      if (!project) continue // broken — drop it
       const fromRegistry = cached.get(id)
-      entries.push({
-        id: project.id,
-        name: project.packName || fromRegistry?.name || 'Untitled faceplate',
-        lastEditedAt:
-          fromRegistry?.lastEditedAt ??
+      const indexEntry = index[id]
+      if (indexEntry) {
+        // Fast path: index hit, no blob parse.
+        // Registry lastEditedAt takes priority (explicitly stamped by tests / UI).
+        const lastEditedAt = fromRegistry?.lastEditedAt || indexEntry.lastEditedAt || 0
+        entries.push({
+          id,
+          name: indexEntry.name || fromRegistry?.name || 'Untitled faceplate',
+          lastEditedAt,
+          layerCount: fromRegistry?.layerCount ?? 0,
+          thumbnail: fromRegistry?.thumbnail ?? null,
+        })
+      } else {
+        // Slow path: parse blob, backfill index.
+        const project = loadFaceplateById(id)
+        if (!project) continue
+        const fromReg = cached.get(id)
+        const lastEditedAt =
+          fromReg?.lastEditedAt ??
           (() => {
             const t = Date.parse(project.modifiedAt ?? '')
             return Number.isFinite(t) ? t : 0
-          })(),
-        layerCount: project.layers.length,
-        thumbnail: fromRegistry?.thumbnail ?? null,
-      })
+          })()
+        index[id] = {
+          name: project.packName || fromReg?.name || 'Untitled faceplate',
+          lastEditedAt,
+          workshopId: (project as { workshopId?: string }).workshopId ?? null,
+        }
+        entries.push({
+          id: project.id,
+          name: index[id].name,
+          lastEditedAt,
+          layerCount: project.layers.length,
+          thumbnail: fromReg?.thumbnail ?? null,
+        })
+      }
     }
+    writeFaceplateIndex(index)
   } catch {
     /* swallow — non-critical */
   }
@@ -970,6 +1088,12 @@ export function clearFaceplateWorkshopId(id: string): void {
     if (parsed?.magic !== 'coh2-faceplate-project') return
     delete parsed.workshopId
     localStorage.setItem(PROJECT_KEY_PREFIX + id, JSON.stringify(parsed))
+    // Keep the index in sync.
+    const existing = readFaceplateIndex()
+    if (existing[id]) {
+      existing[id] = { ...existing[id], workshopId: null }
+      writeFaceplateIndex(existing)
+    }
   } catch {
     /* swallow — non-critical */
   }
@@ -990,6 +1114,7 @@ export function removeRecentFaceplate(id: string): void {
   } catch {
     /* swallow — non-critical */
   }
+  removeFaceplateIndexEntry(id)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────

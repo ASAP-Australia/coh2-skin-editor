@@ -40,6 +40,7 @@ import {
   tryParseDecalPackFile,
 } from '@/lib/decal-pack-project'
 import Stagger from '@/components/Stagger'
+import StartScreenCard from '@/components/StartScreenCard'
 
 type AnyProject =
   | { kind: 'skin'; project: Coh2SkinProject }
@@ -192,9 +193,11 @@ export default function StartScreen({
                      focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/60 focus-visible:outline-none"
           style={{
             borderRadius: 16,
-            background: 'rgba(255, 255, 255, 0.06)',
-            backdropFilter: 'blur(20px) saturate(160%)',
-            WebkitBackdropFilter: 'blur(20px) saturate(160%)',
+            // Near-black control to sit inside the black modal, with a faint
+            // radial top-highlight (matches the experiment's dark button
+            // language) rather than the old translucent-white glass fill.
+            background:
+              'radial-gradient(120% 120% at -10% -20%, rgba(255,255,255,0.05), rgba(255,255,255,0) 55%), rgba(255,255,255,0.025)',
           }}
         >
           <Clock className="size-5 text-foreground/70 flex-shrink-0" aria-hidden />
@@ -284,10 +287,20 @@ export default function StartScreen({
     // is still mid-grow and the layout jitters under the cursor as the
     // user reads them. With the delay, the card settles first, THEN
     // the rows arrive top-down into a stable container.
-    <div>
-      <Stagger mode={exiting ? 'exit' : 'enter'} initialDelay={exiting ? 0 : 520}>
-        {rows}
-      </Stagger>
+    <div className="relative">
+      {/* Black-modal skin (UI Experiment #01, dark theme): a patterned
+          near-black surface with top-left / bottom-right corner light
+          glows and a masked corner-light border. It bleeds out behind the
+          shared glass card's padding so the whole Start surface reads as
+          the black modal, while AuthShell's card chrome stays untouched.
+          Sits at z-0; all interactive content is lifted to z-10 below. */}
+      <StartScreenCard radius={28} />
+
+      <div className="relative z-10">
+        <Stagger mode={exiting ? 'exit' : 'enter'} initialDelay={exiting ? 0 : 520}>
+          {rows}
+        </Stagger>
+      </div>
 
       <input
         ref={fileInputRef}
@@ -298,8 +311,63 @@ export default function StartScreen({
         aria-label="Open project file"
       />
 
-      {/* bb-pressable / bb-cta are defined globally in index.css. */}
+      {/* bb-pressable / bb-cta are defined globally in index.css.
+          The rules below skin the Start screen's action tiles + Continue
+          card as UI Experiment #01 "black modal" controls: a masked
+          corner-light border ring (::after, mask-composite:exclude, same
+          technique as the modal border) plus radial top-highlight hover. */}
       <style>{`
+        /* ── grid action tiles ("New …", "Load Project") ──────────────── */
+        .sm-btn {
+          transition: background 200ms cubic-bezier(0.2,0.8,0.2,1),
+                      box-shadow 200ms cubic-bezier(0.2,0.8,0.2,1),
+                      transform 120ms cubic-bezier(0.2,0.8,0.2,1);
+        }
+        /* Masked border-light ring: mostly-dark 1px border that catches a
+           cool-white glint at the top-left and bottom-right corners. */
+        .sm-btn::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          padding: 1px;
+          pointer-events: none;
+          background: linear-gradient(150deg,
+            rgba(255,255,255,0.28),
+            rgba(255,255,255,0.02) 38%,
+            rgba(255,255,255,0.04) 70%,
+            rgba(255,255,255,0.14));
+          -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+                  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          -webkit-mask-composite: xor;
+                  mask-composite: exclude;
+          transition: background 200ms cubic-bezier(0.2,0.8,0.2,1);
+        }
+        .sm-btn:hover {
+          background:
+            radial-gradient(120% 120% at -10% -20%, rgba(255,255,255,0.10), rgba(255,255,255,0) 55%),
+            rgba(255,255,255,0.045) !important;
+          box-shadow:
+            inset 0 0 0 1px rgba(255,255,255,0.06),
+            0 1px 0 rgba(0,0,0,0.45),
+            0 8px 20px -8px rgba(0,0,0,0.7) !important;
+        }
+        .sm-btn:hover::after {
+          background: linear-gradient(150deg,
+            rgba(255,255,255,0.55),
+            rgba(255,255,255,0.04) 38%,
+            rgba(255,255,255,0.08) 70%,
+            rgba(255,255,255,0.30));
+        }
+        .sm-btn:active {
+          transform: translateY(1px);
+        }
+        .sm-btn:focus-visible {
+          outline: 1.5px solid rgba(255,255,255,0.7);
+          outline-offset: 2px;
+        }
+
+        /* ── Continue card ────────────────────────────────────────────── */
         .recent-card:hover {
           transform: scale(1.02);
           background: rgba(255, 255, 255, 0.09) !important;
@@ -339,12 +407,23 @@ function GridButton({
   sublabel: string
   onClick: () => void
 }) {
+  // Button styling ported from UI Experiment #01's dark `.btn-primary`:
+  // a subtle radial top-highlight over a dark base, wrapped in a masked
+  // 1px border-light ring (the `.sm-btn__ring` pseudo below). The ring is
+  // rendered as an ::after via the injected <style> so the button DOM stays
+  // exactly a <button> → <div.text-[14px]> (the StartScreen tests key off
+  // that structure).
   return (
     <button
       onClick={onClick}
-      className="action-row group relative w-full min-h-[64px] cursor-pointer text-left px-3.5 py-3 rounded-2xl
-                 border border-white/[0.08] bg-white/[0.04]
-                 transition-all duration-200 flex items-center gap-2.5"
+      className="sm-btn group relative w-full min-h-[64px] cursor-pointer text-left px-3.5 py-3 rounded-2xl
+                 overflow-hidden flex items-center gap-2.5"
+      style={{
+        background:
+          'radial-gradient(120% 120% at -10% -20%, rgba(255,255,255,0.055), rgba(255,255,255,0) 55%), rgba(255,255,255,0.02)',
+        boxShadow:
+          'inset 0 0 0 1px rgba(255,255,255,0.04), 0 1px 0 rgba(0,0,0,0.45), 0 4px 12px -6px rgba(0,0,0,0.6)',
+      }}
     >
       {icon}
       <div className="flex-1 min-w-0">

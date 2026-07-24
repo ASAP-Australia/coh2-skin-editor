@@ -80,8 +80,8 @@ export const ATLAS_VIEW_MODE_LABEL: Record<AtlasViewMode, { label: string; descr
       description: 'Editor view with the dashed border, dimension label and corner arrows.',
     },
     checkerboard: {
-      label: 'Checkerboard',
-      description: 'Light checker behind the layers so transparent regions read at a glance.',
+      label: 'Default view',
+      description: 'Shows what the default/stock decal looks like for this slot — compare your edits against the original.',
     },
     in_game: {
       label: 'In-game preview',

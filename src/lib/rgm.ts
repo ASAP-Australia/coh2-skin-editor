@@ -372,6 +372,7 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
   const positions = new Float32Array(p.vertexCount * 3)
   let normals: Float32Array | null = null
   let uvs: Float32Array | null = null
+  let uvs2: Float32Array | null = null
 
   // Diagnostic: check if we have any data to work with
   if (p.vertexCount === 0 || p.indices.length === 0) {
@@ -445,6 +446,34 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
             uvs[v * 2 + 1] = 1 - p.vertexBuffer[o + 1] / 255
           }
           break
+        case SEMANTIC.TEXCOORD1:
+          // Badge UV channel — baked reference into the badge atlas (TEXCOORD1 / semantic 9).
+          // This channel carries the tight cluster U∈[0.286,0.337]×V∈[0.039,0.086] on all
+          // intact submeshes. Hull/turret body polygons on MRGM v8 vehicles have wide TC1
+          // that doubles as diffuse UVs — those will sample outside the badge cell and
+          // produce transparent texels (correct: CoH2 doesn't badge the whole hull body).
+          //
+          // V-flip: DO NOT flip V here. The badge atlas texture is uploaded with flipY=false
+          // so V=0.039 maps to near-top of the D3D atlas (correct cluster position).
+          // The existing TC0 decode uses 1-v AND the CanvasTexture uses flipY=true — those
+          // cancel each other. TC1 uses v raw + badge texture flipY=false, same net result.
+          if (!uvs2) uvs2 = new Float32Array(p.vertexCount * 2)
+          if (elt.format === 3) {
+            // R32G32_FLOAT — used by some meshes (format varies PER-SUBMESH, not per-vehicle).
+            // NO V-flip, same as the fmt=2 path: flipping put the badge cluster at
+            // V≈[0.914,0.961], outside the shader window [0.03,0.09], silently killing the
+            // decal on jagdtiger / sdkfz_251_flak / calliope / valentine / sexton
+            // (confirmed analytically — see artifacts/verify-unwrap/analytical-report.md).
+            uvs2[v * 2 + 0] = view.getFloat32(o,     true)
+            uvs2[v * 2 + 1] = view.getFloat32(o + 4, true)  // no V-flip (match fmt=2 badge path)
+          } else if (elt.format === 2) {
+            // R8G8B8A8 packed — same byte layout as TC0 (b2=U, b1=V) but NO V-flip.
+            // The tight cluster sits at V∈[0.039,0.086] (near-zero = top of D3D atlas).
+            // With flipY=false on the badge texture, this maps directly to the correct row.
+            uvs2[v * 2 + 0] = p.vertexBuffer[o + 2] / 255
+            uvs2[v * 2 + 1] = p.vertexBuffer[o + 1] / 255  // no V-flip for badge atlas
+          }
+          break
       }
     }
   }
@@ -472,7 +501,8 @@ function buildGeometry(p: ParsedMeshData): THREE.BufferGeometry {
       geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
     }
   }
-  if (uvs)     geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  if (uvs)  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  if (uvs2) geo.setAttribute('uv2', new THREE.BufferAttribute(uvs2, 2))
   geo.setIndex(new THREE.BufferAttribute(flipped, 1))
   // If we don't have valid normals (no normals attribute, or thrown out
   // above as degenerate), recompute geometrically — must be after index is set.

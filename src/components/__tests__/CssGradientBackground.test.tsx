@@ -20,9 +20,11 @@
  *      block is inlined in a `<style>` tag (so the component is
  *      self-contained — no Tailwind plugin or external CSS file to
  *      maintain).
- *   5. Renders at `-z-10` and `fixed inset-0` so the page content sits
+ *   5. Renders at `-z-10` and `absolute inset-0` so the page content sits
  *      on top — wiring is via Tailwind utility classes (pinned via
- *      className substring).
+ *      className substring). `absolute` keeps the backdrop scoped to the
+ *      AuthShell box (.glass-frame-inner) so it can't cover the glass
+ *      window border.
  *
  * Test infra: React 19 createRoot + act.
  */
@@ -80,10 +82,13 @@ describe('CssGradientBackground — accessibility / layering', () => {
     expect(baseLayer()!.className).toContain('pointer-events-none')
   })
 
-  it('mounts at fixed inset-0 -z-10 so the page content sits on top', () => {
+  it('mounts at absolute inset-0 -z-10 so the page content sits on top', () => {
     render()
     const cls = baseLayer()!.className
-    expect(cls).toContain('fixed')
+    // `absolute` (not `fixed`): the backdrop must stay clipped inside the
+    // AuthShell's containing box (.glass-frame-inner) so it doesn't paint
+    // over the glass window border. See AuthShell <main> note.
+    expect(cls).toContain('absolute')
     expect(cls).toContain('inset-0')
     expect(cls).toContain('-z-10')
   })

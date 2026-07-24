@@ -71,13 +71,23 @@ async function drawCover(
   ctx.drawImage(img, -sx + dx, -sy + dy, scaledW, scaledH)
 }
 
-function loadImage(dataUrl: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = e => reject(new Error(`icon-atlas-composite: failed to load slotIcon — ${String(e)}`))
-    img.src = dataUrl
+async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image()
+    el.onload = () => resolve(el)
+    el.onerror = e => reject(new Error(`icon-atlas-composite: failed to load slotIcon — ${String(e)}`))
+    el.src = dataUrl
   })
+  // Await decode() so the image is drawImage-ready (avoids the export-time
+  // "InvalidStateError: The source image could not be decoded" race).
+  if (typeof img.decode === 'function') {
+    try {
+      await img.decode()
+    } catch {
+      /* already loaded via onload — benign */
+    }
+  }
+  return img
 }
 
 /**

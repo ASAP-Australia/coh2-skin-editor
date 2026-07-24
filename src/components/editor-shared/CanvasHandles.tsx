@@ -4,23 +4,20 @@
  * applied to the handle ring), which is the standard editor convention.
  *
  * Resize model (post v1.0):
- *   • Image layers resize NON-uniformly — width and height move independently.
- *     Corner handles change BOTH axes; edge handles change one. The handle
- *     the user grabbed tracks the cursor exactly (no averaging, no scaling
- *     by a reference dimension) by anchoring the opposite corner/edge of
- *     the bbox and computing the new layer size + center from the live
- *     pointer position.
- *   • Text layers stay uniform — `scaleY` is ignored on TextLayer, so we
- *     fall back to corner-handle uniform scaling and use bbox width as the
- *     reference dim for cursor-relative growth.
+ *   • Non-uniform (when `scaleY` is provided): width and height move
+ *     independently. Corner handles change BOTH axes; edge handles change one.
+ *     The handle the user grabbed tracks the cursor exactly (no averaging) by
+ *     anchoring the opposite corner/edge of the bbox and computing the new
+ *     layer size + center from the live pointer position.
+ *   • Uniform (when `scaleY` is absent): stays uniform — corner-handle
+ *     uniform scaling using bbox width as the reference dimension for
+ *     cursor-relative growth.
  *
- * Props follow the existing SelectionHandles contract from FaceplateEditor.
- * The bbox dimensions are pre-computed by the parent so this component
- * stays a pure render function with no DOM reads during render.
+ * Props are geometry-only (no layer type coupling) so this component works
+ * with both FaceplateLayer (via FPE adapter) and Decal (via DPE adapter).
  */
 
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
-import type { FaceplateImage, FaceplateLayer } from '@/lib/faceplate-project'
 
 /** Smallest scale factor the user can shrink a layer to. Below this the
  *  layer becomes a sub-pixel hairline and the handles can't be re-grabbed,
@@ -35,7 +32,8 @@ const MIN_SCALE = 0.05
 export interface ResizeTransform {
   /** New X-axis scale (always sent). */
   scale: number
-  /** New Y-axis scale. Sent for image layers; omitted for text (uniform). */
+  /** New Y-axis scale. Sent when the component received a `scaleY` prop
+   *  (non-uniform resize mode); omitted for uniform resize. */
   scaleY?: number
   /** New layer center X in canvas-space pixels. */
   x: number
@@ -44,8 +42,18 @@ export interface ResizeTransform {
 }
 
 export interface CanvasHandlesProps {
-  layer: FaceplateLayer
-  image: FaceplateImage | undefined
+  /** Layer center X in canvas-space pixels. */
+  x: number
+  /** Layer center Y in canvas-space pixels. */
+  y: number
+  /** Layer rotation in degrees (clockwise). */
+  rotation: number
+  /** Current X-axis scale (uniform when scaleY absent). */
+  scale: number
+  /** Current Y-axis scale. Provide for non-uniform (image) layers; omit for
+   *  uniform (text/decal) layers. When absent the component uses uniform
+   *  resize: only `scale` is emitted, not `scaleY`. */
+  scaleY?: number
   viewScale: number
   /** Pre-computed screen-space bbox width for the layer. */
   bboxW: number
@@ -55,25 +63,33 @@ export interface CanvasHandlesProps {
   onResize: (transform: ResizeTransform) => void
   /** Called with the new rotation in degrees during a rotate drag. */
   onRotate: (rotation: number) => void
+  /** Optional gesture boundary callbacks — fired once at handle pointerdown
+   *  and once at pointerup so the parent can group the whole drag as a single
+   *  undo frame. */
+  onGestureStart?: () => void
+  onGestureEnd?: () => void
 }
 
 export default function CanvasHandles({
-  layer,
-  image,
+  x: layerX,
+  y: layerY,
+  rotation: layerRotation,
+  scale,
+  scaleY: scaleYProp,
   viewScale,
   bboxW,
   bboxH,
   onResize,
   onRotate,
+  onGestureStart,
+  onGestureEnd,
 }: CanvasHandlesProps) {
-  if (layer.kind === 'image' && !image) return null
-  // Group layers don't have a canvas position or bbox — no handles to render.
-  if (layer.kind === 'group') return null
+  const isNonUniform = scaleYProp !== undefined
 
   const baseW = bboxW
   const baseH = bboxH
-  const cx = layer.x * viewScale
-  const cy = layer.y * viewScale
+  const cx = layerX * viewScale
+  const cy = layerY * viewScale
 
   /**
    * 8-handle resize. The handle the user grabs is pinned to the cursor:
@@ -85,11 +101,12 @@ export default function CanvasHandles({
    *     anchored, so the layer's center shifts by half the growth on that
    *     axis only.
    *
-   * For image layers we emit independent `scale` (X) and `scaleY` so the
-   * user can freely stretch dimensions. For text layers we only emit
-   * `scale` (uniform), so the handle that tracks the cursor exactly is the
-   * dominant axis — diagonal corner drags use the X-axis cursor delta as
-   * the reference, edge drags use whichever axis they belong to.
+   * For non-uniform layers (image) we emit independent `scale` (X) and
+   * `scaleY` so the user can freely stretch dimensions. For uniform layers
+   * (text/decal) we only emit `scale` (uniform), so the handle that tracks
+   * the cursor exactly is the dominant axis — diagonal corner drags use the
+   * X-axis cursor delta as the reference, edge drags use whichever axis
+   * they belong to.
    */
   type CornerKey = 'tl' | 'tr' | 'bl' | 'br'
   type EdgeKey = 'n' | 's' | 'e' | 'w'
@@ -97,6 +114,7 @@ export default function CanvasHandles({
 
   const handleResize = (which: HandleKey) => (ev: ReactPointerEvent) => {
     ev.stopPropagation()
+    onGestureStart?.()
 
     // Sign of each axis component for this handle. 0 means "this axis
     // doesn't move" (used by N/S → only Y matters; E/W → only X matters).
@@ -116,25 +134,22 @@ export default function CanvasHandles({
     // ── Capture-time snapshot ──
     const startPointerX = ev.clientX
     const startPointerY = ev.clientY
-    const startScaleX = layer.scale
-    const startScaleY = layer.kind === 'image' ? (layer.scaleY ?? layer.scale) : layer.scale
-    const startCx = layer.x
-    const startCy = layer.y
-    // Un-scaled base dimensions in canvas-space. For images this is the
-    // source's natural pixel size; for text we back-compute from the bbox
-    // the parent already estimated so uniform scaling stays consistent.
-    const startBaseW =
-      layer.kind === 'image' && image ? image.width : Math.max(baseW / viewScale, 1)
-    const startBaseH =
-      layer.kind === 'image' && image ? image.height : Math.max(baseH / viewScale, 1)
+    const startScaleX = scale
+    const startScaleY = scaleYProp ?? scale
+    const startCx = layerX
+    const startCy = layerY
+    // Un-scaled base dimensions in canvas-space: back-compute from the
+    // current screen-space bbox and the current scale.
+    const startBaseW = Math.max(baseW / viewScale / startScaleX, 1)
+    const startBaseH = Math.max(baseH / viewScale / startScaleY, 1)
 
     const onMove = (e: PointerEvent) => {
       // Pointer delta from drag start, in canvas-space pixels.
       const dxCanvas = (e.clientX - startPointerX) / viewScale
       const dyCanvas = (e.clientY - startPointerY) / viewScale
 
-      if (layer.kind === 'image') {
-        // ── Image layer: per-axis scale ──
+      if (isNonUniform) {
+        // ── Non-uniform resize (image-like): per-axis scale ──
         // Compute new on-canvas bbox dimensions. sx/sy = 0 (edge handle
         // perpendicular to this axis) leaves the dim unchanged.
         const requestedW = startBaseW * startScaleX + sx * dxCanvas
@@ -159,7 +174,7 @@ export default function CanvasHandles({
         return
       }
 
-      // ── Text layer: uniform scale ──
+      // ── Uniform resize ──
       // Pick a reference dimension + cursor delta so the dominant axis
       // tracks the cursor. Corners use whichever cursor axis moved more
       // (so a diagonal drag still feels responsive); edges use their
@@ -179,31 +194,38 @@ export default function CanvasHandles({
       onResize({ scale: newScale, x: newCx, y: newCy })
     }
     const onUp = () => {
+      onGestureEnd?.()
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
   }
 
   const handleRotate = (ev: ReactPointerEvent) => {
     ev.stopPropagation()
+    onGestureStart?.()
     const rect = (ev.currentTarget.parentElement as HTMLElement).getBoundingClientRect()
     const centerX = rect.left + rect.width / 2
     const centerY = rect.top + rect.height / 2
     const startAngle = Math.atan2(ev.clientY - centerY, ev.clientX - centerX)
-    const startRot = layer.rotation
+    const startRot = layerRotation
     const onMove = (e: PointerEvent) => {
       const angle = Math.atan2(e.clientY - centerY, e.clientX - centerX)
       const delta = ((angle - startAngle) * 180) / Math.PI
       onRotate(startRot + delta)
     }
     const onUp = () => {
+      onGestureEnd?.()
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
   }
 
   const wrap: CSSProperties = {

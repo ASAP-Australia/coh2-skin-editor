@@ -20,12 +20,17 @@ export default function WindowControls() {
     const poll = async () => {
       if (cancelled) return
       const m = await window.electronAPI?.isMaximized()
-      setMaximized(!!m)
-      setTimeout(poll, 1000)
+      const isMax = !!m
+      setMaximized(isMax)
+      // Keep body class in sync so CSS can remove the floating margin/radius
+      // when the window is maximized (no visible desktop corners = no inset needed).
+      document.body.classList.toggle('is-maximized', isMax)
+      setTimeout(poll, 500)
     }
     poll()
     return () => {
       cancelled = true
+      document.body.classList.remove('is-maximized')
     }
   }, [inElectron])
 
@@ -68,7 +73,9 @@ export default function WindowControls() {
       {/* HOI4-style top grab strip — Electron-only. On the web there's no
           window to drag, and the strip would silently block clicks on
           anything that overlaps it in the top 40 px (TopBar slot icon!),
-          so we skip rendering it entirely off-Electron. */}
+          so we skip rendering it entirely off-Electron. The strip pins to
+          the very top of the window (top-0); the slim glass-frame margin is
+          small enough that the strip still reads as the window grab area. */}
       {inElectron && (
         <div
           aria-hidden
@@ -82,7 +89,7 @@ export default function WindowControls() {
         />
       )}
       <div
-        className="fixed top-3 right-3 flex items-center gap-0 z-[9999]"
+        className="fixed top-5 right-5 flex items-center gap-0 z-[9999]"
         style={
           {
             WebkitAppRegion: 'no-drag',

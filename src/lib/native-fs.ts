@@ -37,6 +37,18 @@ export interface WorkshopItem {
   sgaPath: string | null
 }
 
+export interface InstalledPack {
+  /** Unique key — absolute path of the .sga file. */
+  id: string
+  /** Human-readable display name parsed from the .info inside the SGA.
+   *  Falls back to the basename when no .info is present. */
+  name: string
+  /** Pack type inferred from internal paths. */
+  type: 'skin' | 'decal' | 'faceplate' | 'unknown'
+  /** Absolute path to the .sga archive. */
+  path: string
+}
+
 export interface StockArchive {
   /** Filename without extension — used as the template option `name`. */
   id: string
@@ -160,9 +172,13 @@ interface ElectronAPI {
   detectCoh2:         () => Promise<string | null>
   detectCoh2Mods:     () => Promise<string | null>
   detectCoh2Workshop: () => Promise<string | null>
-  listWorkshopItems:  (root: string) => Promise<WorkshopItem[]>
+  listWorkshopItems:  (root?: string) => Promise<WorkshopItem[]>
+  listInstalledPacks: (modsRoot?: string) => Promise<InstalledPack[]>
   listStockArchives:  (installRoot: string) => Promise<StockArchive[]>
   pickDirectory:      () => Promise<string | null>
+  /** Returns process.resourcesPath — used to resolve extraResources bundled
+   *  outside the asar (e.g. keys/template_0001.sga). */
+  getResourcesPath:  () => Promise<string>
   readFile:      (p: string) => Promise<ArrayBuffer>
   readFileRange: (p: string, start: number, length: number) => Promise<ArrayBuffer>
   fileStat:      (p: string) => Promise<{ size: number } | null>
@@ -353,10 +369,20 @@ export async function detectWorkshopPath(): Promise<string | null> {
 }
 
 /** Enumerate workshop items under the given root directory.
+ *  When `root` is omitted the main process auto-detects the workshop path.
  *  Returns [] outside Electron. */
-export async function listWorkshopItems(root: string): Promise<WorkshopItem[]> {
+export async function listWorkshopItems(root?: string): Promise<WorkshopItem[]> {
   if (!isElectron()) return []
   return api().listWorkshopItems(root)
+}
+
+/** Enumerate installed skin + decal packs from the CoH2 mods directories,
+ *  each with a human-readable name parsed from the .info inside its SGA.
+ *  When `modsRoot` is omitted the main process auto-detects it.
+ *  Returns [] outside Electron. */
+export async function listInstalledPacks(modsRoot?: string): Promise<InstalledPack[]> {
+  if (!isElectron()) return []
+  return api().listInstalledPacks(modsRoot)
 }
 
 /** Enumerate the stock CoH2 archives under the given install root.
@@ -380,6 +406,138 @@ export async function makeTmpPublishDir(): Promise<string> {
 export async function initSteamNative(): Promise<SteamInitResult | null> {
   if (!isElectron()) return null
   return api().steam.init()
+}
+
+// ---------------------------------------------------------------------------
+// HTTP bridge — synthetic FileSystemDirectoryHandle backed by /__coh2 endpoints
+// ---------------------------------------------------------------------------
+//
+// Used in the browser dev server (vite serve) when the Vite plugin in
+// vite.config.ts exposes /__coh2/* middleware. Mirrors nativePathToHandle
+// exactly — the same duck-typed surface, different I/O backend (fetch vs IPC).
+// Production builds never call this (the Vite plugin is dev-only and the
+// import.meta.env.DEV guard in App.tsx prevents the fetch probe).
+
+function httpMakeFile(installPath: string, relPath: string): Promise<File> {
+  // Fetch stat to get size, then duck-type a lazy-slicing blob.
+  return fetch(`/__coh2/stat?path=${encodeURIComponent(relPath)}`)
+    .then(r => r.json())
+    .then((stat: { exists: boolean; size: number }) => {
+      const size = stat?.size ?? 0
+      const name = relPath.split('/').pop() ?? relPath
+
+      function makeBlob(start: number, end: number): Blob {
+        return {
+          size: end - start,
+          slice(s = 0, e?: number) {
+            const subEnd = e ?? (end - start)
+            return makeBlob(start + s, start + subEnd)
+          },
+          arrayBuffer: async () => {
+            const url = `/__coh2/read?path=${encodeURIComponent(relPath)}&offset=${start}&length=${end - start}`
+            const r = await fetch(url)
+            if (!r.ok) throw new Error(`/__coh2/read failed: ${r.status}`)
+            return r.arrayBuffer()
+          },
+        } as unknown as Blob
+      }
+
+      const blob = makeBlob(0, size)
+      void installPath // captured for potential future use
+      return Object.assign(blob, { name }) as unknown as File
+    })
+}
+
+function httpMakeFileHandle(installPath: string, relPath: string): FileSystemFileHandle {
+  return {
+    name: relPath.split('/').pop() ?? relPath,
+    kind: 'file' as const,
+    isSameEntry: async () => false,
+    queryPermission: async () => 'granted' as PermissionState,
+    requestPermission: async () => 'granted' as PermissionState,
+    getFile: () => httpMakeFile(installPath, relPath),
+    createWritable: async () => { throw new Error('read-only in HTTP bridge') },
+  } as unknown as FileSystemFileHandle
+}
+
+/**
+ * Build a synthetic FileSystemDirectoryHandle that proxies all I/O through
+ * the Vite dev-server /__coh2/* middleware. `relPath` is relative to the
+ * CoH2 install root; at the top level pass '' or '/'.
+ *
+ * The returned handle satisfies the same duck-typed surface as
+ * {@link nativePathToHandle} so no downstream code needs to change.
+ */
+function httpDirHandle(installPath: string, relPath: string): FileSystemDirectoryHandle {
+  const norm = relPath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
+
+  const child = (name: string) => `${norm ? norm + '/' : ''}${name}`
+
+  return {
+    name: norm.split('/').pop() ?? norm,
+    kind: 'directory' as const,
+    isSameEntry: async () => false,
+    queryPermission: async () => 'granted' as PermissionState,
+    requestPermission: async () => 'granted' as PermissionState,
+
+    getDirectoryHandle: async (name: string, _opts?: FileSystemGetDirectoryOptions) => {
+      return httpDirHandle(installPath, child(name))
+    },
+
+    getFileHandle: async (name: string, _opts?: FileSystemGetFileOptions) => {
+      return httpMakeFileHandle(installPath, child(name))
+    },
+
+    removeEntry: async () => { throw new Error('read-only') },
+    resolve:     async () => null,
+
+    entries: async function* () {
+      const r = await fetch(`/__coh2/list?path=${encodeURIComponent(norm)}`)
+      const data: { entries: { name: string; isDir: boolean }[] } = await r.json()
+      for (const item of data.entries) {
+        const c = child(item.name)
+        const handle = item.isDir ? httpDirHandle(installPath, c) : httpMakeFileHandle(installPath, c)
+        yield [item.name, handle] as [string, FileSystemHandle]
+      }
+    },
+
+    keys: async function* () {
+      const r = await fetch(`/__coh2/list?path=${encodeURIComponent(norm)}`)
+      const data: { entries: { name: string; isDir: boolean }[] } = await r.json()
+      for (const item of data.entries) yield item.name
+    },
+
+    values: async function* () {
+      const r = await fetch(`/__coh2/list?path=${encodeURIComponent(norm)}`)
+      const data: { entries: { name: string; isDir: boolean }[] } = await r.json()
+      for (const item of data.entries) {
+        const c = child(item.name)
+        yield item.isDir ? httpDirHandle(installPath, c) : httpMakeFileHandle(installPath, c)
+      }
+    },
+
+    [Symbol.asyncIterator]: async function* () {
+      const r = await fetch(`/__coh2/list?path=${encodeURIComponent(norm)}`)
+      const data: { entries: { name: string; isDir: boolean }[] } = await r.json()
+      for (const item of data.entries) {
+        const c = child(item.name)
+        const handle = item.isDir ? httpDirHandle(installPath, c) : httpMakeFileHandle(installPath, c)
+        yield [item.name, handle] as [string, FileSystemHandle]
+      }
+    },
+  } as unknown as FileSystemDirectoryHandle
+}
+
+/**
+ * Return a synthetic FileSystemDirectoryHandle rooted at the given CoH2
+ * install path, backed by the /__coh2/* Vite dev middleware.
+ *
+ * Call this in the browser when `/__coh2/detect` returns an installPath.
+ * The returned handle is structurally identical to the one returned by
+ * {@link nativePathToHandle} — no downstream code needs to change.
+ */
+export function httpPathToHandle(installPath: string): FileSystemDirectoryHandle {
+  return httpDirHandle(installPath, '')
 }
 
 /** Write binary bytes to a path on disk, creating parent directories as needed.

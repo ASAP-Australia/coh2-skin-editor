@@ -193,6 +193,20 @@ export default function AuthShell({ phase, exiting = false, children }: Props) {
     return () => cancelAnimationFrame(r)
   }, [])
 
+  // Bump this counter each time the phase transitions TO 'start' (from any
+  // other phase). This resets HeightTransition's high-water mark so the
+  // card can shrink back to StartScreen's compact natural height instead of
+  // retaining the taller height from a previous SavedProjectsList visit.
+  const [heightResetMark, setHeightResetMark] = useState(0)
+  const prevPhaseRef = useRef(phase)
+  useEffect(() => {
+    if (phase === 'start' && prevPhaseRef.current !== 'start') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- phase-change triggered reset; bounded to one extra render per start navigation
+      setHeightResetMark(n => n + 1)
+    }
+    prevPhaseRef.current = phase
+  }, [phase])
+
   useEffect(() => {
     if (phase !== lastPhase.current) {
       const prevPhase = lastPhase.current
@@ -317,15 +331,26 @@ export default function AuthShell({ phase, exiting = false, children }: Props) {
 
   return (
     <>
-      {/* `fixed inset-0` rather than `min-h-dvh relative`: during the
+      {/* `absolute inset-0` rather than `min-h-dvh relative`: during the
           'editor-loading' phase the Editor is ALSO mounted (invisibly)
           just before us in the document order. Both used to be block-level
           full-height — they stacked vertically and the AuthShell card
           ended up below the fold (the user reported only seeing the
-          shader-wave background and no card). `fixed inset-0` lifts the
-          shell out of flow so it overlays the editor cleanly. */}
+          shader-wave background and no card). `absolute inset-0` lifts the
+          shell out of flow so it overlays the editor cleanly.
+
+          IMPORTANT — must be `absolute`, NOT `fixed`: the shell renders
+          inside `.glass-frame-inner` (a `position:relative` box). A `fixed`
+          element ignores that ancestor and fills the whole viewport, so its
+          full-bleed gradient background painted OVER the glass border + the
+          slim surround margin, making the glass frame invisible. `absolute`
+          resolves to the nearest positioned ancestor (the relative content
+          wrapper that fills glass-frame-inner), so the shell + its gradient
+          stay clipped inside the 16px glass ring and the frame border reads.
+          The Editor shares the same relative wrapper, so the overlay-the-
+          editor behaviour is unchanged. */}
       <main
-        className="fixed inset-0 grid place-items-center px-6 py-4 overflow-y-auto dark text-foreground z-30"
+        className="absolute inset-0 grid place-items-center px-6 py-4 overflow-hidden dark text-foreground z-30"
         // Don't intercept pointer events for the empty regions around
         // the card — but keep them on the card itself. Achieved by
         // setting `pointerEvents: none` on this wrapper and back to auto
@@ -481,6 +506,13 @@ export default function AuthShell({ phase, exiting = false, children }: Props) {
                 // announcing the eyebrow (it's hidden) and stop it
                 // intercepting interaction.
                 visibility: isLoading ? 'hidden' : undefined,
+                // Sit above StartScreen's black-modal background layer,
+                // which is absolutely positioned and bleeds up behind this
+                // eyebrow. The brand mark above already carries the same
+                // relative/z-index:1; matching it keeps both crowning the
+                // modal. No effect on other phases (no bleed layer there).
+                position: 'relative',
+                zIndex: 1,
               }}
             >
               CoH2 · Community Modding Tool
@@ -536,6 +568,11 @@ export default function AuthShell({ phase, exiting = false, children }: Props) {
                 // every subsequent screen at the same height once the
                 // user has reached Start.
                 highWaterMark
+                // Reset the high-water mark when navigating back to
+                // 'start' so the card shrinks to StartScreen's compact
+                // natural height instead of retaining the taller height
+                // left over from a SavedProjectsList visit.
+                resetMark={heightResetMark}
               >
                 <div className="relative">
                   {/* Incoming: starts at opacity 0 + translateY(8px), animates
@@ -629,6 +666,7 @@ function HeightTransition({
   forcedHeight,
   minHeight,
   highWaterMark = false,
+  resetMark = 0,
 }: {
   children: ReactNode
   forcedHeight?: number | null
@@ -641,6 +679,10 @@ function HeightTransition({
    *  unmount (i.e. once per session); `forcedHeight` still overrides
    *  it for the editor-loading lock. */
   highWaterMark?: boolean
+  /** Bumping this number resets the high-water mark back to zero so the
+   *  card can shrink to its natural content height. Used when navigating
+   *  back to a phase (e.g. 'start') that should restore compact sizing. */
+  resetMark?: number
 }) {
   const innerRef = useRef<HTMLDivElement>(null)
   const [height, setHeight] = useState<number | null>(null)
@@ -667,6 +709,14 @@ function HeightTransition({
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // Reset the high-water mark whenever the parent bumps `resetMark`.
+  // This allows the card to shrink back to its natural content height —
+  // e.g. after returning from the SavedProjectsList back to StartScreen.
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset triggered by prop change
+  useEffect(() => {
+    setPeakNaturalHeight(0)
+  }, [resetMark])
 
   // Ratchet the high-water mark whenever a taller natural height shows
   // up. Done in an effect (not during render) so React's strict-mode

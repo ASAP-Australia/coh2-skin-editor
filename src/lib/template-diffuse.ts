@@ -26,6 +26,7 @@ import { getPreloadedArchive, cacheArchive } from './preload'
 import { locateArchives } from './coh2-fs'
 import { SgaArchive } from './sga'
 import { nativeFileFromPath } from './native-fs'
+import { decodeBc3, decodeBc1 } from './bc-decode'
 import type { Faction } from './vehicles'
 import type { ProjectTemplateRef } from './project'
 import { parseWorkshopTemplateId } from './project'
@@ -206,6 +207,145 @@ export async function readWorkshopDiffuseDataUrlBySgaPath(
     if (!difPath) return null
 
     const bytes = await archive.readByPath(difPath)
+    if (!bytes) return null
+
+    return rgtBytesToDataUrl(bytes)
+  } catch {
+    return null
+  }
+}
+
+// ── Installed pack UI inventory icon extractor ───────────────────────────────
+
+/**
+ * Decode the UI inventory icon from any installed pack SGA (skin or decal).
+ *
+ * Every CoH2 mod SGA stores its inventory thumbnail at:
+ *   `ui/assets/textures/<guid>_i1.dds`
+ *
+ * The DDS is BC3 (DXT5) at varying dimensions (common: 1008×384 for skin
+ * atlases, 64×64 for decal pack icons). We read the actual width/height
+ * from the DDS header (offsets 16 and 12 respectively) so this works for
+ * any size.
+ *
+ * @param sgaPath  Absolute path to the installed pack .sga.
+ * @returns        PNG dataURL, or null on any failure (SGA missing, no
+ *                 `_i1.dds` entry, unsupported format, decode error).
+ */
+export async function readInstalledPackIcon(sgaPath: string): Promise<string | null> {
+  try {
+    const file = await nativeFileFromPath(sgaPath)
+    if (!file) return null
+
+    const archive = await SgaArchive.open(file)
+    const paths = archive.listPaths()
+
+    // Locate ui/assets/textures/<guid>_i1.dds — case-insensitive, backslash-tolerant.
+    const iconPath = paths
+      .map(p => p.replace(/\\/g, '/').toLowerCase())
+      .find(p => p.startsWith('ui/assets/textures/') && p.endsWith('_i1.dds'))
+
+    if (!iconPath) return null
+
+    const ddsBytes = await archive.readByPath(iconPath)
+    if (!ddsBytes || ddsBytes.length < 128) return null
+
+    return ddsToDataUrl(ddsBytes)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Decode a DDS (DXT5/BC3 or DXT1/BC1) byte array into a PNG dataURL.
+ *
+ * Reads width and height from the standard DDS header, then delegates
+ * to the appropriate decoder. Returns null for unrecognised FourCCs or
+ * on any decoding error.
+ */
+export function ddsToDataUrl(ddsBytes: Uint8Array): string | null {
+  try {
+    if (ddsBytes.length < 128) return null
+    const view = new DataView(ddsBytes.buffer, ddsBytes.byteOffset, ddsBytes.byteLength)
+    // DDS height at offset 12, width at offset 16 (both uint32 LE).
+    const height = view.getUint32(12, true)
+    const width = view.getUint32(16, true)
+    if (width === 0 || height === 0) return null
+
+    const fourCC = String.fromCharCode(
+      ddsBytes[84], ddsBytes[85], ddsBytes[86], ddsBytes[87],
+    )
+    const payload = ddsBytes.slice(128)
+
+    let rgba: Uint8ClampedArray
+    if (fourCC === 'DXT5') {
+      rgba = decodeBc3(payload, width, height)
+    } else if (fourCC === 'DXT1') {
+      rgba = decodeBc1(payload, width, height)
+    } else {
+      // Unsupported format — caller falls back to faction icon.
+      return null
+    }
+
+    const cv = document.createElement('canvas')
+    cv.width = width
+    cv.height = height
+    const ctx = cv.getContext('2d')
+    if (!ctx) return null
+    ctx.putImageData(
+      new ImageData(
+        new Uint8ClampedArray(rgba.buffer.slice(rgba.byteOffset, rgba.byteOffset + rgba.byteLength) as ArrayBuffer),
+        width,
+        height,
+      ),
+      0,
+      0,
+    )
+    return cv.toDataURL('image/png')
+  } catch {
+    return null
+  }
+}
+
+// ── Installed decal-pack image extractor ─────────────────────────────────────
+
+/**
+ * Extract the baked badge texture from an installed decal-pack SGA.
+ *
+ * Installed decal packs store a per-faction badge at:
+ *   `art/armies/<faction>/badges/<guid>/default_dif.rgt`
+ *
+ * This IS the in-game decal image (1024×1024 BC3) already authored for that
+ * faction's slot — we decode it directly to a PNG dataURL so Editor.tsx can
+ * bake it onto the vehicle's hull-right UV rect as a cosmetic preview.
+ *
+ * @param sgaPath  Absolute path to the installed decal pack .sga (from
+ *                 InstalledPack.path / decalPackRef.path).
+ * @param faction  Active vehicle faction — selects the per-faction badge RGT.
+ * @returns        PNG dataURL of the decoded badge, or null on any failure
+ *                 (SGA missing, no matching RGT, decode error, etc.).
+ */
+export async function readInstalledDecalImage(
+  sgaPath: string,
+  faction: Faction,
+): Promise<string | null> {
+  try {
+    const file = await nativeFileFromPath(sgaPath)
+    if (!file) return null
+
+    const archive = await SgaArchive.open(file)
+    const paths = archive.listPaths()
+
+    // Match art/armies/<faction>/badges/<guid>/default_dif.rgt
+    // Path separators may be backslash (Windows) or forward-slash.
+    const prefix = `art/armies/${faction}/badges/`.toLowerCase()
+    const badgePath = paths
+      .map(p => p.replace(/\\/g, '/').toLowerCase())
+      .find(p => p.startsWith(prefix) && p.endsWith('default_dif.rgt'))
+
+    if (!badgePath) return null
+
+    const bytes = await archive.readByPath(badgePath)
     if (!bytes) return null
 
     return rgtBytesToDataUrl(bytes)

@@ -66,16 +66,30 @@ function Segment({
     <button
       onClick={onClick}
       aria-pressed={active}
-      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-all duration-150 ${
+      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-all duration-150 cursor-pointer ${
         active
           ? 'text-black shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_2px_8px_rgba(0,0,0,0.25)]'
-          : 'text-[var(--color-text-2)] hover:text-white'
+          : 'hover:text-white'
       }`}
       style={{
         background: active
           ? `linear-gradient(${activeTint}, ${activeTint}), rgba(255,255,255,0.95)`
           : 'transparent',
         backgroundBlendMode: active ? 'overlay' : undefined,
+        opacity: active ? 1 : 0.55,
+        transition: 'opacity 150ms ease, background 150ms ease, color 150ms ease',
+      }}
+      onMouseEnter={e => {
+        if (!active) {
+          ;(e.currentTarget as HTMLElement).style.opacity = '1'
+          ;(e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.08)'
+        }
+      }}
+      onMouseLeave={e => {
+        if (!active) {
+          ;(e.currentTarget as HTMLElement).style.opacity = '0.55'
+          ;(e.currentTarget as HTMLElement).style.background = 'transparent'
+        }
       }}
     >
       <span className="flex items-center justify-center">{icon}</span>

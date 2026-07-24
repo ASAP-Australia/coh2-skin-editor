@@ -20,6 +20,10 @@
     "electron:dev": "npm run electron:compile && concurrently \"vite\" \"wait-on http://localhost:5173 && NODE_ENV=development electron --remote-debugging-port=9222 .\"",
     "audit:capture": "npm run electron:compile && AUDIT_CAPTURE=1 electron .",
     "audit:faithful": "npm run electron:compile && AUDIT_CAPTURE=1 AUDIT_FAITHFUL=1 electron .",
+    "verify:visual:capture": "npm run build && npm run electron:compile && VERIFY_VISUAL=1 electron .",
+    "verify:visual:diff": "npx tsx --tsconfig tsconfig.node.json scripts/verify-unwrap-visual.mts",
+    "verify:visual:build": "npm run build && npm run electron:compile",
+    "verify:visual": "npm run verify:visual:build && bash scripts/run-verify-visual-all.sh",
     "electron:build": "tsc -b && ELECTRON_BUILD=1 vite build && npm run electron:compile && electron-builder --publish=never",
     "electron:build:win": "tsc -b && npx cross-env ELECTRON_BUILD=1 vite build && npm run electron:compile && electron-builder --win --publish=never",
     "size": "size-limit",
@@ -60,6 +64,10 @@
       {
         "from": "steam_appid.txt",
         "to": "../steam_appid.txt"
+      },
+      {
+        "from": "tools/templates/template_0001.sga",
+        "to": "keys/template_0001.sga"
       }
     ],
     "asarUnpack": [
@@ -90,11 +98,13 @@
     "@types/three": "^0.184.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "konva": "^10.3.0",
     "lucide-react": "^1.14.0",
     "pako": "^2.1.0",
     "radix-ui": "^1.4.3",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
+    "react-konva": "^19.2.5",
     "steamworks.js": "^0.4.0",
     "tailwind-merge": "^3.5.0",
     "three": "^0.184.0",
@@ -103,11 +113,13 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.11.3",
     "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@playwright/test": "^1.60.0",
     "@size-limit/file": "^12.1.0",
     "@tailwindcss/vite": "^4.2.4",
     "@types/node": "^24.12.2",
     "@types/pako": "^2.0.4",
+    "@types/pngjs": "^6.0.5",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
@@ -126,14 +138,18 @@
     "knip": "^6.14.2",
     "lockfile-lint": "^5.0.0",
     "pa11y-ci": "^4.1.1",
+    "pixelmatch": "^7.2.0",
     "playwright": "^1.60.0",
+    "pngjs": "^7.0.0",
     "shadcn": "^4.6.0",
     "size-limit": "^12.1.0",
     "tailwindcss": "^4.2.4",
+    "tsx": "^4.23.1",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
     "vite": "^8.0.10",
     "vitest": "^3.2.4",
-    "wait-on": "^9.0.5"
+    "wait-on": "^9.0.5",
+    "zod": "^4.4.1"
   }
 }

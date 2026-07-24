@@ -44,6 +44,14 @@ import shermanFireflyUvRegions from '@/lib/vehicle-uv-regions/sherman_firefly.js
 import stugIiiUvRegions from '@/lib/vehicle-uv-regions/stug_iii.json'
 import kv2HeavyTankUvRegions from '@/lib/vehicle-uv-regions/kv2_heavy_tank.json'
 import panzerwerferUvRegions from '@/lib/vehicle-uv-regions/panzerwerfer.json'
+// Pass 3 — 7 authored JSONs registered (were in vehicle-uv-regions/ but missing from JSON_REGISTRY)
+import cromwellUvRegions from '@/lib/vehicle-uv-regions/cromwell.json'
+import kv1HeavyTankUvRegions from '@/lib/vehicle-uv-regions/kv1_heavy_tank.json'
+import m10TankDestroyerUvRegions from '@/lib/vehicle-uv-regions/m10_tank_destroyer.json'
+import m26PershingUvRegions from '@/lib/vehicle-uv-regions/m26_pershing.json'
+import m36TankDestroyerUvRegions from '@/lib/vehicle-uv-regions/m36_tank_destroyer.json'
+import m4a3Sherman76mmUvRegions from '@/lib/vehicle-uv-regions/m4a3_sherman_76mm.json'
+import t34_85UvRegions from '@/lib/vehicle-uv-regions/t34_85.json'
 
 /** Shape of the relevant slice of each vehicle UV-region JSON. */
 interface VehicleUvJsonRight {
@@ -74,6 +82,15 @@ const JSON_REGISTRY: Record<string, DecalBakeRect> = {
   stug_iii:            (stugIiiUvRegions as VehicleUvJsonRight).semanticRegions.hullSideRight,
   kv2_heavy_tank:      (kv2HeavyTankUvRegions as VehicleUvJsonRight).semanticRegions.hullSideRight,
   panzerwerfer:        (panzerwerferUvRegions as VehicleUvJsonRight).semanticRegions.hullSideRight,
+  // Pass 3 — 7 authored-but-unregistered JSONs now wired
+  cromwell:            (cromwellUvRegions as VehicleUvJsonRight).semanticRegions.hullSideRight,
+  kv1_heavy_tank:      (kv1HeavyTankUvRegions as VehicleUvJsonRight).semanticRegions.hullSideRight,
+  m10_tank_destroyer:  (m10TankDestroyerUvRegions as VehicleUvJsonRight).semanticRegions.hullSideRight,
+  m26_pershing:        (m26PershingUvRegions as VehicleUvJsonRight).semanticRegions.hullSideRight,
+  m36_tank_destroyer:  (m36TankDestroyerUvRegions as VehicleUvJsonRight).semanticRegions.hullSideRight,
+  m4a3_sherman_76mm:   (m4a3Sherman76mmUvRegions as VehicleUvJsonRight).semanticRegions.hullSideRight,
+  // T-34/85 uses hullFront — same glacis/fender convention as T-34/76
+  t34_85:              (t34_85UvRegions as VehicleUvJsonFront).semanticRegions.hullFront,
 }
 
 // ── Default fallback rect ────────────────────────────────────────────────────

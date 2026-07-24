@@ -131,13 +131,27 @@ function buildImagePrompt(ctx: GenerateCamoDiffusionCtx): string {
   // *texture* (not a render of a vehicle). The flat-art / no-shading
   // language matters: without it sd.cpp defaults to photorealistic tank
   // renders which are unusable as a diffuse texture.
+  //
+  // P0 FIX: "Pattern fills the entire frame edge-to-edge" was removed —
+  // it caused SDXL to paint over the full atlas with no UV awareness.
+  // The AI path (generateValidCoh2Texture) now uses img2img with the
+  // vanilla atlas + per-pixel mask composite, so the prompt should describe
+  // the camo *style*, not the coverage.
+  const honvedHint =
+    ctx.prompt.toLowerCase().includes('honved') ||
+    ctx.prompt.toLowerCase().includes('hungarian')
+      ? `Hungarian Honved army 1944 tank camouflage: Dunkelgelb base (#C8A96E) ` +
+        `with irregular hard-edged chestnut-brown (#7A3B2E) and oil-green (#4A5A35) blotches, ` +
+        `matte finish, faded wartime appearance, no gloss.`
+      : ''
+
   return [
-    `Flat 2D military vehicle camouflage texture, square tileable seamless pattern, top-down orthographic view.`,
+    `Flat 2D military vehicle camouflage texture, top-down orthographic UV layout.`,
     `Style: ${paletteHint}.`,
     `Finish: ${seasonHint}.`,
     `Hand-painted matte appearance — no 3D shading, no lighting, no shadows, no gradients, no highlights.`,
     `No panel lines, no rivets, no bolts, no hardware. No vehicle silhouette, no background, no text, no logos.`,
-    `Pattern fills the entire frame edge-to-edge with the camo only.`,
+    honvedHint,
     `Vehicle context: ${vehicleName}.`,
     userHint,
   ]

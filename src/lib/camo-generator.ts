@@ -7,6 +7,17 @@
  * Usage:
  *   const preset = parsePrompt('german ambush winter')
  *   generateCamo(myCanvas, preset)
+ *
+ * Equipment preservation (P0 fix):
+ *   Pass `maskCanvas` to restrict camo to armor-only pixels.
+ *   When provided, generateCamo uses source-atop clipping so tracks, wheels,
+ *   tools and fittings remain byte-identical to the vanilla diffuse.
+ *   When null/undefined, falls back to the legacy opaque-fill behaviour.
+ *
+ * Weathering (P2):
+ *   Call applyWeathering(ctx, W, H, seed) after the camo composite to layer
+ *   procedural dust, grime, chips and sun-fade. Honved preset triggers this
+ *   automatically via the `weathering` flag on the preset.
  */
 
 export type CamoStyle = 'softBlobs' | 'hardEdge' | 'whitewash' | 'stripes'
@@ -23,6 +34,19 @@ export interface CamoPreset {
   /** Blur radius in px (0 = hard edge). */
   blur: number
   label: string
+  /**
+   * When true, generateCamo skips the opaque base fill and only draws the
+   * secondary/tertiary blobs (transparent background so the caller can
+   * composite over the vanilla diffuse and use mask-gating).
+   * Also triggers the Honved historical desaturation + weathering pass.
+   */
+  maskedMode?: boolean
+  /**
+   * Restrict to this faction only — used by honved_summer to flag that
+   * the preset is historically scoped to german (Ostheer) vehicles only.
+   * UI can surface this as a warning when applied to other factions.
+   */
+  factionScope?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -47,6 +71,19 @@ const COLOR_KEYWORDS: Record<string, string> = {
 }
 
 const BASE_PRESETS: Record<string, CamoPreset> = {
+  // P1 — Historical Hungarian Honved 3-tone (1942+ factory scheme for German-built vehicles)
+  // Base: Dunkelgelb (#C8A96E), chestnut brown (#7A3B2E), oil-green (#4A5A35).
+  // maskedMode=true: skips opaque fill so camo composites over vanilla diffuse,
+  // allowing armor-only masking in renderCamoPresetToOverlay.
+  // factionScope='german': Ostheer only — NOT applied to OKW/west_german.
+  'honved_summer': {
+    label: 'Honved Hungarian 3-tone (Ostheer only)',
+    style: 'hardEdge',
+    colors: ['#C8A96E', '#7A3B2E', '#4A5A35'],
+    seed: 42, scale: 0.95, rotation: 0, blur: 0,
+    maskedMode: true,
+    factionScope: 'german',
+  },
   'german_summer': {
     label: 'German 3-tone summer',
     style: 'softBlobs',
@@ -122,6 +159,9 @@ export function parsePrompt(text: string): CamoPreset {
   let score = 0
 
   const bumps: [string, string, number][] = [
+    // P1 — Honved / Hungarian keywords take top priority (score 5)
+    ['honved', 'honved_summer', 5], ['hungarian', 'honved_summer', 5],
+    ['honvéd', 'honved_summer', 5], ['kereszt', 'honved_summer', 4],
     ['german', 'german_summer', 3], ['deutschland', 'german_summer', 3],
     ['soviet', 'soviet_summer', 3], ['russian', 'soviet_summer', 3],
     ['red army', 'soviet_summer', 3], ['american', 'american_summer', 3],
@@ -170,7 +210,42 @@ function makePrng(seed: number) {
 // Core generator
 // ---------------------------------------------------------------------------
 
-export function generateCamo(canvas: HTMLCanvasElement, preset: CamoPreset): void {
+/**
+ * Generate procedural camo onto `canvas`.
+ *
+ * P0 fix — maskedMode:
+ *   When `preset.maskedMode` is true the canvas is NOT cleared and NO opaque
+ *   base fill is drawn. Only the blob/stripe shapes are painted (with the
+ *   base color as the first blob pass). The caller (renderCamoPresetToOverlay)
+ *   must draw the vanilla diffuse first, then draw this camo canvas on top
+ *   using `source-atop` or mask compositing so equipment pixels are preserved.
+ *
+ *   When maskedMode is false/absent, legacy behaviour: clearRect + opaque fill
+ *   + blobs. Used for all non-Honved presets that work with the multiply blend.
+ *
+ * Camo overlay alpha (maskedMode):
+ *   The camo is composited at CAMO_OVERLAY_ALPHA (0.80) so 20% of the stock
+ *   diffuse luminance/shading survives — panel lines, rivets, and equipment
+ *   sub-detail remain visible instead of being buried under a flat color fill.
+ *   The mask clip ensures only armor pixels (mask-white) receive camo; all
+ *   equipment pixels (mask-black) are kept at full stock fidelity.
+ *
+ * @param maskCanvas  Optional greyscale mask canvas (white=armor, black=equip).
+ *   When provided in maskedMode, the camo blobs are clipped to armor pixels.
+ */
+
+/**
+ * Opacity at which the masked camo overlay is drawn over the stock diffuse.
+ * 0.80 = 80% camo + 20% stock shading → camo colour dominates but panel
+ * lines / rivets / sub-surface detail remain clearly visible.
+ */
+export const CAMO_OVERLAY_ALPHA = 0.80
+
+export function generateCamo(
+  canvas: HTMLCanvasElement,
+  preset: CamoPreset,
+  maskCanvas?: HTMLCanvasElement | null,
+): void {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   const W = canvas.width
@@ -178,17 +253,227 @@ export function generateCamo(canvas: HTMLCanvasElement, preset: CamoPreset): voi
   const rng = makePrng(preset.seed)
 
   ctx.save()
-  ctx.clearRect(0, 0, W, H)
 
-  // Fill base colour
-  ctx.fillStyle = preset.colors[0]
-  ctx.fillRect(0, 0, W, H)
+  if (preset.maskedMode) {
+    // P0: transparent canvas — caller owns the base (vanilla diffuse).
+    // Only paint the camo patches. Clip to mask if provided.
+    ctx.clearRect(0, 0, W, H)
 
+    if (maskCanvas) {
+      // Build the camo on a temp canvas (opaque fill + blobs), then clip to
+      // armor pixels only.
+      //
+      // IMPORTANT: the mask PNG stores armor=white(255,255,255,255) and
+      // equipment=black(0,0,0,255).  Both have full alpha (A=255), so
+      // `destination-in` would keep the ENTIRE camo canvas (it only cares
+      // about source alpha, not luminance).  We must convert the mask's
+      // luminance to the alpha channel first via a luminance-to-alpha pass,
+      // then use `destination-in` against that converted mask.
+      const tmp = document.createElement('canvas')
+      tmp.width = W; tmp.height = H
+      const tctx = tmp.getContext('2d')!
+      tctx.save()
+      tctx.clearRect(0, 0, W, H)
+      // Base colour fill (Dunkelgelb / primary camo colour)
+      tctx.fillStyle = preset.colors[0]
+      tctx.fillRect(0, 0, W, H)
+      // Secondary / tertiary blob patches on top
+      _drawStyle(tctx, W, H, preset, rng)
+      tctx.restore()
+
+      // Build luminance-to-alpha mask: white pixels → alpha=255 (keep camo),
+      // black pixels → alpha=0 (transparent, stock shows through).
+      const luma = document.createElement('canvas')
+      luma.width = W; luma.height = H
+      const lctx = luma.getContext('2d')!
+      lctx.drawImage(maskCanvas, 0, 0, W, H)
+      const maskData = lctx.getImageData(0, 0, W, H)
+      const md = maskData.data
+      for (let i = 0; i < md.length; i += 4) {
+        // Convert mask pixel luminance to alpha; zero out RGB so the mask
+        // canvas itself contributes no colour through the blend.
+        const lumVal = Math.round(0.2126 * md[i] + 0.7152 * md[i + 1] + 0.0722 * md[i + 2])
+        md[i] = 0; md[i + 1] = 0; md[i + 2] = 0; md[i + 3] = lumVal
+      }
+      lctx.putImageData(maskData, 0, 0)
+
+      // Clip the camo canvas to armor pixels via destination-in against the
+      // luminance-alpha mask: now equipment pixels (alpha=0) become transparent.
+      const tmp2 = document.createElement('canvas')
+      tmp2.width = W; tmp2.height = H
+      const t2ctx = tmp2.getContext('2d')!
+      t2ctx.drawImage(tmp, 0, 0)
+      t2ctx.globalCompositeOperation = 'destination-in'
+      t2ctx.drawImage(luma, 0, 0, W, H)
+
+      // Composite at CAMO_OVERLAY_ALPHA so stock shading/panel lines survive.
+      // Equipment pixels are transparent in tmp2, so they fall through to the
+      // stock diffuse drawn before this call.
+      ctx.globalAlpha = CAMO_OVERLAY_ALPHA
+      ctx.drawImage(tmp2, 0, 0)
+      ctx.globalAlpha = 1
+    } else {
+      // No mask available — draw base + blobs at partial alpha; caller will
+      // restrict via multiply blend over vanilla.
+      ctx.fillStyle = preset.colors[0]
+      ctx.fillRect(0, 0, W, H)
+      _drawStyle(ctx, W, H, preset, rng)
+    }
+  } else {
+    // Legacy: opaque base fill + blobs — works with multiply blend in caller.
+    ctx.clearRect(0, 0, W, H)
+    ctx.fillStyle = preset.colors[0]
+    ctx.fillRect(0, 0, W, H)
+    _drawStyle(ctx, W, H, preset, rng)
+  }
+
+  ctx.restore()
+}
+
+function _drawStyle(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  preset: CamoPreset,
+  rng: () => number,
+): void {
   switch (preset.style) {
     case 'softBlobs':   drawSoftBlobs(ctx, W, H, preset, rng); break
     case 'hardEdge':    drawHardEdge(ctx, W, H, preset, rng);  break
     case 'whitewash':   drawWhitewash(ctx, W, H, preset, rng); break
     case 'stripes':     drawStripes(ctx, W, H, preset, rng);   break
+  }
+}
+
+// ---------------------------------------------------------------------------
+// P2 — Procedural weathering pass (Honved historical finish)
+// ---------------------------------------------------------------------------
+
+/**
+ * Layer subtle weathering passes over an already-composited camo canvas.
+ * Call AFTER generateCamo / vanilla composite, BEFORE GPU upload.
+ *
+ * Passes (all procedural — no art assets required):
+ *   1. Dust/mud multiply on lower hull (vertical gradient)
+ *   2. Grime in recesses (noise darkening, full surface, low alpha)
+ *   3. Edge paint chips toward bare metal on hull edges
+ *   4. Exhaust staining near engine deck (top-right quadrant)
+ *   5. Sun fade on upper surfaces (screen blend, low alpha)
+ *   6. Period desaturation (CSS filter saturate(0.65) approximated pixel-pass)
+ *
+ * @param ctx  2D context of the final composited 2048² canvas.
+ * @param W    Canvas width (should be 2048).
+ * @param H    Canvas height (should be 2048).
+ * @param seed Seed for reproducible noise (use CamoPreset.seed).
+ */
+export function applyWeathering(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  seed: number,
+): void {
+  const rng = makePrng(seed ^ 0xdeadbeef)
+
+  ctx.save()
+
+  // 1. Dust / mud — lower 35% of canvas, multiply dark brown gradient
+  {
+    const grad = ctx.createLinearGradient(0, H * 0.65, 0, H)
+    grad.addColorStop(0, 'rgba(0,0,0,0)')
+    grad.addColorStop(0.5, 'rgba(40,28,12,0.22)')
+    grad.addColorStop(1, 'rgba(28,18,6,0.40)')
+    ctx.globalCompositeOperation = 'multiply'
+    ctx.fillStyle = grad
+    ctx.fillRect(0, H * 0.65, W, H * 0.35)
+    ctx.globalCompositeOperation = 'source-over'
+  }
+
+  // 2. Grime / ambient dirt — random dark smudges scattered across surface
+  {
+    ctx.globalCompositeOperation = 'multiply'
+    const grimeCount = 80
+    for (let i = 0; i < grimeCount; i++) {
+      const gx = rng() * W
+      const gy = rng() * H
+      const gr = (20 + rng() * 80)
+      const ga = 0.05 + rng() * 0.12
+      const radial = ctx.createRadialGradient(gx, gy, 0, gx, gy, gr)
+      radial.addColorStop(0, `rgba(20,14,5,${ga})`)
+      radial.addColorStop(1, 'rgba(20,14,5,0)')
+      ctx.fillStyle = radial
+      ctx.fillRect(gx - gr, gy - gr, gr * 2, gr * 2)
+    }
+    ctx.globalCompositeOperation = 'source-over'
+  }
+
+  // 3. Edge paint chips — small bright-grey rectangles on hull border zones
+  {
+    ctx.globalCompositeOperation = 'source-over'
+    const chipCount = 120
+    // Chips concentrate on upper-hull perimeter (edges of the 2048 space)
+    for (let i = 0; i < chipCount; i++) {
+      const side = Math.floor(rng() * 4)
+      let cx: number, cy: number
+      if (side === 0) { cx = rng() * W; cy = rng() * H * 0.15 }          // top
+      else if (side === 1) { cx = rng() * W; cy = H - rng() * H * 0.15 } // bottom
+      else if (side === 2) { cx = rng() * W * 0.15; cy = rng() * H }     // left
+      else { cx = W - rng() * W * 0.15; cy = rng() * H }                  // right
+      const cw = 2 + rng() * 8
+      const ch = 1 + rng() * 4
+      const brightness = 0.60 + rng() * 0.25
+      ctx.globalAlpha = 0.45 + rng() * 0.25
+      ctx.fillStyle = `rgb(${Math.round(brightness * 160)},${Math.round(brightness * 155)},${Math.round(brightness * 140)})`
+      ctx.fillRect(cx, cy, cw, ch)
+    }
+    ctx.globalAlpha = 1
+  }
+
+  // 4. Exhaust staining — engine deck = top-right quadrant, warm grey streak
+  {
+    ctx.globalCompositeOperation = 'overlay'
+    const exGrad = ctx.createRadialGradient(
+      W * 0.75, H * 0.2, 0,
+      W * 0.75, H * 0.2, W * 0.22,
+    )
+    exGrad.addColorStop(0, 'rgba(30,25,15,0.30)')
+    exGrad.addColorStop(1, 'rgba(30,25,15,0)')
+    ctx.fillStyle = exGrad
+    ctx.fillRect(W * 0.5, 0, W * 0.5, H * 0.4)
+    ctx.globalCompositeOperation = 'source-over'
+  }
+
+  // 5. Sun fade — upper surfaces (top 30%), very subtle screen lift
+  {
+    ctx.globalCompositeOperation = 'screen'
+    const sunGrad = ctx.createLinearGradient(0, 0, 0, H * 0.3)
+    sunGrad.addColorStop(0, 'rgba(210,195,160,0.10)')
+    sunGrad.addColorStop(1, 'rgba(210,195,160,0)')
+    ctx.fillStyle = sunGrad
+    ctx.fillRect(0, 0, W, H * 0.3)
+    ctx.globalCompositeOperation = 'source-over'
+  }
+
+  // 6. Period desaturation — pull colour toward grey/sepia
+  //    Approximated as: read pixels, reduce saturation to 65%, add slight
+  //    warm tint. Done via ImageData for a faithful per-pixel pass.
+  {
+    const imageData = ctx.getImageData(0, 0, W, H)
+    const d = imageData.data
+    const n = d.length
+    for (let i = 0; i < n; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2]
+      // Luminance (rec709)
+      const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+      // Lerp toward luminance at 35% (retain 65% of original chroma)
+      const sat = 0.65
+      d[i]     = Math.round(r * sat + lum * (1 - sat))
+      d[i + 1] = Math.round(g * sat + lum * (1 - sat))
+      d[i + 2] = Math.round(b * sat + lum * (1 - sat))
+      // Slight warm tint: nudge R+2, B-3 for a faded wartime look
+      d[i]     = Math.min(255, d[i] + 2)
+      d[i + 2] = Math.max(0, d[i + 2] - 3)
+    }
+    ctx.putImageData(imageData, 0, 0)
   }
 
   ctx.restore()

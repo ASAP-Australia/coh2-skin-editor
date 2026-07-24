@@ -142,6 +142,38 @@ describe('studio_grid preset', () => {
     expect(p.omniLights).toBeDefined()
     expect(p.omniLights!.length).toBe(6)
   })
+
+  // ── Reflections-off contract (issue 22) ────────────────────────────────
+  // studio_grid must use a 'color' background, which is the gate Viewport.tsx
+  // uses to null scene.environment (no IBL env map = no env reflections).
+  it('uses a color (not cubemap) background so Viewport nulls scene.environment', () => {
+    expect(p.background.kind).toBe('color')
+  })
+
+  // ── Bright / fully-illuminated contract (issue 22) ────────────────────
+  it('exposure is at least 1.0 for a fully-illuminated studio look', () => {
+    expect(p.exposure).toBeGreaterThanOrEqual(1.0)
+  })
+
+  it('hemi intensity is at least 1.4 so dark undercarriage cavities are lit', () => {
+    expect(p.hemi.intensity).toBeGreaterThanOrEqual(1.4)
+  })
+
+  it('omni lights are at least 0.45 intensity each (bright even fill)', () => {
+    for (const l of p.omniLights!) {
+      expect(l.intensity).toBeGreaterThanOrEqual(0.45)
+    }
+  })
+
+  // ── FACTION_LIGHT_BOOST composition (issue 22) ─────────────────────────
+  // Boost applies multiplicatively on top of base exposure/hemi, so the
+  // studio values compose naturally without any special casing.
+  it('british faction boost (1.3×) produces exposure > base but < 1.5 (no blowout)', () => {
+    const boost = 1.3
+    const boosted = p.exposure * boost
+    expect(boosted).toBeGreaterThan(p.exposure)
+    expect(boosted).toBeLessThan(1.5)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -171,6 +203,28 @@ describe('showcase preset', () => {
   it('hides both grid and ground', () => {
     expect(p.showGrid).toBe(false)
     expect(p.showGround).toBe(false)
+  })
+
+  // ── Reflections-off contract (issue 23) ────────────────────────────────
+  // showcase must use a 'color' background so Viewport.tsx nulls scene.environment.
+  it('uses a color (not cubemap) background so Viewport nulls scene.environment', () => {
+    expect(p.background.kind).toBe('color')
+  })
+
+  // ── Brighter contract (issue 23) ─────────────────────────────────────
+  it('exposure is at least 1.0 for a brighter showcase look', () => {
+    expect(p.exposure).toBeGreaterThanOrEqual(1.0)
+  })
+
+  it('showcase is brighter than the previous 0.85 baseline', () => {
+    expect(p.exposure).toBeGreaterThan(0.85)
+  })
+
+  // ── FACTION_LIGHT_BOOST composition (issue 23) ─────────────────────────
+  it('british faction boost (1.3×) produces exposure > base (boost composes)', () => {
+    const boost = 1.3
+    const boosted = p.exposure * boost
+    expect(boosted).toBeGreaterThan(p.exposure)
   })
 })
 

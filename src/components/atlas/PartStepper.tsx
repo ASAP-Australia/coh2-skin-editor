@@ -2,7 +2,7 @@
  * PartStepper — ◀ Part Name (N/6) ▶ control for cycling atlas parts.
  */
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { ATLAS_PART_DEFS } from '@/lib/decal-pack-project'
+import { ATLAS_PART_DEFS, atlasPartLabel } from '@/lib/decal-pack-project'
 
 interface Props {
   activeIndex: number                   // 0..5
@@ -33,7 +33,7 @@ export default function PartStepper({ activeIndex, onChange }: Props) {
         <ChevronLeft size={16} />
       </button>
       <span style={{ color: '#fff', fontSize: 13, fontWeight: 500, minWidth: 160, textAlign: 'center' }}>
-        {def?.name ?? '—'} ({activeIndex + 1}/{total})
+        {def ? atlasPartLabel(activeIndex) : '—'} ({activeIndex + 1}/{total})
         {def?.locked && <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.5 }}>🔒</span>}
       </span>
       <button onClick={next} aria-label="Next part" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#fff', display: 'flex', padding: 2 }}>

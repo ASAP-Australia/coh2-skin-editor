@@ -168,12 +168,11 @@ describe('ShortcutHelpSheet — dialog accessibility', () => {
     expect(d!.getAttribute('aria-label')).toBe('Keyboard shortcuts')
   })
 
-  it('renders all three groups (Editing, View, Mouse)', () => {
+  it('renders the Vehicle editor group (sourced from keyboard-shortcuts-data)', () => {
     dispatchKey('?')
     const text = document.body.textContent ?? ''
-    expect(text).toContain('Editing')
-    expect(text).toContain('View')
-    expect(text).toContain('Mouse')
+    // ShortcutHelpSheet now sources from keyboard-shortcuts-data single truth source.
+    expect(text).toContain('Vehicle editor')
   })
 
   it('renders representative shortcut rows (Save / Reset camera / Orbit)', () => {

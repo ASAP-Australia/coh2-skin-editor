@@ -139,4 +139,16 @@ describe('resolveDecalUvRect', () => {
     expect(rect.x + rect.w).toBeLessThanOrEqual(2048)
     expect(rect.y + rect.h).toBeLessThanOrEqual(2048)
   })
+
+  // Phase 4 fix: AtlasPreview3D now uses resolveDecalUvRect rather than
+  // a hardcoded { x:896, y:1152, w:512, h:512 } constant.
+  // This test pins that the registry lookup for king_tiger_sdkfz_182
+  // returns the Wikinger-verified rect, NOT the old wrong constant.
+  it('(e) AtlasPreview3D badge rect — registry KT rect is not the old hardcoded value', () => {
+    const rect = resolveDecalUvRect('king_tiger_sdkfz_182')
+    // Old wrong constant that AtlasPreview3D used to hard-code:
+    expect(rect).not.toMatchObject({ x: 896, y: 1152, w: 512, h: 512 })
+    // Confirmed Wikinger ground-truth rect:
+    expect(rect).toMatchObject({ x: 410, y: 1320, w: 360, h: 340 })
+  })
 })

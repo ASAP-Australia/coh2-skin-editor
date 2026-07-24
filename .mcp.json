@@ -6,6 +6,12 @@
         "shadcn@latest",
         "mcp"
       ]
+    },
+    "coh2-dev": {
+      "command": "node",
+      "args": [
+        "tools/coh2-dev-mcp/server.mjs"
+      ]
     }
   }
 }

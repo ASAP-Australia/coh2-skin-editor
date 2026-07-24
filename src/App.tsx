@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ConnectScreen from '@/components/ConnectScreen'
 import StartScreen from '@/components/StartScreen'
 import SavedProjectsList from '@/components/SavedProjectsList'
@@ -10,6 +10,7 @@ import WindowControls from '@/components/WindowControls'
 import {
   type Coh2SkinProject,
   loadById as loadSkinById,
+  loadActive as loadActiveProject,
   persistActive,
   readProjectFile,
 } from '@/lib/project'
@@ -26,7 +27,7 @@ import {
   tryParseDecalPackFile,
 } from '@/lib/decal-pack-project'
 import { loadSavedHandle } from '@/lib/coh2-fs'
-import { isElectron, detectInstallPath, nativePathToHandle } from '@/lib/native-fs'
+import { isElectron, detectInstallPath, nativePathToHandle, httpPathToHandle } from '@/lib/native-fs'
 import { lazy, Suspense } from 'react'
 import { preloadCommonArchives } from '@/lib/preload'
 import { VEHICLES, defaultVehicleForFaction, type VehicleSpec } from '@/lib/vehicles'
@@ -34,6 +35,11 @@ import { VEHICLES, defaultVehicleForFaction, type VehicleSpec } from '@/lib/vehi
 // Lazy-loaded so Three.js stays out of the initial JS parse budget.
 // The background warmup Viewport is only mounted after a successful Connect.
 const ViewportBgWarmer = lazy(() => import('@/components/Viewport'))
+
+// Guards the headless warmer against machines with no/broken WebGL: skips
+// renderer construction (which would throw) and swallows any late throw so a
+// broken GPU can never white-screen the app via the background warmer.
+import ViewportGuard from '@/components/ViewportGuard'
 
 // Audit runner — only loaded when ?audit=1 is in the URL. Lazy to keep
 // Three.js out of the initial bundle when the normal app boots.
@@ -86,19 +92,9 @@ type Phase =
   | 'faceplate'
   | 'decal-pack'
 
-/** Time we hold the editor-loading FLIP before swapping in the real
- *  faceplate / decal-pack editor surface. Tuned to cover the FLIP
- *  animation duration (AuthShell.IN_MS ≈ 520 ms) plus a small safety
- *  margin for the icon morph. Reduced from 1200 ms — the animation
- *  completes in ~520 ms and the extra 680 ms was dead wait.
- *  The skin editor uses an adaptive ready callback instead (see editorLoadStartRef). */
-const EDITOR_LOADING_MS = 600
-
-/** Minimum delay (ms) before revealing the skin editor after entering
- *  editor-loading. Covers the full FLIP animation duration so the
- *  "logo flies to centre → world opens" motion is never cut short even
- *  when the Viewport renders its first vehicle very quickly. */
-const EDITOR_LOADING_MIN_MS = 620
+// EDITOR_LOADING_MS and EDITOR_LOADING_MIN_MS removed (Phase 3 — F2c/F1/F3):
+// faceplate/decal-pack open directly via withViewTransition; skin editor uses
+// onReady-driven setPhase('editor') with no minimum hold.
 
 /**
  * Wraps a synchronous state-update callback in the View Transitions API
@@ -135,7 +131,12 @@ export default function App() {
     // Synchronous flags that can be resolved on first render without any async work.
     const sParams = new URLSearchParams(location.search)
     if (sParams.get('screenshot') === '1') return 'connect'
-    if (isElectron()) return 'connect'
+    // Electron: start as 'probing' so the async auto-detect runs before
+    // anything is shown. The useEffect below resolves to 'start' (detected)
+    // or 'connect' (not found). Headless mode also starts here and the effect
+    // handles it. The old hard-coded 'connect' caused ConnectScreen to flash
+    // even when auto-detect would succeed.
+    if (isElectron()) return 'probing'
     return 'probing'
   })
   /** Hydrated faceplate project, set just before navigating into the
@@ -150,9 +151,6 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const diskFileInputRef = useRef<HTMLInputElement>(null)
-  /** Records the timestamp when editor-loading begins for the skin editor,
-   *  so the onReady callback can enforce the minimum FLIP animation duration. */
-  const editorLoadStartRef = useRef(0)
 
   // ── Background vehicle warmer ─────────────────────────────────────────────
   // After Connect completes, a headless warmupOnly Viewport is kept alive at
@@ -208,12 +206,25 @@ export default function App() {
     if (bgWarmupFiredRef.current === bgWarmupHandle) return
     bgWarmupFiredRef.current = bgWarmupHandle
 
-    // The default vehicle warmed by ConnectScreen — skip to avoid redundant build.
+    // The default vehicle warmed by ConnectScreen — on the Electron auto-detect
+    // path ConnectScreen never runs, so elefant is never pre-warmed. Promote it
+    // to the front so "New Skin" (which always opens elefant) gets a cache hit.
     const defaultId = defaultVehicleForFaction('german', new Set<string>())
-    // Warm in display (VEHICLES array) order, skipping already-cached entries.
-    // The pinnedVehicleCache check inside buildVehicleIntoCache also guards against
-    // double-builds, but filtering here avoids even enqueueing them.
-    const remaining = VEHICLES.filter(v => v.id !== defaultId)
+    // Also promote the last-used vehicle from the active project so "Continue"
+    // is guaranteed to hit the cache before the user can click it.
+    const activeLastVehicleId: string | null = (() => {
+      try { return loadActiveProject()?.lastVehicleId ?? null } catch { return null }
+    })()
+    // Build a dedup'd list of priority ids (filter falsy, then dedup).
+    const priorityIds = Array.from(
+      new Set([defaultId, activeLastVehicleId].filter((id): id is string => !!id))
+    )
+    const priorityVehicles = priorityIds
+      .map(id => VEHICLES.find(v => v.id === id))
+      .filter((v): v is typeof VEHICLES[number] => v !== undefined)
+    // Remaining vehicles in VEHICLES array order, excluding already-prioritised ids.
+    const rest = VEHICLES.filter(v => !priorityIds.includes(v.id))
+    const remaining = [...priorityVehicles, ...rest]
 
     let aborted = false
     const LANES = 3
@@ -292,11 +303,66 @@ export default function App() {
       return
     }
     if (isElectron()) {
-      // Desktop: already set to 'connect' via lazy useState initializer — nothing to do.
+      // Desktop: auto-detect the CoH2 install and skip ConnectScreen entirely.
+      // Fall back to ConnectScreen only when detection fails (install not found
+      // or Steam not accessible). The Steam-check inside ConnectScreen still
+      // gates the real 'linking-steam' step; we skip the VISUAL screen, not
+      // the Steam handshake — ConnectScreen.connect() is still called via
+      // onConnected from the ConnectScreen when the user retries after an error.
+      //
+      // NOTE: We go to 'connect' here so ConnectScreen auto-fires its connect()
+      // logic on mount. To truly bypass the button-click we set phase to
+      // 'auto-connecting' and handle it below.
+      detectInstallPath()
+        .then(p => {
+          if (p) {
+            // Auto-detected: skip ConnectScreen UI and jump straight to start.
+            // The Steam init and archive preload that ConnectScreen normally
+            // does are deferred — ConnectScreen performs those on user click,
+            // but here we go straight to 'start'. Steam is still initialised
+            // lazily by the rest of the app when needed (Workshop publishing etc).
+            setInstallRoot(nativePathToHandle(p))
+            setBgWarmupHandle(nativePathToHandle(p))
+            setPhase('start')
+          } else {
+            // Install not found — show ConnectScreen for manual pick.
+            setPhase('connect')
+          }
+        })
+        .catch(() => setPhase('connect'))
       return
     }
-    // Browser: try the saved File System Access handle. If it's still
-    // authorised, skip Connect and land on StartScreen.
+    // Browser: first try the /__coh2/detect dev bridge (DEV only), then
+    // fall back to the saved File System Access handle, then ConnectScreen.
+    if (import.meta.env.DEV) {
+      fetch('/__coh2/detect')
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then((data: { installPath: string }) => {
+          if (data?.installPath) {
+            const h = httpPathToHandle(data.installPath)
+            setInstallRoot(h)
+            setBgWarmupHandle(h)
+            setPhase('start')
+          } else {
+            return Promise.reject()
+          }
+        })
+        .catch(() => {
+          // Bridge unavailable — fall back to saved handle then ConnectScreen.
+          loadSavedHandle()
+            .then(h => {
+              if (h) {
+                setInstallRoot(h)
+                setPhase('start')
+              } else {
+                setPhase('connect')
+              }
+            })
+            .catch(() => setPhase('connect'))
+        })
+      return
+    }
+    // Browser production: try the saved File System Access handle.
     loadSavedHandle()
       .then(h => {
         if (h) {
@@ -311,31 +377,26 @@ export default function App() {
 
   // ── Open-project routing helpers ─────────────────────────────────────
   //
-  // Each handler sets phase='editor-loading' SYNCHRONOUSLY before the
-  // setTimeout that flips into the destination phase. AuthShell sees
-  // the phase change immediately and starts the FLIP icon morph; by
-  // the time EDITOR_LOADING_MS elapses the ASAP wordmark has settled
-  // at the card's centre and the editor swap reads as continuous
-  // motion rather than a cut.
+  // Skin editor: sets phase='editor-loading', Editor mounts invisibly,
+  // onReady fires immediately on first model load → setPhase('editor').
+  // Faceplate/decal-pack: wrapped in withViewTransition for a smooth slide.
 
   const openSkin = (project: Coh2SkinProject) => {
     persistActive(project)
-    editorLoadStartRef.current = Date.now()
-    setPhase('editor-loading')
-    // No fixed timeout here — the Editor's onReady callback drives the
-    // transition to 'editor' with a minimum-duration guard instead.
+    // Open the skin editor DIRECTLY — same as faceplate/decal-pack. No
+    // intermediate 'editor-loading' card; the Viewport loads the vehicle
+    // in place inside the already-visible editor.
+    withViewTransition(() => setPhase('editor'))
   }
 
   const openFaceplate = (project: Coh2FaceplateProject) => {
     setFaceplateProject(project)
-    setPhase('editor-loading')
-    window.setTimeout(() => setPhase('faceplate'), EDITOR_LOADING_MS)
+    withViewTransition(() => setPhase('faceplate'))
   }
 
   const openDecalPack = (project: Coh2DecalPackProject) => {
     setDecalPackProject(project)
-    setPhase('editor-loading')
-    window.setTimeout(() => setPhase('decal-pack'), EDITOR_LOADING_MS)
+    withViewTransition(() => setPhase('decal-pack'))
   }
 
   // ── Saved-projects → load by id helpers ──────────────────────────────
@@ -431,13 +492,6 @@ export default function App() {
 
   const triggerDiskPicker = () => diskFileInputRef.current?.click()
 
-  /** Fired by the skin Editor on its first onModelLoaded. Flips to the
-   *  'editor' phase after the minimum FLIP animation duration has elapsed
-   *  (clamped so we never wait longer than necessary). */
-  const onEditorReady = useCallback(() => {
-    const elapsed = Date.now() - editorLoadStartRef.current
-    window.setTimeout(() => setPhase('editor'), Math.max(0, EDITOR_LOADING_MIN_MS - elapsed))
-  }, [])
 
   // ── Render ───────────────────────────────────────────────────────────
 
@@ -464,24 +518,25 @@ export default function App() {
       overflow: 'hidden', zIndex: -1,
     }}>
       <Suspense fallback={null}>
-        <ViewportBgWarmer
-          root={bgWarmupHandle}
-          vehicle={null}
-          selectedPart={null}
-          explodeAll={false}
-          season="summer"
-          envArchive={null}
-          envName=""
-          controlsEnabled={false}
-          warmupOnly={true}
-          preloadRef={bgWarmupPreloadRef}
-        />
+        <ViewportGuard label="Background warmer" silent>
+          <ViewportBgWarmer
+            root={bgWarmupHandle}
+            vehicle={null}
+            selectedPart={null}
+            explodeAll={false}
+            season="summer"
+            envArchive={null}
+            envName=""
+            controlsEnabled={false}
+            warmupOnly={true}
+            preloadRef={bgWarmupPreloadRef}
+          />
+        </ViewportGuard>
       </Suspense>
     </div>
   ) : null
 
-  // Probing or no install yet → AuthShell-hosted phases (connect /
-  // start / saved-projects / editor-loading).
+  // ── AuthShell-hosted panel (connect / start / saved-projects / probing / editor-loading) ──
   const inAuthShell =
     phase === 'probing' ||
     phase === 'connect' ||
@@ -489,138 +544,144 @@ export default function App() {
     phase === 'saved-projects' ||
     phase === 'editor-loading'
 
-  if (inAuthShell) {
-    let panel: React.ReactNode = null
-
-    if (phase === 'connect') {
-      panel = (
-        <ConnectScreen
-          onConnected={h => {
-            setInstallRoot(h)
-            // Kick off the background vehicle warmer. The headless Viewport
-            // below renders whenever bgWarmupHandle is non-null and fills
-            // pinnedVehicleCache for all vehicles that ConnectScreen skipped.
-            setBgWarmupHandle(h)
-            setPhase('start')
-          }}
-        />
-      )
-    } else if (phase === 'start') {
-      panel = (
-        <StartScreen
-          onContinueSkin={openSkin}
-          onNewSkin={() => {
-            // The skin editor reads `loadActive()` on mount; clearing
-            // the active-id pointer lets its `loadActive() ?? newProject()`
-            // fallback create a fresh pack. Wrapped in try/catch so a
-            // storage exception (e.g. private-mode quota) doesn't block
-            // the user from starting a new pack.
-            try {
-              localStorage.removeItem('coh2-skin-active-project')
-            } catch {
-              /* ignore */
-            }
-            editorLoadStartRef.current = Date.now()
-            setPhase('editor-loading')
-            // No fixed timeout — onEditorReady drives the transition.
-          }}
-          onNewFaceplate={() => openFaceplate(newFaceplateProject())}
-          onNewDecalPack={() => openDecalPack(newDecalPackProject())}
-          onLoadSkin={openSkin}
-          onLoadFaceplate={openFaceplate}
-          onLoadDecalPack={openDecalPack}
-          onOpenRecentFaceplate={openFaceplate}
-          onOpenRecentDecalPack={openDecalPack}
-          onShowSavedProjects={() => setPhase('saved-projects')}
-        />
-      )
-    } else if (phase === 'saved-projects') {
-      panel = (
-        <SavedProjectsList
-          onPickSkin={pickSavedSkin}
-          onPickFaceplate={pickSavedFaceplate}
-          onPickDecalPack={pickSavedDecalPack}
-          onBack={() => setPhase('start')}
-          onPickFromDisk={triggerDiskPicker}
-        />
-      )
-    } else if (phase === 'probing') {
-      panel = (
-        <div className="text-[12px] text-[var(--color-text-3)] tracking-[2px] uppercase">
-          Loading…
-        </div>
-      )
-    }
-    // phase === 'editor-loading' → panel stays as last rendered panel
-    // would be ideal, but AuthShell already retains the outgoing snapshot
-    // via its internal `pending` ref. We pass `null` here; AuthShell
-    // hides the panel body and runs the FLIP morph on the icon. This
-    // is the explicit "logo flies to centre" moment.
-
-    return (
-      <>
-        <WindowControls />
-        {loadError && (
-          <div
-            className="fixed top-10 left-1/2 -translate-x-1/2 z-50 max-w-sm w-full px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed flex items-start gap-2"
-            role="alert"
-          >
-            <span className="flex-1 whitespace-pre-line">{loadError}</span>
-            <button
-              type="button"
-              aria-label="Dismiss error"
-              onClick={() => setLoadError(null)}
-              className="shrink-0 text-red-200/60 hover:text-red-200/90 transition-colors leading-none"
-            >
-              ✕
-            </button>
-          </div>
-        )}
-        <AuthShell phase={phase}>{panel}</AuthShell>
-        {/* Mount the skin Editor hidden during editor-loading so the Viewport
-            starts building the first vehicle immediately behind the FLIP
-            animation. onReady fires when the first vehicle is rendered and
-            flips us to the 'editor' phase with a minimum-duration guard. */}
-        {phase === 'editor-loading' && installRoot && (
-          <Editor
-            root={installRoot}
-            onDisconnect={() => withViewTransition(() => setPhase('start'))}
-            onClosePack={() => withViewTransition(() => setPhase('start'))}
-            visible={false}
-            onReady={onEditorReady}
-          />
-        )}
-        <input
-          ref={diskFileInputRef}
-          type="file"
-          accept=".coh2skin,.coh2faceplate,.coh2decalpack,.json"
-          onChange={onDiskFile}
-          className="hidden"
-          aria-label="Open project file from disk"
-        />
-        {bgWarmerNode}
-      </>
+  let panel: React.ReactNode = null
+  if (phase === 'connect') {
+    panel = (
+      <ConnectScreen
+        onConnected={h => {
+          setInstallRoot(h)
+          setBgWarmupHandle(h)
+          setPhase('start')
+        }}
+      />
+    )
+  } else if (phase === 'start') {
+    panel = (
+      <StartScreen
+        onContinueSkin={openSkin}
+        onNewSkin={() => {
+          try {
+            localStorage.removeItem('coh2-skin-active-project')
+          } catch {
+            /* ignore */
+          }
+          withViewTransition(() => setPhase('editor'))
+        }}
+        onNewFaceplate={() => openFaceplate(newFaceplateProject())}
+        onNewDecalPack={() => openDecalPack(newDecalPackProject())}
+        onLoadSkin={openSkin}
+        onLoadFaceplate={openFaceplate}
+        onLoadDecalPack={openDecalPack}
+        onOpenRecentFaceplate={openFaceplate}
+        onOpenRecentDecalPack={openDecalPack}
+        onShowSavedProjects={() => setPhase('saved-projects')}
+      />
+    )
+  } else if (phase === 'saved-projects') {
+    panel = (
+      <SavedProjectsList
+        onPickSkin={pickSavedSkin}
+        onPickFaceplate={pickSavedFaceplate}
+        onPickDecalPack={pickSavedDecalPack}
+        onBack={() => setPhase('start')}
+        onPickFromDisk={triggerDiskPicker}
+      />
+    )
+  } else if (phase === 'probing') {
+    panel = (
+      <div className="text-[12px] text-[var(--color-text-3)] tracking-[2px] uppercase">
+        Loading…
+      </div>
     )
   }
+  // phase === 'editor-loading' → panel = null; AuthShell runs FLIP morph.
 
-  // Full-screen editors — replace AuthShell entirely.
-  if (phase === 'editor' && installRoot) {
-    return (
-      <>
-        <WindowControls />
+  // Unified return tree — ONE stable <Editor> element whose position in
+  // the tree is fixed. Prevents React unmount/remount at the editor-loading
+  // → editor phase flip (which was causing double Viewport re-init).
+  //
+  // glass-frame: the outermost wrapper that provides the glass border,
+  //   20 px corner radius, squircle corner-shape, and reference box-shadow.
+  //   The window is OPAQUE (transparent:false) and body paints a dark
+  //   surround (#1a1a1a), so this renders as a glass CARD floating on a
+  //   dark page — matching the lab01.dev reference.
+  // glass-frame-inner: clips child content at 16 px radius so app chrome
+  //   doesn't bleed past the glass ring; carries the #0D0D0D dark background
+  //   and the inset white-/15 ring. Its FIRST child is a blurred spotlight
+  //   (the light source that sells the glass); the app content sits in a
+  //   relative z-10 wrapper above it.
+  return (
+    <div className="glass-frame">
+    <div className="glass-frame-inner">
+      {/* Spotlight — soft top-left light source behind the app content.
+          aria-hidden background layer; app content (below) sits above via
+          its own stacking context (relative + z-10). */}
+      <span
+        aria-hidden="true"
+        className="rounded-full"
+        style={{
+          position: 'absolute',
+          width: 320,
+          height: 320,
+          borderRadius: 9999,
+          background: '#fff',
+          left: -160,
+          top: -160,
+          filter: 'blur(100px)',
+          mixBlendMode: 'overlay',
+          opacity: 0.3,
+          pointerEvents: 'none',
+        }}
+      />
+      {/* Inset glass edge — rendered ABOVE the app content (z-60) so the
+          full-bleed background can't paint over it. This is the reference's
+          "inset-ring on an overlay div" technique: an inset box-shadow on
+          glass-frame-inner itself sits UNDER the content and gets covered, so
+          the crisp 1px white edge looks missing. borderRadius matches the
+          inner panel; corner-shape (global) makes it follow the squircle. */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          borderRadius: 16,
+          pointerEvents: 'none',
+          zIndex: 60,
+          boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.15)',
+        }}
+      />
+      <div className="relative z-10 w-full h-full">
+      <WindowControls />
+      {loadError && (
+        <div
+          className="fixed top-10 left-1/2 -translate-x-1/2 z-50 max-w-sm w-full px-3.5 py-2.5 rounded-2xl border border-red-400/25 bg-red-500/[0.06] text-[12px] text-red-200/90 leading-relaxed flex items-start gap-2"
+          role="alert"
+        >
+          <span className="flex-1 whitespace-pre-line">{loadError}</span>
+          <button
+            type="button"
+            aria-label="Dismiss error"
+            onClick={() => setLoadError(null)}
+            className="shrink-0 text-red-200/60 hover:text-red-200/90 transition-colors leading-none"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      {inAuthShell && <AuthShell phase={phase}>{panel}</AuthShell>}
+      {/* Single persistent Editor element. Mounts as soon as editor-loading
+          begins (hidden via visible=false) so the Viewport warms up behind
+          the AuthShell FLIP animation. Stays mounted as visible=true once
+          the editor phase is active. Stable tree position = no remount. */}
+      {phase === 'editor' && installRoot && (
         <Editor
           root={installRoot}
           onDisconnect={() => withViewTransition(() => setPhase('start'))}
           onClosePack={() => withViewTransition(() => setPhase('start'))}
+          visible={true}
         />
-        {bgWarmerNode}
-      </>
-    )
-  }
-  if (phase === 'faceplate' && faceplateProject) {
-    return (
-      <>
-        <WindowControls />
+      )}
+      {phase === 'faceplate' && faceplateProject && (
         <FaceplateEditor
           project={faceplateProject}
           onBack={() =>
@@ -630,14 +691,8 @@ export default function App() {
             })
           }
         />
-        {bgWarmerNode}
-      </>
-    )
-  }
-  if (phase === 'decal-pack' && decalPackProject) {
-    return (
-      <>
-        <WindowControls />
+      )}
+      {phase === 'decal-pack' && decalPackProject && (
         <DecalPackEditor
           project={decalPackProject}
           onBack={() =>
@@ -648,26 +703,18 @@ export default function App() {
           }
           installRoot={installRoot}
         />
-        {bgWarmerNode}
-      </>
-    )
-  }
-
-  // Fallback — should not reach here in practice. If we do, kick back
-  // to the connect phase so the user can recover.
-  return (
-    <>
-      <WindowControls />
-      <AuthShell phase="connect">
-        <ConnectScreen
-          onConnected={h => {
-            setInstallRoot(h)
-            setBgWarmupHandle(h)
-            setPhase('start')
-          }}
-        />
-      </AuthShell>
+      )}
+      <input
+        ref={diskFileInputRef}
+        type="file"
+        accept=".coh2skin,.coh2faceplate,.coh2decalpack,.json"
+        onChange={onDiskFile}
+        className="hidden"
+        aria-label="Open project file from disk"
+      />
       {bgWarmerNode}
-    </>
+      </div>
+    </div>
+    </div>
   )
 }

@@ -110,11 +110,13 @@ function findByLabel(label: string): HTMLButtonElement | null {
 
 function controlsBar(): HTMLDivElement | null {
   // The fixed top-right glass pill carrying the three buttons.
-  return document.querySelector('div.fixed.top-3.right-3') as HTMLDivElement | null
+  // Positioned via Tailwind classes: top-5 right-5 (≈20px, inset from glass edge).
+  return document.querySelector('div.fixed.top-5.right-5.z-\\[9999\\]') as HTMLDivElement | null
 }
 
 function dragStrip(): HTMLDivElement | null {
-  return document.querySelector('div[aria-hidden].fixed.top-0') as HTMLDivElement | null
+  // Pinned to the very top of the window via the top-0 class.
+  return document.querySelector('div[aria-hidden].fixed.top-0.left-0.right-0.h-10') as HTMLDivElement | null
 }
 
 beforeEach(() => {
@@ -181,9 +183,11 @@ describe('WindowControls — in Electron', () => {
     render()
     const strip = dragStrip()!
     expect(strip.getAttribute('aria-hidden')).toBe('true')
-    // top-0 left-0 right-0 h-10 (40 px) — pin via the Tailwind classes.
+    // Pinned to the top of the window via top-0; full-width via left-0/right-0.
     expect(strip.className).toContain('fixed')
     expect(strip.className).toContain('top-0')
+    expect(strip.className).toContain('left-0')
+    expect(strip.className).toContain('right-0')
     expect(strip.className).toContain('h-10')
   })
 })

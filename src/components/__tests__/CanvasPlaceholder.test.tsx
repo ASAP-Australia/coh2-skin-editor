@@ -82,11 +82,13 @@ describe('CanvasPlaceholder', () => {
     expect(ph).not.toBeNull()
   })
 
-  it('applies a dashed outline border on the wrapper', () => {
+  it('has no visible border/outline on the wrapper (surface edge is defined by OOB red tint and shadow)', () => {
     const el = render(createElement(CanvasPlaceholder, { width: 128, height: 128 }))
     const ph = el.querySelector('[data-testid="canvas-placeholder"]') as HTMLElement | null
     expect(ph).not.toBeNull()
-    expect(ph!.style.outline).toContain('dashed')
+    // No hairline border — the red OOB tint and drop shadow define the surface edge.
+    expect(ph!.style.outline).toBe('')
+    expect(ph!.style.border).toBe('')
   })
 
   it('renders a custom label when provided via label prop', () => {

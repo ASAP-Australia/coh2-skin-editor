@@ -1,0 +1,94 @@
+{
+  "investigationDate": "2026-06-14",
+  "source": "ArtHighXP1.sga",
+  "rgmPath": "art/armies/west_german/vehicles/king_tiger_sdkfz_182/king_tiger_sdkfz_182.rgm",
+  "totalMeshes": 4,
+  "intactCount": 3,
+  "destroyedCount": 1,
+  "variantCount": 0,
+  "intactMeshes": [
+    {
+      "name": "merged material-[king_tiger_sdkfz_182,tread_right]",
+      "mat": "tread_right",
+      "verts": 1416,
+      "tris": 1056,
+      "cx": 1.7750220894813538,
+      "cy": 0.8105854513123631,
+      "cz": 0.12810444831848145,
+      "wx": 1.0265592336654663,
+      "wy": 1.6326335426419973,
+      "wz": 8.643592357635498
+    },
+    {
+      "name": "merged material-[king_tiger_sdkfz_182,tread_left]",
+      "mat": "tread_left",
+      "verts": 1416,
+      "tris": 1056,
+      "cx": -1.7750220894813538,
+      "cy": 0.8105855863541365,
+      "cz": 0.12810444831848145,
+      "wx": 1.0265592336654663,
+      "wy": 1.6326332725584507,
+      "wz": 8.643592357635498
+    },
+    {
+      "name": "merged material-[king_tiger_sdkfz_182,king_tiger_sdkfz_182]",
+      "mat": "king_tiger_sdkfz_182",
+      "verts": 10138,
+      "tris": 7412,
+      "cx": 3.5762786865234375e-7,
+      "cy": 2.004834394901991,
+      "cz": -1.4194211959838867,
+      "wx": 4.675337076187134,
+      "wy": 3.8199987784028053,
+      "wz": 12.906792640686035
+    }
+  ],
+  "destroyedMeshNames": [
+    "merged material-[king_tiger_sdkfz_182,king_tiger_sdkfz_182_wreck]"
+  ],
+  "variantMeshNames": [],
+  "top10ExhaustCandidates": [
+    {
+      "name": "merged material-[king_tiger_sdkfz_182,king_tiger_sdkfz_182]",
+      "score": 40,
+      "notes": [
+        "midZ=1.42",
+        "elongated(X=1.2/Z=3.4)",
+        "deckHt=2.00"
+      ],
+      "tris": 7412,
+      "rawCZ": 1.4194211959838867,
+      "cy": 2.004834394901991,
+      "wy": 3.8199987784028053,
+      "wx": 4.675337076187134,
+      "wz": 12.906792640686035
+    },
+    {
+      "name": "merged material-[king_tiger_sdkfz_182,tread_right]",
+      "score": 15,
+      "notes": [
+        "elongated(X=0.6/Z=5.3)"
+      ],
+      "tris": 1056,
+      "rawCZ": -0.12810444831848145,
+      "cy": 0.8105854513123631,
+      "wy": 1.6326335426419973,
+      "wx": 1.0265592336654663,
+      "wz": 8.643592357635498
+    },
+    {
+      "name": "merged material-[king_tiger_sdkfz_182,tread_left]",
+      "score": 15,
+      "notes": [
+        "elongated(X=0.6/Z=5.3)"
+      ],
+      "tris": 1056,
+      "rawCZ": -0.12810444831848145,
+      "cy": 0.8105855863541365,
+      "wy": 1.6326332725584507,
+      "wx": 1.0265592336654663,
+      "wz": 8.643592357635498
+    }
+  ]
+}

@@ -15,12 +15,20 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     // items as seed templates when creating a new project.
     detectCoh2Workshop: () => electron_1.ipcRenderer.invoke('detect-coh2-workshop'),
     listWorkshopItems: (root) => electron_1.ipcRenderer.invoke('list-workshop-items', root),
+    // Enumerate installed skin + decal packs by reading the .info name from
+    // each SGA under mods/skins/, mods/decals/subscriptions/, and
+    // mods/faceplates/subscriptions/. Falls back to auto-detecting the mods
+    // root when modsRoot is omitted.
+    listInstalledPacks: (modsRoot) => electron_1.ipcRenderer.invoke('list-installed-packs', modsRoot),
     // Enumerate the stock CoH2 archives that ship with the base game.
     // Reads <installRoot>/CoH2/Archives/*.sga and returns id + path + size
     // for each. Cheap stat-only call — no archive parsing. Returns [] when
     // the Archives folder is missing or the app runs outside Electron.
     listStockArchives: (installRoot) => electron_1.ipcRenderer.invoke('list-stock-archives', installRoot),
     pickDirectory: () => electron_1.ipcRenderer.invoke('pick-directory'),
+    // Returns process.resourcesPath so the renderer can resolve extraResources
+    // paths (e.g. keys/template_0001.sga bundled outside the asar).
+    getResourcesPath: () => electron_1.ipcRenderer.invoke('get-resources-path'),
     // File system
     readFile: (p) => electron_1.ipcRenderer.invoke('read-file', p),
     readFileRange: (p, start, length) => electron_1.ipcRenderer.invoke('read-file-range', p, start, length),

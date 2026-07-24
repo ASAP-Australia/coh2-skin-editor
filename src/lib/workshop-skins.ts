@@ -27,6 +27,7 @@
 
 import { detectWorkshopPath, listWorkshopItems, nativeFileFromPath } from '@/lib/native-fs'
 import { SgaArchive } from '@/lib/sga'
+import { parseInfoName } from '@/lib/installed-pack-info'
 import { VEHICLES, vehicleFolder, type Faction } from '@/lib/vehicles'
 
 // Engine faction tokens as they appear under art/armies/<token>/.
@@ -41,7 +42,8 @@ export interface WorkshopSkin {
   id: string
   /** Numeric Workshop item id. */
   itemId: string
-  /** Display label, e.g. "Workshop #1234567890". */
+  /** Display label — read from the .info file inside the SGA; falls back to
+   *  `Workshop #<id>` when no .info is present or parseable. */
   name: string
   /** Absolute path to the backing .sga. */
   sgaPath: string
@@ -77,14 +79,15 @@ async function inspectArchive(item: { id: string; sgaPath: string }): Promise<Wo
   }
   if (!file) return null
 
-  let paths: string[]
+  let archive: SgaArchive
   try {
-    const archive = await SgaArchive.open(file)
-    paths = archive.listPaths()
+    archive = await SgaArchive.open(file)
   } catch (e) {
     console.warn('[workshop-skins] failed to open', item.sgaPath, e)
     return null
   }
+
+  const paths = archive.listPaths()
 
   const factions = new Set<Faction>()
   const vehicleIds = new Set<string>()
@@ -100,10 +103,25 @@ async function inspectArchive(item: { id: string; sgaPath: string }): Promise<Wo
 
   if (factions.size === 0) return null
 
+  // Read the human-readable name from the .info file embedded in the archive.
+  // The .info file is tiny (< 1 KB); we already have the archive open so this
+  // is essentially free — it reads a few bytes that are already in the TOC.
+  let packName = `Workshop #${item.id}`
+  const infoEntry = archive.list().find(e => e.path.endsWith('.info'))
+  if (infoEntry) {
+    try {
+      const infoBytes = await infoEntry.read()
+      const infoText = new TextDecoder('utf-8', { fatal: false }).decode(infoBytes)
+      packName = parseInfoName(infoText) ?? packName
+    } catch {
+      /* non-fatal — keep fallback name */
+    }
+  }
+
   return {
     id: `workshop:${item.id}`,
     itemId: item.id,
-    name: `Workshop #${item.id}`,
+    name: packName,
     sgaPath: item.sgaPath,
     factions: [...factions],
     vehicleIds: [...vehicleIds],

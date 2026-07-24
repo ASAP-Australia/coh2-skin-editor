@@ -1,0 +1,1853 @@
+{
+  "generatedAt": "2026-07-19T01:00:57.628Z",
+  "goldenMode": "baseline-write",
+  "totalVehicles": 61,
+  "counts": {
+    "PASS": 60,
+    "NO-DECAL": 0,
+    "SMEAR": 1,
+    "FLIPPED": 0,
+    "DRIFT": 0,
+    "LOAD-TIMEOUT": 0
+  },
+  "medianFootprintRatio": 0.03961518513248666,
+  "smearThreshold": 0.09,
+  "tunables": {
+    "FOOTPRINT_TOL": 30,
+    "PIXELMATCH_THRESHOLD": 0.12,
+    "MIN_FOOTPRINT_PX": 40,
+    "SMEAR_ABS_FLOOR": 0.09,
+    "SMEAR_MEDIAN_MULT": 2,
+    "GOLDEN_DRIFT_FRAC": 0.15,
+    "MIN_BAND_PX": 30,
+    "MIN_BAND_SEPARATION_PX": 6
+  },
+  "vflipFixed": [
+    {
+      "id": "jagdtiger",
+      "rendered": true,
+      "verdict": "PASS",
+      "footprintPx": 28986
+    },
+    {
+      "id": "halftrack_sdkfz_251_flak",
+      "rendered": true,
+      "verdict": "PASS",
+      "footprintPx": 17278
+    },
+    {
+      "id": "m4a1_sherman_calliope",
+      "rendered": true,
+      "verdict": "PASS",
+      "footprintPx": 21826
+    },
+    {
+      "id": "valentine",
+      "rendered": true,
+      "verdict": "PASS",
+      "footprintPx": 14784
+    },
+    {
+      "id": "sexton",
+      "rendered": true,
+      "verdict": "PASS",
+      "footprintPx": 3354
+    }
+  ],
+  "results": [
+    {
+      "faction": "aef",
+      "id": "dodge_wc51",
+      "verdict": "PASS",
+      "footprintPx": 17262,
+      "silhouettePx": 435742,
+      "footprintRatio": 0.03961518513248666,
+      "tlCentroid": [
+        498.4963942307692,
+        325.296875
+      ],
+      "brCentroid": [
+        501.74455205811137,
+        374.23153753026634
+      ],
+      "orientationOk": null,
+      "orientationDy": 30.210550328220393,
+      "quadrantCounts": {
+        "TL": 832,
+        "TR": 173,
+        "BL": 1769,
+        "BR": 6608
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=30.2)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "dodge_wc54_ambulance",
+      "verdict": "PASS",
+      "footprintPx": 11292,
+      "silhouettePx": 435218,
+      "footprintRatio": 0.02594561805807664,
+      "tlCentroid": [
+        623.4102564102565,
+        408.37820512820514
+      ],
+      "brCentroid": [
+        539.7754118119727,
+        409.4716753716352
+      ],
+      "orientationOk": null,
+      "orientationDy": -34.8154428239273,
+      "quadrantCounts": {
+        "TL": 156,
+        "TR": 10,
+        "BL": 3211,
+        "BR": 2489
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-34.8)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m10_tank_destroyer",
+      "verdict": "PASS",
+      "footprintPx": 16411,
+      "silhouettePx": 438629,
+      "footprintRatio": 0.03741430685157616,
+      "tlCentroid": [
+        526.645061728395,
+        372.1574074074074
+      ],
+      "brCentroid": [
+        560.9719305763874,
+        377.1176344546818
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 324,
+        "TR": 89,
+        "BL": 1131,
+        "BR": 4667
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m15a1_aa_halftrack",
+      "verdict": "PASS",
+      "footprintPx": 23939,
+      "silhouettePx": 437343,
+      "footprintRatio": 0.05473735717731849,
+      "tlCentroid": [
+        562.193515704154,
+        403.1063829787234
+      ],
+      "brCentroid": [
+        523.4101592115239,
+        380.4679681576952
+      ],
+      "orientationOk": null,
+      "orientationDy": -12.901966769841579,
+      "quadrantCounts": {
+        "TL": 987,
+        "TR": 790,
+        "BL": 1250,
+        "BR": 10552
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-12.9)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m20_utility_car",
+      "verdict": "PASS",
+      "footprintPx": 21800,
+      "silhouettePx": 431572,
+      "footprintRatio": 0.05051300825818172,
+      "tlCentroid": [
+        608.7624172185431,
+        400.09354304635764
+      ],
+      "brCentroid": [
+        535.0205960746305,
+        390.482432759874
+      ],
+      "orientationOk": null,
+      "orientationDy": -21.240677881382908,
+      "quadrantCounts": {
+        "TL": 1208,
+        "TR": 119,
+        "BL": 2386,
+        "BR": 4127
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-21.2)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m21_mortar_halftrack",
+      "verdict": "PASS",
+      "footprintPx": 21640,
+      "silhouettePx": 437615,
+      "footprintRatio": 0.04944985889423351,
+      "tlCentroid": [
+        559.045871559633,
+        393.7798165137615
+      ],
+      "brCentroid": [
+        543.053686667582,
+        399.0886997116573
+      ],
+      "orientationOk": null,
+      "orientationDy": 13.884204634769276,
+      "quadrantCounts": {
+        "TL": 981,
+        "TR": 582,
+        "BL": 1751,
+        "BR": 7283
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=13.9)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m26_pershing",
+      "verdict": "PASS",
+      "footprintPx": 21561,
+      "silhouettePx": 439057,
+      "footprintRatio": 0.04910751906927802,
+      "tlCentroid": [
+        511.74579439252335,
+        424.3869158878505
+      ],
+      "brCentroid": [
+        536.6084950989814,
+        350.58331731693255
+      ],
+      "orientationOk": null,
+      "orientationDy": -92.20740467092043,
+      "quadrantCounts": {
+        "TL": 535,
+        "TR": 503,
+        "BL": 3348,
+        "BR": 5203
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-92.2)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m36_tank_destroyer",
+      "verdict": "PASS",
+      "footprintPx": 21173,
+      "silhouettePx": 440797,
+      "footprintRatio": 0.048033448503506146,
+      "tlCentroid": [
+        540.6929499072356,
+        387.57235621521335
+      ],
+      "brCentroid": [
+        533.8371850110981,
+        347.15576446011227
+      ],
+      "orientationOk": null,
+      "orientationDy": -53.59166007941741,
+      "quadrantCounts": {
+        "TL": 1078,
+        "TR": 200,
+        "BL": 1636,
+        "BR": 7659
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-53.6)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m3_halftrack",
+      "verdict": "PASS",
+      "footprintPx": 21168,
+      "silhouettePx": 435922,
+      "footprintRatio": 0.048559145902248566,
+      "tlCentroid": [
+        580.7851929092805,
+        407.84984358706987
+      ],
+      "brCentroid": [
+        555.2588181921288,
+        413.81444935919245
+      ],
+      "orientationOk": null,
+      "orientationDy": 9.013089777195262,
+      "quadrantCounts": {
+        "TL": 959,
+        "TR": 567,
+        "BL": 703,
+        "BR": 8817
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=9.0)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m4a1_sherman_calliope",
+      "verdict": "PASS",
+      "footprintPx": 21826,
+      "silhouettePx": 445116,
+      "footprintRatio": 0.04903440900798893,
+      "tlCentroid": [
+        565.256926952141,
+        390.06297229219143
+      ],
+      "brCentroid": [
+        538.3522522522522,
+        336.87153153153156
+      ],
+      "orientationOk": null,
+      "orientationDy": -30.54447151896693,
+      "quadrantCounts": {
+        "TL": 397,
+        "TR": 249,
+        "BL": 3551,
+        "BR": 5550
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-30.5)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m4a3_sherman_76mm",
+      "verdict": "PASS",
+      "footprintPx": 13849,
+      "silhouettePx": 440553,
+      "footprintRatio": 0.03143549130297603,
+      "tlCentroid": [
+        548.5541401273886,
+        305.5668789808917
+      ],
+      "brCentroid": [
+        526.0647754137116,
+        372.71087470449174
+      ],
+      "orientationOk": null,
+      "orientationDy": 61.85644581407297,
+      "quadrantCounts": {
+        "TL": 157,
+        "TR": 74,
+        "BL": 726,
+        "BR": 4230
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=61.9)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m4a3e8_sherman_easy_8",
+      "verdict": "PASS",
+      "footprintPx": 7113,
+      "silhouettePx": 444201,
+      "footprintRatio": 0.01601302113232523,
+      "tlCentroid": [
+        521.2424242424242,
+        320.8787878787879
+      ],
+      "brCentroid": [
+        494.49439551641314,
+        367.8374699759808
+      ],
+      "orientationOk": null,
+      "orientationDy": 43.53554482942371,
+      "quadrantCounts": {
+        "TL": 33,
+        "TR": 33,
+        "BL": 459,
+        "BR": 2498
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=43.5)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m5a1_stuart",
+      "verdict": "PASS",
+      "footprintPx": 3866,
+      "silhouettePx": 437687,
+      "footprintRatio": 0.008832796039178683,
+      "tlCentroid": [
+        550.1888888888889,
+        398.52222222222224
+      ],
+      "brCentroid": [
+        532.7469654528478,
+        400.35854341736695
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 90,
+        "TR": 31,
+        "BL": 429,
+        "BR": 1071
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m7b1_priest",
+      "verdict": "PASS",
+      "footprintPx": 26601,
+      "silhouettePx": 438371,
+      "footprintRatio": 0.060681477561243785,
+      "tlCentroid": [
+        565.5115303983229,
+        367.6498951781971
+      ],
+      "brCentroid": [
+        513.253523562473,
+        388.9421530479896
+      ],
+      "orientationOk": null,
+      "orientationDy": 31.303635036901767,
+      "quadrantCounts": {
+        "TL": 477,
+        "TR": 251,
+        "BL": 701,
+        "BR": 11565
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=31.3)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m8_greyhound",
+      "verdict": "PASS",
+      "footprintPx": 13475,
+      "silhouettePx": 432462,
+      "footprintRatio": 0.031158807016570242,
+      "tlCentroid": [
+        607.229388942774,
+        374.3113482056256
+      ],
+      "brCentroid": [
+        524.4005266937994,
+        396.6947570026335
+      ],
+      "orientationOk": null,
+      "orientationDy": 17.55818964321554,
+      "quadrantCounts": {
+        "TL": 2062,
+        "TR": 238,
+        "BL": 1152,
+        "BR": 4177
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=17.6)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "m8a1_hmc",
+      "verdict": "PASS",
+      "footprintPx": 14645,
+      "silhouettePx": 435848,
+      "footprintRatio": 0.03360116370844882,
+      "tlCentroid": [
+        557.5204918032787,
+        360.9836065573771
+      ],
+      "brCentroid": [
+        509.9723794819008,
+        384.1964316349288
+      ],
+      "orientationOk": null,
+      "orientationDy": 14.411083059487794,
+      "quadrantCounts": {
+        "TL": 244,
+        "TR": 77,
+        "BL": 1682,
+        "BR": 5829
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=14.4)"
+      ]
+    },
+    {
+      "faction": "aef",
+      "id": "sherman_m4a3",
+      "verdict": "PASS",
+      "footprintPx": 6362,
+      "silhouettePx": 444654,
+      "footprintRatio": 0.01430775389403896,
+      "tlCentroid": [
+        499.4428571428571,
+        364.7142857142857
+      ],
+      "brCentroid": [
+        567.5981547924141,
+        369.90415171706815
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 70,
+        "TR": 25,
+        "BL": 283,
+        "BR": 1951
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "british",
+      "id": "aec_armoured_car",
+      "verdict": "PASS",
+      "footprintPx": 17070,
+      "silhouettePx": 436712,
+      "footprintRatio": 0.03908754510982066,
+      "tlCentroid": [
+        486.93055555555554,
+        432.34722222222223
+      ],
+      "brCentroid": [
+        522.8576560395151,
+        409.4683430624158
+      ],
+      "orientationOk": null,
+      "orientationDy": -28.62584179661536,
+      "quadrantCounts": {
+        "TL": 72,
+        "TR": 162,
+        "BL": 497,
+        "BR": 4454
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-28.6)"
+      ]
+    },
+    {
+      "faction": "british",
+      "id": "bren_carrier",
+      "verdict": "PASS",
+      "footprintPx": 4271,
+      "silhouettePx": 430322,
+      "footprintRatio": 0.009925125836001877,
+      "tlCentroid": [
+        505.4829931972789,
+        314.23809523809524
+      ],
+      "brCentroid": [
+        583.071875,
+        361.5104166666667
+      ],
+      "orientationOk": null,
+      "orientationDy": 56.58391579607593,
+      "quadrantCounts": {
+        "TL": 147,
+        "TR": 16,
+        "BL": 605,
+        "BR": 960
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=56.6)"
+      ]
+    },
+    {
+      "faction": "british",
+      "id": "centaur",
+      "verdict": "PASS",
+      "footprintPx": 25080,
+      "silhouettePx": 439302,
+      "footprintRatio": 0.05709056639851401,
+      "tlCentroid": [
+        526.2539682539683,
+        344.0238095238095
+      ],
+      "brCentroid": [
+        509.0722049689441,
+        380.2083074534161
+      ],
+      "orientationOk": null,
+      "orientationDy": 37.20670643380089,
+      "quadrantCounts": {
+        "TL": 630,
+        "TR": 1466,
+        "BL": 1293,
+        "BR": 12880
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=37.2)"
+      ]
+    },
+    {
+      "faction": "british",
+      "id": "churchill",
+      "verdict": "PASS",
+      "footprintPx": 8447,
+      "silhouettePx": 440477,
+      "footprintRatio": 0.0191769377288712,
+      "tlCentroid": [
+        522.9090909090909,
+        369.54545454545456
+      ],
+      "brCentroid": [
+        485.2071403322729,
+        413.94202898550725
+      ],
+      "orientationOk": null,
+      "orientationDy": 37.270857142857096,
+      "quadrantCounts": {
+        "TL": 11,
+        "TR": 59,
+        "BL": 46,
+        "BR": 2829
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=37.3)"
+      ]
+    },
+    {
+      "faction": "british",
+      "id": "comet",
+      "verdict": "PASS",
+      "footprintPx": 26165,
+      "silhouettePx": 441369,
+      "footprintRatio": 0.0592814629029225,
+      "tlCentroid": [
+        501.8449197860963,
+        427.72014260249557
+      ],
+      "brCentroid": [
+        536.0101840971406,
+        367.2286525656091
+      ],
+      "orientationOk": null,
+      "orientationDy": -58.84141151642075,
+      "quadrantCounts": {
+        "TL": 561,
+        "TR": 582,
+        "BL": 923,
+        "BR": 10212
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-58.8)"
+      ]
+    },
+    {
+      "faction": "british",
+      "id": "cromwell",
+      "verdict": "PASS",
+      "footprintPx": 33901,
+      "silhouettePx": 439124,
+      "footprintRatio": 0.07720142829815724,
+      "tlCentroid": [
+        683.4345047923323,
+        371.75079872204475
+      ],
+      "brCentroid": [
+        523.2056859051207,
+        348.1497973397271
+      ],
+      "orientationOk": null,
+      "orientationDy": -30.459690063187224,
+      "quadrantCounts": {
+        "TL": 313,
+        "TR": 109,
+        "BL": 2588,
+        "BR": 17517
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-30.5)"
+      ]
+    },
+    {
+      "faction": "british",
+      "id": "sexton",
+      "verdict": "PASS",
+      "footprintPx": 3354,
+      "silhouettePx": 440741,
+      "footprintRatio": 0.007609911489968031,
+      "tlCentroid": [
+        378.10526315789474,
+        388.10526315789474
+      ],
+      "brCentroid": [
+        484.0250260688217,
+        437.14285714285717
+      ],
+      "orientationOk": null,
+      "orientationDy": 27.273106167276808,
+      "quadrantCounts": {
+        "TL": 19,
+        "TR": 34,
+        "BL": 46,
+        "BR": 959
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=27.3)"
+      ]
+    },
+    {
+      "faction": "british",
+      "id": "sherman_firefly",
+      "verdict": "PASS",
+      "footprintPx": 11807,
+      "silhouettePx": 440814,
+      "footprintRatio": 0.02678453951099557,
+      "tlCentroid": [
+        558.7914691943128,
+        390.3507109004739
+      ],
+      "brCentroid": [
+        535.3700534759358,
+        396.8868983957219
+      ],
+      "orientationOk": null,
+      "orientationDy": -16.64710286089513,
+      "quadrantCounts": {
+        "TL": 211,
+        "TR": 545,
+        "BL": 603,
+        "BR": 3740
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-16.6)"
+      ]
+    },
+    {
+      "faction": "british",
+      "id": "valentine",
+      "verdict": "PASS",
+      "footprintPx": 14784,
+      "silhouettePx": 432778,
+      "footprintRatio": 0.03416070132955002,
+      "tlCentroid": [
+        564.7533039647577,
+        357.18502202643174
+      ],
+      "brCentroid": [
+        506.80594144047876,
+        405.20453088266726
+      ],
+      "orientationOk": null,
+      "orientationDy": 45.04378539446617,
+      "quadrantCounts": {
+        "TL": 227,
+        "TR": 104,
+        "BL": 723,
+        "BR": 4679
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=45.0)"
+      ]
+    },
+    {
+      "faction": "german",
+      "id": "brummbar",
+      "verdict": "PASS",
+      "footprintPx": 20142,
+      "silhouettePx": 439167,
+      "footprintRatio": 0.04586410181092842,
+      "tlCentroid": [
+        542.4585635359116,
+        310.48618784530385
+      ],
+      "brCentroid": [
+        564.0639247568946,
+        356.80981986290453
+      ],
+      "orientationOk": null,
+      "orientationDy": 53.91093814551266,
+      "quadrantCounts": {
+        "TL": 181,
+        "TR": 120,
+        "BL": 474,
+        "BR": 6273
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=53.9)"
+      ]
+    },
+    {
+      "faction": "german",
+      "id": "elefant",
+      "verdict": "SMEAR",
+      "footprintPx": 46969,
+      "silhouettePx": 452420,
+      "footprintRatio": 0.10381724945846779,
+      "tlCentroid": [
+        520.0989847715736,
+        363.0812182741117
+      ],
+      "brCentroid": [
+        536.4802061991937,
+        375.3731412332298
+      ],
+      "orientationOk": null,
+      "orientationDy": -21.27149771944522,
+      "quadrantCounts": {
+        "TL": 394,
+        "TR": 176,
+        "BL": 2774,
+        "BR": 15131
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "ratio 0.1038 > abs-floor 0.09 AND > 2× median 0.0396"
+      ]
+    },
+    {
+      "faction": "german",
+      "id": "halftrack",
+      "verdict": "PASS",
+      "footprintPx": 15594,
+      "silhouettePx": 437136,
+      "footprintRatio": 0.03567310859778192,
+      "tlCentroid": [
+        491.87774725274727,
+        346.01785714285717
+      ],
+      "brCentroid": [
+        525.2699878493318,
+        377.1936816524909
+      ],
+      "orientationOk": null,
+      "orientationDy": -9.708792611651063,
+      "quadrantCounts": {
+        "TL": 728,
+        "TR": 329,
+        "BL": 1747,
+        "BR": 4115
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-9.7)"
+      ]
+    },
+    {
+      "faction": "german",
+      "id": "opel_blitz",
+      "verdict": "PASS",
+      "footprintPx": 30257,
+      "silhouettePx": 445011,
+      "footprintRatio": 0.06799157773628067,
+      "tlCentroid": [
+        443.6943346508564,
+        334.7733860342556
+      ],
+      "brCentroid": [
+        542.369608427748,
+        370.6055456171735
+      ],
+      "orientationOk": null,
+      "orientationDy": 30.317119243225534,
+      "quadrantCounts": {
+        "TL": 759,
+        "TR": 555,
+        "BL": 2263,
+        "BR": 10062
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=30.3)"
+      ]
+    },
+    {
+      "faction": "german",
+      "id": "ostwind_flak_panzer",
+      "verdict": "PASS",
+      "footprintPx": 18685,
+      "silhouettePx": 441678,
+      "footprintRatio": 0.042304574826004464,
+      "tlCentroid": [
+        522.2213114754098,
+        379.59562841530055
+      ],
+      "brCentroid": [
+        537.352652923285,
+        412.70040554241297
+      ],
+      "orientationOk": null,
+      "orientationDy": 9.304908720344201,
+      "quadrantCounts": {
+        "TL": 366,
+        "TR": 191,
+        "BL": 353,
+        "BR": 5918
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=9.3)"
+      ]
+    },
+    {
+      "faction": "german",
+      "id": "panzerwerfer",
+      "verdict": "PASS",
+      "footprintPx": 12755,
+      "silhouettePx": 436348,
+      "footprintRatio": 0.02923125578666569,
+      "tlCentroid": [
+        530.707182320442,
+        379.0828729281768
+      ],
+      "brCentroid": [
+        555.7717717717718,
+        394.48138138138137
+      ],
+      "orientationOk": null,
+      "orientationDy": 27.138207805918114,
+      "quadrantCounts": {
+        "TL": 181,
+        "TR": 137,
+        "BL": 316,
+        "BR": 3330
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=27.1)"
+      ]
+    },
+    {
+      "faction": "german",
+      "id": "sdkfz_222",
+      "verdict": "PASS",
+      "footprintPx": 16612,
+      "silhouettePx": 437988,
+      "footprintRatio": 0.037927979762002614,
+      "tlCentroid": [
+        549.6861313868613,
+        363.3211678832117
+      ],
+      "brCentroid": [
+        549.3401390095569,
+        388.71524761077325
+      ],
+      "orientationOk": null,
+      "orientationDy": 19.197603686635944,
+      "quadrantCounts": {
+        "TL": 137,
+        "TR": 125,
+        "BL": 821,
+        "BR": 4604
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=19.2)"
+      ]
+    },
+    {
+      "faction": "german",
+      "id": "sdkfz_250",
+      "verdict": "PASS",
+      "footprintPx": 10963,
+      "silhouettePx": 433346,
+      "footprintRatio": 0.025298491274870428,
+      "tlCentroid": [
+        544.1032863849765,
+        367.76525821596243
+      ],
+      "brCentroid": [
+        537.1804360298336,
+        384.23235800344236
+      ],
+      "orientationOk": null,
+      "orientationDy": 24.433698035117914,
+      "quadrantCounts": {
+        "TL": 213,
+        "TR": 48,
+        "BL": 1002,
+        "BR": 3486
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=24.4)"
+      ]
+    },
+    {
+      "faction": "german",
+      "id": "stug_iii",
+      "verdict": "PASS",
+      "footprintPx": 9979,
+      "silhouettePx": 436476,
+      "footprintRatio": 0.022862654533124388,
+      "tlCentroid": [
+        488,
+        309
+      ],
+      "brCentroid": [
+        522.0368956743002,
+        396.3148854961832
+      ],
+      "orientationOk": null,
+      "orientationDy": 79.21358234295417,
+      "quadrantCounts": {
+        "TL": 1,
+        "TR": 29,
+        "BL": 390,
+        "BR": 3144
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=79.2)"
+      ]
+    },
+    {
+      "faction": "german",
+      "id": "tiger",
+      "verdict": "PASS",
+      "footprintPx": 12066,
+      "silhouettePx": 447391,
+      "footprintRatio": 0.02696969764702464,
+      "tlCentroid": [
+        404.0289855072464,
+        328.0966183574879
+      ],
+      "brCentroid": [
+        496.25,
+        419.5555904522613
+      ],
+      "orientationOk": null,
+      "orientationDy": 83.25383877012155,
+      "quadrantCounts": {
+        "TL": 207,
+        "TR": 52,
+        "BL": 593,
+        "BR": 3184
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=83.3)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "halftrack",
+      "verdict": "PASS",
+      "footprintPx": 21460,
+      "silhouettePx": 439644,
+      "footprintRatio": 0.048812220796826525,
+      "tlCentroid": null,
+      "brCentroid": [
+        533.4950191570881,
+        389.7256704980843
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 1305
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "is2m_heavy_tank",
+      "verdict": "PASS",
+      "footprintPx": 23603,
+      "silhouettePx": 441210,
+      "footprintRatio": 0.053496067632193285,
+      "tlCentroid": null,
+      "brCentroid": [
+        577.2546835443038,
+        304.9645569620253
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 1975
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "isu152",
+      "verdict": "PASS",
+      "footprintPx": 26251,
+      "silhouettePx": 440822,
+      "footprintRatio": 0.05955011319761718,
+      "tlCentroid": null,
+      "brCentroid": [
+        489.35603715170276,
+        398.6996904024768
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 323
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "kv1_heavy_tank",
+      "verdict": "PASS",
+      "footprintPx": 19879,
+      "silhouettePx": 438741,
+      "footprintRatio": 0.045309191527575496,
+      "tlCentroid": null,
+      "brCentroid": [
+        580.8672680412371,
+        402.2113402061856
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 776
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "kv2_heavy_tank",
+      "verdict": "PASS",
+      "footprintPx": 21486,
+      "silhouettePx": 447638,
+      "footprintRatio": 0.047998606016468666,
+      "tlCentroid": null,
+      "brCentroid": [
+        586.074647887324,
+        431.51408450704224
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 710
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "m3a1_scout_car",
+      "verdict": "PASS",
+      "footprintPx": 10995,
+      "silhouettePx": 434008,
+      "footprintRatio": 0.025333634403052478,
+      "tlCentroid": null,
+      "brCentroid": [
+        558.084705882353,
+        356.35764705882355
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 425
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "su-76m",
+      "verdict": "PASS",
+      "footprintPx": 16654,
+      "silhouettePx": 434837,
+      "footprintRatio": 0.03829940874396613,
+      "tlCentroid": null,
+      "brCentroid": [
+        548.193832599119,
+        406.58590308370043
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 681
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "su85",
+      "verdict": "PASS",
+      "footprintPx": 20332,
+      "silhouettePx": 435365,
+      "footprintRatio": 0.046701043951626796,
+      "tlCentroid": null,
+      "brCentroid": [
+        461.5276988636364,
+        376.0021306818182
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 1408
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "t34_76",
+      "verdict": "PASS",
+      "footprintPx": 18126,
+      "silhouettePx": 439243,
+      "footprintRatio": 0.041266451599684,
+      "tlCentroid": null,
+      "brCentroid": [
+        592.82,
+        360.96
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 50
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "t70m_light_tank",
+      "verdict": "PASS",
+      "footprintPx": 7693,
+      "silhouettePx": 431745,
+      "footprintRatio": 0.017818388168942316,
+      "tlCentroid": null,
+      "brCentroid": [
+        557.8787878787879,
+        315.3068181818182
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 264
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "t_34_85",
+      "verdict": "PASS",
+      "footprintPx": 19963,
+      "silhouettePx": 439422,
+      "footprintRatio": 0.04543013322045778,
+      "tlCentroid": null,
+      "brCentroid": [
+        509.0326086956522,
+        342.60869565217394
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 368
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "soviet",
+      "id": "us6_truck",
+      "verdict": "PASS",
+      "footprintPx": 21480,
+      "silhouettePx": 447411,
+      "footprintRatio": 0.04800954826770017,
+      "tlCentroid": null,
+      "brCentroid": [
+        503.9625282167043,
+        384.28713318284423
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 0,
+        "TR": 0,
+        "BL": 0,
+        "BR": 2215
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "halftrack_sdkfz_251",
+      "verdict": "PASS",
+      "footprintPx": 14439,
+      "silhouettePx": 434646,
+      "footprintRatio": 0.03322013776728648,
+      "tlCentroid": [
+        538.9560669456067,
+        464.81799163179915
+      ],
+      "brCentroid": [
+        515.1479968883702,
+        379.4297938545313
+      ],
+      "orientationOk": null,
+      "orientationDy": -89.5707786154345,
+      "quadrantCounts": {
+        "TL": 478,
+        "TR": 162,
+        "BL": 255,
+        "BR": 5142
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-89.6)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "halftrack_sdkfz_251_flak",
+      "verdict": "PASS",
+      "footprintPx": 17278,
+      "silhouettePx": 436850,
+      "footprintRatio": 0.03955133340963717,
+      "tlCentroid": [
+        513.7992633517496,
+        446.8232044198895
+      ],
+      "brCentroid": [
+        518.1189158236305,
+        385.96716930711966
+      ],
+      "orientationOk": null,
+      "orientationDy": -71.52343081894651,
+      "quadrantCounts": {
+        "TL": 543,
+        "TR": 433,
+        "BL": 1087,
+        "BR": 5239
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-71.5)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "halftrack_sdkfz_251_infrared",
+      "verdict": "PASS",
+      "footprintPx": 18784,
+      "silhouettePx": 438656,
+      "footprintRatio": 0.04282170995039393,
+      "tlCentroid": [
+        512.6266996291719,
+        423.55253399258345
+      ],
+      "brCentroid": [
+        521.568223250596,
+        352.75066610573555
+      ],
+      "orientationOk": null,
+      "orientationDy": -50.983289399807745,
+      "quadrantCounts": {
+        "TL": 809,
+        "TR": 544,
+        "BL": 558,
+        "BR": 7131
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-51.0)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "hetzer",
+      "verdict": "PASS",
+      "footprintPx": 7211,
+      "silhouettePx": 431202,
+      "footprintRatio": 0.01672302076520981,
+      "tlCentroid": [
+        450,
+        315
+      ],
+      "brCentroid": [
+        529.9205999117777,
+        385.6616674018527
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 1,
+        "TR": 22,
+        "BL": 7,
+        "BR": 2267
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "jagdpanzer_iv_sdkfz_162",
+      "verdict": "PASS",
+      "footprintPx": 16635,
+      "silhouettePx": 434506,
+      "footprintRatio": 0.03828485682591264,
+      "tlCentroid": [
+        619.560975609756,
+        362.2439024390244
+      ],
+      "brCentroid": [
+        456.10047146805397,
+        392.4251341245326
+      ],
+      "orientationOk": null,
+      "orientationDy": 35.38856230031951,
+      "quadrantCounts": {
+        "TL": 41,
+        "TR": 9,
+        "BL": 109,
+        "BR": 6151
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=35.4)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "jagdtiger",
+      "verdict": "PASS",
+      "footprintPx": 28986,
+      "silhouettePx": 450323,
+      "footprintRatio": 0.06436713203633836,
+      "tlCentroid": [
+        561.9889601139602,
+        394.3899572649573
+      ],
+      "brCentroid": [
+        622.0888766215843,
+        406.0129726745791
+      ],
+      "orientationOk": null,
+      "orientationDy": 7.269153647346968,
+      "quadrantCounts": {
+        "TL": 2808,
+        "TR": 22,
+        "BL": 815,
+        "BR": 3623
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=7.3)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "king_tiger_sdkfz_182",
+      "verdict": "PASS",
+      "footprintPx": 31899,
+      "silhouettePx": 447830,
+      "footprintRatio": 0.07123015429962262,
+      "tlCentroid": [
+        522.3177041228779,
+        314.45189975747775
+      ],
+      "brCentroid": [
+        545.9573622881356,
+        376.52370233050846
+      ],
+      "orientationOk": null,
+      "orientationDy": 48.096986095884404,
+      "quadrantCounts": {
+        "TL": 1237,
+        "TR": 834,
+        "BL": 2674,
+        "BR": 7552
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=48.1)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "kubelwagen",
+      "verdict": "PASS",
+      "footprintPx": 8041,
+      "silhouettePx": 431368,
+      "footprintRatio": 0.018640696574618424,
+      "tlCentroid": [
+        507.58181818181816,
+        393.9818181818182
+      ],
+      "brCentroid": [
+        510.6549219033781,
+        372.2855067199419
+      ],
+      "orientationOk": null,
+      "orientationDy": -17.311627399651,
+      "quadrantCounts": {
+        "TL": 110,
+        "TR": 81,
+        "BL": 511,
+        "BR": 2753
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-17.3)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "panther_ausf_g",
+      "verdict": "PASS",
+      "footprintPx": 18970,
+      "silhouettePx": 439046,
+      "footprintRatio": 0.04320731768425176,
+      "tlCentroid": [
+        574.8108108108108,
+        329.13513513513516
+      ],
+      "brCentroid": [
+        543.6646884272997,
+        399.62506545644965
+      ],
+      "orientationOk": null,
+      "orientationDy": 68.53755252100842,
+      "quadrantCounts": {
+        "TL": 37,
+        "TR": 27,
+        "BL": 459,
+        "BR": 5729
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=68.5)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "panzer_ii_luchs_sdkfz_123",
+      "verdict": "PASS",
+      "footprintPx": 14823,
+      "silhouettePx": 432824,
+      "footprintRatio": 0.03424717668151489,
+      "tlCentroid": [
+        516,
+        335.06666666666666
+      ],
+      "brCentroid": [
+        510.0148305084746,
+        361.634437596302
+      ],
+      "orientationOk": null,
+      "orientationDy": null,
+      "quadrantCounts": {
+        "TL": 15,
+        "TR": 5,
+        "BL": 1556,
+        "BR": 5192
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "orientation indeterminate — bands too small / coincident",
+        "golden written (first run)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "panzer_iv_sdkfz_ausf_i",
+      "verdict": "PASS",
+      "footprintPx": 25390,
+      "silhouettePx": 437107,
+      "footprintRatio": 0.058086463955049905,
+      "tlCentroid": [
+        504.95384615384614,
+        296.5923076923077
+      ],
+      "brCentroid": [
+        524.8486762415642,
+        392.9259387437273
+      ],
+      "orientationOk": null,
+      "orientationDy": 87.77269392580422,
+      "quadrantCounts": {
+        "TL": 130,
+        "TR": 24,
+        "BL": 515,
+        "BR": 11558
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=87.8)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "puma_sdkfz_234",
+      "verdict": "PASS",
+      "footprintPx": 21695,
+      "silhouettePx": 434138,
+      "footprintRatio": 0.0499725893609866,
+      "tlCentroid": [
+        488.51724137931035,
+        441
+      ],
+      "brCentroid": [
+        495.12066188314543,
+        399.65002196514865
+      ],
+      "orientationOk": null,
+      "orientationDy": -31.673682851239676,
+      "quadrantCounts": {
+        "TL": 29,
+        "TR": 3,
+        "BL": 915,
+        "BR": 6829
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=-31.7)"
+      ]
+    },
+    {
+      "faction": "west_german",
+      "id": "sturmtiger",
+      "verdict": "PASS",
+      "footprintPx": 10685,
+      "silhouettePx": 443782,
+      "footprintRatio": 0.024077136972657745,
+      "tlCentroid": [
+        430.46666666666664,
+        367.96666666666664
+      ],
+      "brCentroid": [
+        542.7686294945285,
+        384.8361125586243
+      ],
+      "orientationOk": null,
+      "orientationDy": 29.882481053899028,
+      "quadrantCounts": {
+        "TL": 30,
+        "TR": 26,
+        "BL": 196,
+        "BR": 3838
+      },
+      "goldenDriftFrac": null,
+      "goldenWritten": true,
+      "notes": [
+        "golden written (first run)",
+        "orientation baselined (dy=29.9)"
+      ]
+    }
+  ]
+}

@@ -49,6 +49,10 @@ export interface PublishSectionProps {
   onUploadEnd?: () => void
   /** Emitted on publish error so the title pill can show an error state */
   onPublishError?: (message: string) => void
+  /** Initial visibility to pre-select when the popover opens (0=Public … 3=Unlisted). */
+  initialVisibility?: 0 | 1 | 2 | 3
+  /** Called after a successful publish/update with the visibility that was used. */
+  onPublished?: (visibility: 0 | 1 | 2 | 3) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +63,7 @@ type Phase =
   | { kind: 'idle' }
   | { kind: 'building'; pendingVisibility: 0 | 1 | 2 | 3; pendingIndex: number }
   | { kind: 'uploading' }
+  | { kind: 'success'; workshopId: string; visibility: 0 | 1 | 2 | 3 }
 
 // ---------------------------------------------------------------------------
 // Real Workshop ID guard
@@ -129,20 +134,6 @@ const VISIBILITY_OPTIONS: { value: 0 | 1 | 2 | 3; label: string }[] = [
 // Inline style helpers (shared with PublishToWorkshopDialog)
 // ---------------------------------------------------------------------------
 
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  background: 'rgba(0,0,0,0.3)',
-  border: '1px solid rgba(255,255,255,0.10)',
-  borderRadius: 8,
-  padding: '7px 10px',
-  fontSize: 12,
-  color: 'rgba(247,247,250,0.92)',
-  outline: 'none',
-  fontFamily: 'inherit',
-  boxSizing: 'border-box' as const,
-  transition: 'border-color 0.12s, box-shadow 0.12s',
-}
-
 // ---------------------------------------------------------------------------
 // Sub-components (verbatim equivalents from PublishToWorkshopDialog)
 // ---------------------------------------------------------------------------
@@ -178,13 +169,32 @@ export function PublishSection({
   onUploadStart,
   onUploadEnd,
   onPublishError,
+  initialVisibility,
+  onPublished,
 }: PublishSectionProps) {
-  const isUpdate = isRealWorkshopId(target?.workshopId)
+  // Compute the initial selectedIndex from initialVisibility prop.
+  // VISIBILITY_OPTIONS order: [Unlisted(3), Private(2), FriendsOnly(1), Public(0)]
+  const initialIndex = initialVisibility != null
+    ? VISIBILITY_OPTIONS.findIndex(o => o.value === initialVisibility)
+    : 0
+  const safeInitialIndex = initialIndex >= 0 ? initialIndex : 0
 
   // selectedIndex = position in VISIBILITY_OPTIONS array (0 = Unlisted, 3 = Public)
-  const [selectedIndex, setSelectedIndex] = useState<number>(0)
-  const [changeNote, setChangeNote] = useState('')
+  const [selectedIndex, setSelectedIndex] = useState<number>(safeInitialIndex)
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
+
+  // Reinitialize the selector when the persisted visibility changes (e.g. popover
+  // re-opens after a different project is selected). Only update while idle so we
+  // don't clobber an in-progress build/upload.
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- one-way sync from persisted value; no cascade
+  useEffect(() => {
+    setPhase(prev => {
+      if (prev.kind !== 'idle') return prev
+      setSelectedIndex(safeInitialIndex)
+      return prev
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [safeInitialIndex])
   // needsAgreementUrl: set when the first-publish response requires a Workshop
   // agreement acceptance before the item is visible. Cleared on popover reset.
   const [needsAgreementUrl, setNeedsAgreementUrl] = useState<string | null>(null)
@@ -281,7 +291,6 @@ export function PublishSection({
         description: target.description,
         tags: tagsByType[target.type],
         visibility: clickedVisibility,
-        changeNote: changeNote.trim() || undefined,
       }
 
       // 5. Publish or update
@@ -294,14 +303,14 @@ export function PublishSection({
           input,
         )
         target.onPublished(target.workshopId)
+        onPublished?.(clickedVisibility)
         // If agreement is needed, show a compact inline notice instead of
         // replacing the selector with a full success view.
         if (result.needsAgreement) {
           const agreementUrl = `https://steamcommunity.com/sharedfiles/itemedittext/?id=${target.workshopId}`
           setNeedsAgreementUrl(agreementUrl)
         }
-        // Always return to the idle visibility selector (silent success).
-        setPhase({ kind: 'idle' })
+        setPhase({ kind: 'success', workshopId: target.workshopId, visibility: clickedVisibility })
         setSelectedIndex(clickedIndex)
       } else {
         // No persisted Workshop link for this pack. Before minting a NEW
@@ -316,38 +325,46 @@ export function PublishSection({
             input,
           )
           target.onPublished(existingId)
+          onPublished?.(clickedVisibility)
           if (result.needsAgreement) {
             const agreementUrl = `https://steamcommunity.com/sharedfiles/itemedittext/?id=${existingId}`
             setNeedsAgreementUrl(agreementUrl)
           }
-          setPhase({ kind: 'idle' })
+          setPhase({ kind: 'success', workshopId: existingId, visibility: clickedVisibility })
           setSelectedIndex(clickedIndex)
         } else {
           const result: PublishWorkshopResult = await window.electronAPI!.steam.workshop.publish(input)
           target.onPublished(result.workshopId)
+          onPublished?.(clickedVisibility)
           if (result.needsAgreement) {
             const agreementUrl = `https://steamcommunity.com/sharedfiles/itemedittext/?id=${result.workshopId}`
             setNeedsAgreementUrl(agreementUrl)
           }
-          setPhase({ kind: 'idle' })
+          setPhase({ kind: 'success', workshopId: result.workshopId, visibility: clickedVisibility })
           setSelectedIndex(clickedIndex)
         }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      onPublishError?.(msg)
+      // EResultBusy: Steam Cloud sync in progress — give a friendlier message.
+      const isBusy = msg.includes('Busy') || msg.includes('EResultBusy') || msg.includes('k_EResultBusy')
+      onPublishError?.(
+        isBusy
+          ? 'Steam is still syncing — please wait a moment then try again.'
+          : msg,
+      )
       setPhase({ kind: 'idle' })
     } finally {
       onUploadEnd?.()
     }
   }, [
     target,
-    changeNote,
     buildPreviewPng,
     onRequestBuild,
     onUploadStart,
     onUploadEnd,
     onPublishError,
+    onPublished,
   ])
 
   // Sync form state when target changes.
@@ -364,9 +381,8 @@ export function PublishSection({
       // If we ARE mid-build (phase.kind === 'building'), preserve that phase so
       // the selector stays disabled while isBuildingTarget is true.
       setPhase(prev => prev.kind === 'building' ? prev : { kind: 'idle' })
-      setChangeNote('')
       setNeedsAgreementUrl(null)
-      if (!pendingPublishRef.current) setSelectedIndex(0)
+      if (!pendingPublishRef.current) setSelectedIndex(safeInitialIndex)
     } else {
       // target just became non-null (build completed).
       const pending = pendingPublishRef.current
@@ -378,7 +394,7 @@ export function PublishSection({
         Promise.resolve().then(() => handlePublish(pending.visibility, pending.index))
       } else {
         setPhase({ kind: 'idle' })
-        setSelectedIndex(0)
+        setSelectedIndex(safeInitialIndex)
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- handlePublish intentionally omitted; called only on target null→non-null transition
@@ -402,7 +418,7 @@ export function PublishSection({
   const building = phase.kind === 'building' || isBuildingTarget
   const busy = phase.kind === 'uploading' || building
 
-  // ── Form state (idle / uploading / building) ────────────────────────────
+  // ── Form state (idle / building / uploading / success) ─────────────────
   return (
     <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Workshop agreement notice — shown after first publish when Steam
@@ -433,40 +449,124 @@ export function PublishSection({
         </div>
       )}
 
-      {/* Glass segmented visibility selector — single click = build (if needed) + publish at that visibility */}
-      <FieldGroup label={
-        building ? 'Building…'
-        : phase.kind === 'uploading' ? 'Uploading…'
-        : 'Visibility'
-      }>
-        <GlassSegmented
-          options={VISIBILITY_OPTIONS}
-          selectedIndex={selectedIndex}
-          disabled={busy}
-          onClick={(value, index) => handlePublish(value as 0 | 1 | 2 | 3, index)}
-        />
-      </FieldGroup>
-
-      {isUpdate && (
-        <FieldGroup label="Change note (optional)">
-          <input
-            value={changeNote}
-            onChange={e => setChangeNote(e.target.value)}
-            disabled={busy}
-            placeholder="What changed in this update?"
-            maxLength={8000}
-            onFocus={e => {
-              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.30)'
-              e.currentTarget.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.07)'
+      {/* Success state — shown after a successful publish/update */}
+      {phase.kind === 'success' && (
+        <div
+          style={{
+            padding: '12px 14px',
+            background: 'rgba(34, 197, 94, 0.15)',
+            border: '1px solid rgba(34, 197, 94, 0.35)',
+            borderRadius: 10,
+            fontSize: 12,
+            color: '#86efac',
+            lineHeight: 1.6,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>Published to Steam Workshop ✓</div>
+          <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>
+            Visibility: {VISIBILITY_OPTIONS.find(o => o.value === phase.visibility)?.label ?? 'Unlisted'}
+          </div>
+          <a
+            href={`https://steamcommunity.com/sharedfiles/filedetails/?id=${phase.workshopId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: '#4ade80', textDecoration: 'underline', cursor: 'pointer', fontSize: 12 }}
+          >
+            View on Workshop ↗
+          </a>
+          <button
+            type="button"
+            onClick={() => setPhase({ kind: 'idle' })}
+            style={{
+              marginTop: 2,
+              padding: '4px 10px',
+              background: 'rgba(255,255,255,0.08)',
+              border: '0.5px solid rgba(255,255,255,0.15)',
+              borderRadius: 6,
+              color: 'rgba(255,255,255,0.55)',
+              fontSize: 11,
+              cursor: 'pointer',
+              alignSelf: 'flex-start',
             }}
-            onBlur={e => {
-              e.currentTarget.style.borderColor = ''
-              e.currentTarget.style.boxShadow = ''
-            }}
-            style={inputStyle}
-          />
-        </FieldGroup>
+          >
+            Publish again
+          </button>
+        </div>
       )}
+
+      {/* Visibility selector + Publish button — hidden while success is shown */}
+      {phase.kind !== 'success' && (
+        <>
+          {/* Phase feedback banner — visible while building or uploading */}
+          {busy && (
+            <div
+              style={{
+                padding: '8px 12px',
+                background: 'rgba(99, 102, 241, 0.15)',
+                border: '1px solid rgba(99, 102, 241, 0.30)',
+                borderRadius: 8,
+                fontSize: 11,
+                color: 'rgba(180,185,255,0.90)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  border: '1.5px solid rgba(180,185,255,0.6)',
+                  borderTopColor: 'transparent',
+                  animation: 'publishSpinner 0.7s linear infinite',
+                }}
+              />
+              {building
+                ? 'Building SGA… writing files to temp directory'
+                : 'Uploading to Steam Workshop…'}
+            </div>
+          )}
+
+          {/* Glass segmented visibility selector — selecting a visibility initiates publish */}
+          <FieldGroup label="Visibility">
+            <GlassSegmented
+              options={VISIBILITY_OPTIONS}
+              selectedIndex={selectedIndex}
+              disabled={busy}
+              onClick={(_value, index) => {
+                const vis = VISIBILITY_OPTIONS[index]
+                if (!busy && vis) handlePublish(vis.value, index)
+              }}
+            />
+            <div
+              style={{
+                marginTop: 5,
+                fontSize: 10,
+                color: 'rgba(255,255,255,0.35)',
+                lineHeight: 1.4,
+              }}
+            >
+              {selectedIndex === 0
+                ? 'Unlisted — accessible via direct link, not searchable'
+                : selectedIndex === 1
+                  ? 'Private — only visible to you'
+                  : selectedIndex === 2
+                    ? 'Friends only — visible to your Steam friends'
+                    : 'Public — visible to everyone on the Workshop'}
+            </div>
+          </FieldGroup>
+        </>
+      )}
+      <style>{`
+        @keyframes publishSpinner {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   )
 }

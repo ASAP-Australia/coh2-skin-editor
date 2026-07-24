@@ -29,6 +29,8 @@ import {
 import {
   ATLAS_HEIGHT,
   ATLAS_WIDTH,
+  BANNER_RECT,
+  ICON_RECT,
   TEMPLATE_GUID,
   TEMPLATE_PBGID_LE,
   getGfxTemplate,
@@ -268,6 +270,7 @@ describe('buildFaceplateMod', () => {
     expect(paths).toEqual(
       [
         `${guid}.info`,
+        `test_pack.dds`,
         `attrib/faceplate/test_pack_faceplate.rgd`,
         `english/english.ucs`,
         `ui/assets/textures/${guid}_i1.dds`,
@@ -480,5 +483,138 @@ describe('faceplate export ships description verbatim (no author tag)', () => {
     expect(ucsText).not.toMatch(/^2\t/m)
     expect(ucsText).not.toContain('— by')
     expect(ucsText).not.toContain('Joep')
+  })
+})
+
+// ─── Icon sub-rect (atlas geometry) ─────────────────────────────────────────
+//
+// The faceplate atlas is 692×204 with two sub-rects:
+//   Banner: x=0, y=0, w=624, h=204  (lobby banner — engine samples this)
+//   Icon:   x=624, y=0, w=64, h=64  (scoreboard/chat icon)
+//
+// Before the fix, FaceplateEditor composed only the 624×204 banner and left
+// the icon region zeroed, producing a black scoreboard icon in-game.
+// The fix draws the banner scaled into the icon sub-rect.
+//
+// buildFaceplateMod is agnostic about what pixels are in which sub-rect — it
+// encodes whatever atlasRgba it receives. These tests verify:
+//   (a) pixel content placed at the icon sub-rect in atlasRgba survives the
+//       BC3 round-trip without becoming all-zero.
+//   (b) the ICON_RECT / BANNER_RECT constants match the ground-truth geometry
+//       verified against 44 real workshop faceplate SGAs.
+
+/** Build an atlas with the banner region painted red and the icon sub-rect
+ *  painted bright green (to verify sub-rect pixel fidelity through BC3). */
+function makeAtlasWithIconContent(): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(ATLAS_WIDTH * ATLAS_HEIGHT * 4)
+  for (let y = 0; y < ATLAS_HEIGHT; y++) {
+    for (let x = 0; x < ATLAS_WIDTH; x++) {
+      const i = (y * ATLAS_WIDTH + x) * 4
+      const inIcon =
+        x >= ICON_RECT.x &&
+        x < ICON_RECT.x + ICON_RECT.width &&
+        y >= ICON_RECT.y &&
+        y < ICON_RECT.y + ICON_RECT.height
+      if (inIcon) {
+        // Bright green in icon sub-rect
+        out[i] = 0; out[i + 1] = 220; out[i + 2] = 0; out[i + 3] = 255
+      } else if (x < BANNER_RECT.width) {
+        // Red in banner region
+        out[i] = 220; out[i + 1] = 0; out[i + 2] = 0; out[i + 3] = 255
+      }
+      // Dead-space pixels stay zeroed
+    }
+  }
+  return out
+}
+
+describe('atlas icon sub-rect geometry (ground-truth verification)', () => {
+  it('ICON_RECT and BANNER_RECT match the 692×204 atlas layout from real faceplates', () => {
+    // Verified by reading 44 real workshop faceplate SGAs: all 692×204 DXT5,
+    // icon sub-rect at (624, 0, 64, 64) is always populated in valid faceplates.
+    expect(ATLAS_WIDTH).toBe(692)
+    expect(ATLAS_HEIGHT).toBe(204)
+    expect(BANNER_RECT).toEqual({ x: 0, y: 0, width: 624, height: 204 })
+    expect(ICON_RECT).toEqual({ x: 624, y: 0, width: 64, height: 64 })
+    // Icon sub-rect must fit entirely within the atlas
+    expect(ICON_RECT.x + ICON_RECT.width).toBeLessThanOrEqual(ATLAS_WIDTH)
+    expect(ICON_RECT.y + ICON_RECT.height).toBeLessThanOrEqual(ATLAS_HEIGHT)
+  })
+
+  it('icon sub-rect pixel content survives BC3 encode → DDS round-trip as non-zero', async () => {
+    // If the icon sub-rect is left zeroed in atlasRgba, the BC3 blocks for
+    // that region will all be zero-initialized, producing a black icon in-game.
+    // This test confirms that non-zero content placed at the icon sub-rect
+    // (as the fixed FaceplateEditor now does) is preserved through the encoder.
+    const project = newFaceplateProject('Icon Test Pack')
+    const guid = 'aaaa1111bbbb2222cccc3333dddd4444'
+    const atlasRgba = makeAtlasWithIconContent()
+
+    const result = await buildFaceplateMod({ project, atlasRgba, guid })
+
+    // Verify via the DDS payload: parse BC3 blocks in the icon sub-rect region.
+    // DDS header = 128 bytes; BC3 block = 16 bytes; block grid = 173×51.
+    const dds = result.dds
+    expect(dds.length).toBe(128 + ATLAS_WIDTH / 4 * Math.ceil(ATLAS_HEIGHT / 4) * 16)
+
+    const payload = dds.slice(128)
+    const blockW = Math.ceil(ATLAS_WIDTH / 4)   // 173
+    // Icon sub-rect starts at pixel x=624, block col = 624/4 = 156
+    const iconBlockColStart = ICON_RECT.x / 4   // 156
+    const iconBlockColEnd = (ICON_RECT.x + ICON_RECT.width) / 4  // 172
+
+    // Sample 4 icon blocks from row 0 and confirm they are NOT all-zero
+    let iconBlockNonzero = 0
+    for (let col = iconBlockColStart; col < iconBlockColEnd; col += 4) {
+      const off = (0 * blockW + col) * 16
+      for (let b = 0; b < 16; b++) {
+        if (payload[off + b] !== 0) { iconBlockNonzero++; break }
+      }
+    }
+    expect(iconBlockNonzero).toBeGreaterThan(0)
+
+    // Also confirm banner blocks (first few cols) are non-zero (sanity check)
+    let bannerBlockNonzero = 0
+    for (let col = 0; col < 4; col++) {
+      const off = col * 16
+      for (let b = 0; b < 16; b++) {
+        if (payload[off + b] !== 0) { bannerBlockNonzero++; break }
+      }
+    }
+    expect(bannerBlockNonzero).toBeGreaterThan(0)
+  })
+
+  it('atlasRgba with zeroed icon sub-rect produces all-zero BC3 blocks in that region', async () => {
+    // This is the PRE-FIX behaviour: the editor only drew 624×204, leaving the
+    // icon sub-rect zeroed. Confirm the BC3 blocks for that region are indeed
+    // all zero when no content is painted there — this is the black-icon root cause.
+    const project = newFaceplateProject('Zero Icon Pack')
+    const guid = 'eeee5555ffff6666aaaa7777bbbb8888'
+    // Standard gradient fills only the banner area (x < 624); icon area is zero
+    const atlasRgba = makeGradientAtlas()
+    // Force-zero the icon sub-rect to simulate the pre-fix state
+    for (let y = ICON_RECT.y; y < ICON_RECT.y + ICON_RECT.height; y++) {
+      for (let x = ICON_RECT.x; x < ICON_RECT.x + ICON_RECT.width; x++) {
+        const i = (y * ATLAS_WIDTH + x) * 4
+        atlasRgba[i] = 0; atlasRgba[i + 1] = 0; atlasRgba[i + 2] = 0; atlasRgba[i + 3] = 0
+      }
+    }
+
+    const result = await buildFaceplateMod({ project, atlasRgba, guid })
+    const payload = result.dds.slice(128)
+    const blockW = Math.ceil(ATLAS_WIDTH / 4)
+    const iconBlockColStart = ICON_RECT.x / 4
+    const iconBlockColEnd = (ICON_RECT.x + ICON_RECT.width) / 4
+
+    // With zeroed input, BC3 blocks in the icon area should be all-zero
+    let allZero = true
+    for (let col = iconBlockColStart; col < iconBlockColEnd; col++) {
+      const off = (0 * blockW + col) * 16
+      for (let b = 0; b < 16; b++) {
+        if (payload[off + b] !== 0) { allZero = false; break }
+      }
+      if (!allZero) break
+    }
+    expect(allZero).toBe(true)
   })
 })

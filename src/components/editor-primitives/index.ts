@@ -53,6 +53,7 @@ export { default as ProjectMetaPanel } from './ProjectMetaPanel'
 // not accurately represent the actual CoH2 customisation screen layout.
 export { default as BottomToolPill } from './BottomToolPill'
 export type { ToolDef } from './BottomToolPill'
+export { default as UndoRedoBar } from './UndoRedoBar'
 export { default as ToolOptionsPeel } from './ToolOptionsPeel'
 
 export { default as PanelHeading } from './PanelHeading'

@@ -3,7 +3,7 @@
  * Click a cell to jump to that (part, faction) combination.
  * Override dot shown on cells where part.overrides[faction] is non-empty.
  */
-import { type Coh2DecalPackProject, ATLAS_PART_DEFS } from '@/lib/decal-pack-project'
+import { type Coh2DecalPackProject, ATLAS_PART_DEFS, atlasPartLabel } from '@/lib/decal-pack-project'
 import { type DecalFaction } from '@/lib/decal-mod-templates'
 import { FACTION_LABELS, FACTION_COLORS } from '@/lib/factions'
 
@@ -31,11 +31,11 @@ export default function FactionPartMatrix({ project, activePart, activeFaction, 
       ))}
 
       {/* Data rows: one per part */}
-      {ATLAS_PART_DEFS.map((def, pi) => (
+      {ATLAS_PART_DEFS.map((_def, pi) => (
         <>
           {/* Part label */}
           <div key={`label-${pi}`} style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', paddingRight: 4 }}>
-            {def.name}
+            {atlasPartLabel(pi)}
           </div>
 
           {/* Faction cells */}
@@ -48,7 +48,7 @@ export default function FactionPartMatrix({ project, activePart, activeFaction, 
               <button
                 key={`${pi}-${faction}`}
                 onClick={() => onSelect(pi, faction)}
-                title={`${def.name} / ${FACTION_LABELS[faction]}${hasOverride ? ' (override)' : ''}`}
+                title={`${atlasPartLabel(pi)} / ${FACTION_LABELS[faction]}${hasOverride ? ' (override)' : ''}`}
                 aria-pressed={isActive}
                 style={{
                   width: 40,

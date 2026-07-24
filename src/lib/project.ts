@@ -180,7 +180,7 @@ export interface Coh2SkinProject {
    *  pack via the bottom-bar decal-pack pill. Decal packs ship as a SEPARATE
    *  CoH2 mod, so this is an association/quick-access record (not merged into
    *  the skin export). Undefined = no decal pack chosen. */
-  decalPackRef?: { id: string; name: string }
+  decalPackRef?: { id: string; name: string; path?: string }
   /** Decal preview scope chosen via the bottom-bar decal pill. 'vehicle' = preview
    *  the decal only on `decalScopeVehicleId`; 'all' (default when undefined) = preview
    *  on every vehicle. Affects PREVIEW only — decal packs export as a separate mod. */
@@ -192,6 +192,12 @@ export interface Coh2SkinProject {
    *  ≤5×10⁹ = real Workshop ID (safe to call update); ≥1×10¹⁵ = fake
    *  locally-generated ID from freshPackId() (treat as unpublished). */
   workshopId?: string
+  /** Steam Workshop visibility chosen at last publish/update.
+   *  0 = Public, 1 = FriendsOnly, 2 = Private, 3 = Unlisted.
+   *  Mirrors the same field on Coh2FaceplateProject / Coh2DecalPackProject.
+   *  Absent = not yet published (live-sync defaults to 3/Unlisted for
+   *  safety). */
+  workshopVisibility?: 0 | 1 | 2 | 3
   /** Per-vehicle state, keyed by vehicle id (live editing layer). */
   vehicles: Record<string, VehicleProject>
   /** Per-faction defaults for the live editing layer. */
@@ -225,6 +231,71 @@ const ACTIVE_ID_KEY = 'coh2-skin-active-project'
 const PROJECT_KEY_PREFIX = 'coh2.project.'
 const RECENT_KEY = 'coh2.recentProjects'
 const RECENT_MAX = 12
+const INDEX_KEY = 'coh2.skinProjectIndex.v1'
+
+// ---------------------------------------------------------------------------
+// Metadata index (lightweight — avoids full blob parse on list operations)
+// ---------------------------------------------------------------------------
+
+export interface SkinProjectIndexEntry {
+  name: string
+  lastEditedAt: number
+  workshopId: string | null
+  vehicleCount?: number
+}
+
+function readSkinIndex(): Record<string, SkinProjectIndexEntry> {
+  try {
+    const raw = localStorage.getItem(INDEX_KEY)
+    if (!raw) return {}
+    return JSON.parse(raw) as Record<string, SkinProjectIndexEntry>
+  } catch {
+    return {}
+  }
+}
+
+function writeSkinIndex(index: Record<string, SkinProjectIndexEntry>): void {
+  try {
+    localStorage.setItem(INDEX_KEY, JSON.stringify(index))
+  } catch {
+    /* quota — non-fatal; lazy backfill will retry next time */
+  }
+}
+
+export function upsertSkinIndexEntry(id: string, entry: SkinProjectIndexEntry): void {
+  const index = readSkinIndex()
+  index[id] = entry
+  writeSkinIndex(index)
+}
+
+export function removeSkinIndexEntry(id: string): void {
+  const index = readSkinIndex()
+  delete index[id]
+  writeSkinIndex(index)
+}
+
+/** Return the index entry for `id`, backfilling from the blob if missing. */
+export function getProjectMeta(id: string): SkinProjectIndexEntry | null {
+  const index = readSkinIndex()
+  if (index[id]) return index[id]
+  // Cache miss — parse the blob once, write the entry, return it.
+  const p = loadById(id)
+  if (!p) return null
+  const cached = getRecentProjects().find(e => e.id === id)
+  const entry: SkinProjectIndexEntry = {
+    name: p.packName || cached?.name || 'Untitled pack',
+    lastEditedAt:
+      cached?.lastEditedAt ??
+      (() => {
+        const t = Date.parse(p.modifiedAt ?? '')
+        return Number.isFinite(t) ? t : 0
+      })(),
+    workshopId: p.workshopId ?? null,
+    vehicleCount: Object.keys(p.vehicles).length,
+  }
+  upsertSkinIndexEntry(id, entry)
+  return entry
+}
 
 export const DEFAULT_PALETTE: Palette = {
   orange: '#B84F12',
@@ -453,6 +524,21 @@ export function effectiveMainDecalId(
 }
 
 // ---------------------------------------------------------------------------
+// Vehicle edit predicate
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when a vehicle has any user-authored content — either placed
+ * decals OR a painted/uploaded custom diffuse texture.
+ *
+ * Used by ExportSkinPackButton to count exportable vehicles (N2 fix: painted-
+ * only vehicles without decals must also unlock the Export button).
+ */
+export function isVehicleEdited(v: VehicleProject): boolean {
+  return (v.decals?.length ?? 0) > 0 || !!v.customDiffuseUrl
+}
+
+// ---------------------------------------------------------------------------
 // Slot sync helpers
 // ---------------------------------------------------------------------------
 
@@ -531,6 +617,12 @@ export function persistActive(p: Coh2SkinProject) {
     localStorage.setItem(ACTIVE_ID_KEY, p.id)
     localStorage.setItem(`${PROJECT_KEY_PREFIX}${p.id}`, JSON.stringify(p))
     trackRecentProject(p)
+    upsertSkinIndexEntry(p.id, {
+      name: p.packName,
+      lastEditedAt: Date.now(),
+      workshopId: p.workshopId ?? null,
+      vehicleCount: Object.keys(p.vehicles).length,
+    })
   } catch (e) {
     console.warn('persistActive failed', e)
   }
@@ -643,35 +735,68 @@ export function trackRecentProject(p: Coh2SkinProject): void {
  *  per-id `coh2.project.*` keys (NOT the capped recent registry) so
  *  projects that fell off the recent list still appear. Broken/corrupt
  *  snapshots are silently excluded. Result is sorted by lastEditedAt
- *  descending (newest first). */
+ *  descending (newest first).
+ *
+ *  Lazy index backfill: uses the lightweight index entry when present and
+ *  only full-parses the blob on a cache miss, writing the new entry back.
+ *  First call after upgrade pays the old cost once; subsequent calls are
+ *  parse-free for all indexed projects. */
 export function listAllSkinProjects(): RecentProjectEntry[] {
   const entries: RecentProjectEntry[] = []
   try {
     const cached = new Map<string, RecentProjectEntry>(
       getRecentProjects().map(e => [e.id, e]),
     )
+    const index = readSkinIndex()
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
       if (!key || !key.startsWith(PROJECT_KEY_PREFIX)) continue
       const id = key.slice(PROJECT_KEY_PREFIX.length)
-      const project = loadById(id)
-      if (!project) continue
       const fromRegistry = cached.get(id)
-      const vehicleCount = Object.keys(project.vehicles).length
-      entries.push({
-        id: project.id,
-        name: project.packName || fromRegistry?.name || 'Untitled pack',
-        lastEditedAt:
+      const indexEntry = index[id]
+      if (indexEntry) {
+        // Fast path: use index entry, no blob parse.
+        // Registry lastEditedAt takes priority: it's updated by trackRecentProject
+        // which runs on every persistActive, and tests may stamp it explicitly.
+        const lastEditedAt = fromRegistry?.lastEditedAt || indexEntry.lastEditedAt || 0
+        entries.push({
+          id,
+          name: indexEntry.name || fromRegistry?.name || 'Untitled pack',
+          lastEditedAt,
+          faction: fromRegistry?.faction ?? 'german',
+          vehicleCount: indexEntry.vehicleCount ?? fromRegistry?.vehicleCount ?? 0,
+          thumbnail: fromRegistry?.thumbnail ?? null,
+        })
+      } else {
+        // Slow path: parse blob, backfill index.
+        const project = loadById(id)
+        if (!project) continue
+        const vehicleCount = Object.keys(project.vehicles).length
+        const lastEditedAt =
           fromRegistry?.lastEditedAt ??
           (() => {
             const t = Date.parse(project.modifiedAt ?? '')
             return Number.isFinite(t) ? t : 0
-          })(),
-        faction: fromRegistry?.faction ?? 'german',
-        vehicleCount,
-        thumbnail: fromRegistry?.thumbnail ?? null,
-      })
+          })()
+        const entry: SkinProjectIndexEntry = {
+          name: project.packName || fromRegistry?.name || 'Untitled pack',
+          lastEditedAt,
+          workshopId: project.workshopId ?? null,
+          vehicleCount,
+        }
+        index[id] = entry
+        entries.push({
+          id: project.id,
+          name: entry.name,
+          lastEditedAt,
+          faction: fromRegistry?.faction ?? 'german',
+          vehicleCount,
+          thumbnail: fromRegistry?.thumbnail ?? null,
+        })
+      }
     }
+    // Write back any newly backfilled entries in a single write.
+    writeSkinIndex(index)
   } catch {
     /* swallow — non-critical */
   }
@@ -691,6 +816,12 @@ export function clearSkinWorkshopId(id: string): void {
     if (parsed?.magic !== 'coh2-skin-project') return
     delete parsed.workshopId
     localStorage.setItem(`${PROJECT_KEY_PREFIX}${id}`, JSON.stringify(parsed))
+    // Keep the index in sync.
+    const existing = readSkinIndex()
+    if (existing[id]) {
+      existing[id] = { ...existing[id], workshopId: null }
+      writeSkinIndex(existing)
+    }
   } catch {
     /* swallow — non-critical */
   }
@@ -710,6 +841,7 @@ export function removeRecentProject(id: string): void {
   } catch {
     /* swallow */
   }
+  removeSkinIndexEntry(id)
 }
 
 // ---------------------------------------------------------------------------

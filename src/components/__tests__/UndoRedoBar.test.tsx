@@ -29,7 +29,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 
-import UndoRedoBar from '../UndoRedoBar'
+import UndoRedoBar from '../editor-primitives/UndoRedoBar'
 
 let container: HTMLDivElement | null = null
 let root: Root | null = null

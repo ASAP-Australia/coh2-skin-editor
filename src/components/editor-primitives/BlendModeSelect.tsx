@@ -14,7 +14,7 @@
  * Display labels are title-cased: `'color-dodge' → 'Color Dodge'`.
  */
 
-import type { JSX } from 'react'
+import type { CSSProperties, JSX } from 'react'
 import { BLEND_MODES, type BlendMode } from '@/lib/faceplate-project'
 import { EDITOR_TEXT_2, EDITOR_TEXT_3 } from './tokens'
 
@@ -40,6 +40,10 @@ export interface BlendModeSelectProps {
   label?: string
   /** Compact mode: no label, shorter width — used in inline peels. */
   compact?: boolean
+  /** Optional style override for the outer wrapper div. */
+  style?: CSSProperties
+  /** Optional style override for the inner <select> element. */
+  selectStyle?: CSSProperties
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -54,6 +58,8 @@ export default function BlendModeSelect({
   onChange,
   label,
   compact = false,
+  style,
+  selectStyle,
 }: BlendModeSelectProps): JSX.Element {
   // Treat undefined as 'normal' for the controlled select value.
   const current: BlendMode = value ?? 'normal'
@@ -72,6 +78,7 @@ export default function BlendModeSelect({
         gap: 3,
         // Let the column layout shrink to content in horizontal flex peels.
         flexShrink: 0,
+        ...style,
       }}
     >
       {!compact && label && (
@@ -97,12 +104,13 @@ export default function BlendModeSelect({
           borderRadius: 5,
           color: EDITOR_TEXT_2,
           fontSize: 11,
-          height: 28,
+          height: 26,
           padding: '0 6px',
           cursor: 'pointer',
           width: compact ? 90 : 110,
           outline: 'none',
           appearance: 'auto',
+          ...selectStyle,
         }}
       >
         {BLEND_MODES.map(mode => (

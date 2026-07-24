@@ -15,8 +15,8 @@
  * Contract pinned here:
  *
  *  - The wrapper is a `<div>` with the four canonical layout classes
- *    that put it as a full-viewport backdrop:
- *      `fixed`, `inset-0`, `-z-10`, `pointer-events-none`.
+ *    that put it as a container-filling backdrop:
+ *      `absolute`, `inset-0`, `-z-10`, `pointer-events-none`.
  *    These four together guarantee that the wave fills the viewport,
  *    sits behind every interactive surface, and never intercepts
  *    clicks meant for foreground UI.
@@ -88,7 +88,9 @@ describe('ShaderWaveBackground — wrapper layout', () => {
     // intercepting clicks, sitting behind every interactive surface".
     // A refactor that drops any one of them silently regresses the
     // backdrop contract.
-    expect(wrapper.className).toContain('fixed')
+    // `absolute` (not `fixed`): scopes the backdrop to the AuthShell box
+    // (.glass-frame-inner) so it doesn't paint over the glass window border.
+    expect(wrapper.className).toContain('absolute')
     expect(wrapper.className).toContain('inset-0')
     expect(wrapper.className).toContain('-z-10')
     expect(wrapper.className).toContain('pointer-events-none')

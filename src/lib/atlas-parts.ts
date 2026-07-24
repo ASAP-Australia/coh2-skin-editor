@@ -7,7 +7,7 @@
 
 import { type Coh2DecalPackProject, ATLAS_PART_DEFS } from '@/lib/decal-pack-project'
 import { type DecalFaction, FACTION_ORDER } from '@/lib/decal-mod-templates'
-import { rasteriseDecal } from '@/lib/decal-pack-export'
+import { rasteriseDecal, decodeSourceImage } from '@/lib/decal-pack-export'
 import { DECAL_PACK_SIZE } from '@/lib/decal-pack-project'
 
 // ── compositePartLayers ──────────────────────────────────────────────────────
@@ -45,26 +45,16 @@ export async function compositePartLayers(
     const src = sourceImages[layer.sourceImageId]
     if (!src) continue
 
-    // Decode the source image.
+    // Decode the source image via the shared, SVG-safe, fully-decoded helper.
+    // (Insignia sources are SVG data URLs; createImageBitmap on a dimensionless
+    // SVG throws "InvalidStateError: The source image could not be decoded" —
+    // decodeSourceImage routes SVG through an <img>+decode() path instead.)
     let bitmap: ImageBitmap | HTMLImageElement
     const cached = bitmapCache.get(src.id)
     if (cached) {
       bitmap = cached
-    } else if (typeof createImageBitmap !== 'undefined') {
-      const m = /^data:([^;]+);base64,(.*)$/.exec(src.dataUrl)
-      if (!m) continue
-      const bin = atob(m[2])
-      const bytes = new Uint8Array(bin.length)
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-      const blob = new Blob([bytes], { type: m[1] })
-      bitmap = await createImageBitmap(blob)
     } else {
-      bitmap = await new Promise<HTMLImageElement>((res, rej) => {
-        const img = new Image()
-        img.onload = () => res(img)
-        img.onerror = rej
-        img.src = src.dataUrl
-      })
+      bitmap = await decodeSourceImage(src.dataUrl)
     }
     bitmapCache.set(src.id, bitmap)
 

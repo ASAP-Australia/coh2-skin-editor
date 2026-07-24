@@ -1,0 +1,51 @@
+[
+  {
+    "label": "tiger_hull",
+    "found": false,
+    "searched": [
+      "ArtGermanEF.sga",
+      "ArtHigh.sga"
+    ]
+  },
+  {
+    "label": "king_tiger",
+    "found": false,
+    "searched": [
+      "ArtWestGerman.sga",
+      "ArtHighXP1.sga"
+    ]
+  },
+  {
+    "label": "panther_turret",
+    "found": false,
+    "searched": [
+      "ArtGermanEF.sga",
+      "ArtHigh.sga"
+    ]
+  },
+  {
+    "label": "halftrack",
+    "found": false,
+    "searched": [
+      "ArtGermanEF.sga",
+      "ArtHigh.sga"
+    ]
+  },
+  {
+    "label": "t34_soviet",
+    "found": false,
+    "searched": [
+      "ArtSovietEF.sga",
+      "ArtHigh.sga"
+    ]
+  },
+  {
+    "label": "sherman_aef",
+    "found": false,
+    "searched": [
+      "ArtAEFSkins.sga",
+      "ArtAEF.sga",
+      "ArtHighXP1.sga"
+    ]
+  }
+]

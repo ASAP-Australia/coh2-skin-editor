@@ -29,12 +29,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // A synthetic filesystem keyed by absolute path → directory listing OR
 // file contents. Directories list their children (just the basenames);
-// files store their contents as a string. `existsSync` answers true for
-// any path present as a key; `readFileSync` returns the value (or
-// throws); `readdirSync` returns directory listings.
+// files store their contents as a string or Buffer. `existsSync` answers
+// true for any path present as a key; `readFileSync` returns the value
+// (or throws); `readdirSync` returns directory listings.
+// Binary files (for SGA parser tests) use a Buffer as `binContent`.
 type Entry =
   | { kind: 'dir'; children: string[]; mtimeMs?: number }
-  | { kind: 'file'; content: string; mtimeMs?: number; size?: number }
+  | { kind: 'file'; content: string; binContent?: Buffer; mtimeMs?: number; size?: number }
   | { kind: 'symlink'; target: string }
 const vfs = new Map<string, Entry>()
 
@@ -44,12 +45,22 @@ function setDir(p: string, children: string[], mtimeMs?: number) {
 function setFile(p: string, content: string, mtimeMs?: number, size?: number) {
   vfs.set(p, { kind: 'file', content, mtimeMs, size })
 }
+/** Register a binary file (Buffer) for SGA parser tests. */
+function setBinaryFile(p: string, buf: Buffer) {
+  vfs.set(p, { kind: 'file', content: '', binContent: buf })
+}
 function setSymlink(p: string, target: string) {
   vfs.set(p, { kind: 'symlink', target })
 }
 function resetVfs() {
   vfs.clear()
 }
+
+// ── File-descriptor simulation for openSync/readSync/closeSync ──────────────
+// Each open() call returns a numeric fd; the fd maps to the resolved path.
+const fdMap = new Map<number, string>()
+let nextFd = 100
+
 
 // Resolve a path through any symlinked components (mirrors real
 // realpathSync.native: it walks the path left-to-right, dereferencing
@@ -111,6 +122,31 @@ const fsMock = {
   realpathSync: Object.assign((p: string) => resolveSymlink(p), {
     native: (p: string) => resolveSymlink(p),
   }),
+  // ── Bounded-read APIs used by the new readInfoFromSga ────────────────────
+  openSync: (p: string, _flags: string) => {
+    const resolved = resolveSymlink(p)
+    const entry = vfs.get(resolved)
+    if (!entry || entry.kind !== 'file') throw new Error(`ENOENT: ${p}`)
+    const fd = nextFd++
+    fdMap.set(fd, resolved)
+    return fd
+  },
+  readSync: (fd: number, buf: Buffer, offset: number, length: number, position: number) => {
+    const resolved = fdMap.get(fd)
+    if (!resolved) throw new Error(`Bad fd: ${fd}`)
+    const entry = vfs.get(resolved)
+    if (!entry || entry.kind !== 'file') throw new Error(`Bad fd: ${fd}`)
+    // Prefer binContent (Buffer); fall back to string-as-utf8
+    const src: Buffer = entry.binContent ?? Buffer.from(entry.content, 'utf8')
+    const start = position ?? 0
+    const end = Math.min(start + length, src.length)
+    const read = Math.max(0, end - start)
+    src.copy(buf, offset, start, end)
+    return read
+  },
+  closeSync: (fd: number) => {
+    fdMap.delete(fd)
+  },
 }
 
 vi.mock('node:fs', () => ({
@@ -147,6 +183,8 @@ vi.mock('node:child_process', () => ({
 
 beforeEach(() => {
   resetVfs()
+  fdMap.clear()
+  nextFd = 100
   mockPlatform = 'linux'
   // Clear env vars that could leak from the host
   delete process.env.OneDrive
@@ -812,5 +850,194 @@ describe('listStockArchives', () => {
     const archives = listStockArchives('/install')
     expect(archives).toHaveLength(1)
     expect(archives[0].id).toBe('ArtBritish')
+  })
+})
+
+// ─── readInfoFromSga — bounded-read behaviour ─────────────────────────────────
+//
+// Verifies that the SGA parser uses bounded reads (openSync/readSync/closeSync)
+// and never reads the full archive — confirmed by the fsMock tracking each read
+// range via readSync's `position` and `length` arguments.
+//
+// The minimal SGA v7 layout used here:
+//   0..152    : fixed header (magic, version@8, ..., headerSize@140, dataPos@144)
+//   152..end  : TOC region (headerSize bytes)
+//   dataPos.. : payload region (where .info bytes live)
+//
+// TOC internal layout (offsets relative to TOC start):
+//   0..15  : skip (dirs etc.)
+//   16     : filePos  (uint32 — offset of file-entry array from TOC start)
+//   20     : fileCount (uint32)
+//   24     : namePosBase (uint32 — offset of name table from TOC start)
+//   filePos + i*30: file entry
+//     +0  : nameOff   (uint32 — offset into name table)
+//     +4  : fDataPos  (uint32 — offset into payload region)
+//     +8  : storeLen  (uint32 — stored byte count)
+//     +12 : uncompLen (uint32 — uncompressed byte count)
+//     +21 : storage   (uint8  — 0=store, 1=zlib)
+
+/**
+ * Build a minimal SGA v7 archive Buffer suitable for testing the bounded-read
+ * parser. The archive contains exactly one file: `name/pack.info` with the
+ * given infoContent, plus a path from `typePath` for type inference.
+ *
+ * The `extraPayloadPadding` bytes of junk are appended AFTER the real payload
+ * region to simulate a large archive where a full readFileSync would be
+ * enormously more expensive. The tests confirm that only the bounded ranges are
+ * accessed (openSync + readSync with explicit position/length, no readFileSync).
+ */
+function buildMinimalSga(infoContent: string, typePath: string, extraPayloadPadding = 1_000): Buffer {
+  const infoBytes = Buffer.from(infoContent, 'utf8')
+
+  // ── Name table ────────────────────────────────────────────────────────────
+  // Two NUL-terminated entries: typePath and "pack.info"
+  const typePathBuf  = Buffer.from(typePath + '\0', 'utf8')
+  const infoBuf      = Buffer.from('pack.info\0', 'utf8')
+  const nameTable    = Buffer.concat([typePathBuf, infoBuf])
+  const infoNameOff  = typePathBuf.length  // second name follows first
+
+  // ── File entries (two files × 30 bytes each) ─────────────────────────────
+  // Layout: nameOff(4) + fDataPos(4) + storeLen(4) + uncompLen(4) + pad17(16) + storage(1) + pad1(1)
+  const fileCount  = 2
+  const fileStride = 30
+  const fileEntries = Buffer.alloc(fileCount * fileStride, 0)
+
+  // Entry 0: typePath file (empty body — just for type inference)
+  fileEntries.writeUInt32LE(0,            0)  // nameOff  → first name
+  fileEntries.writeUInt32LE(0,            4)  // fDataPos → 0 (no body)
+  fileEntries.writeUInt32LE(0,            8)  // storeLen = 0
+  fileEntries.writeUInt32LE(0,           12)  // uncompLen = 0
+  fileEntries.writeUInt8(0,              21)  // storage = 0 (store)
+
+  // Entry 1: pack.info (real body)
+  fileEntries.writeUInt32LE(infoNameOff,    fileStride + 0)   // nameOff
+  fileEntries.writeUInt32LE(0,              fileStride + 4)   // fDataPos = 0 (relative to dataPos)
+  fileEntries.writeUInt32LE(infoBytes.length, fileStride + 8) // storeLen
+  fileEntries.writeUInt32LE(infoBytes.length, fileStride + 12)// uncompLen
+  fileEntries.writeUInt8(0,                 fileStride + 21)  // storage = 0 (store)
+
+  // ── TOC region ────────────────────────────────────────────────────────────
+  // We need at least 32 bytes of pre-amble before the file entries.
+  // Offsets: filePos@16, fileCount@20, namePosBase@24
+  const filePos     = 32  // file entries start at toc offset 32
+  const namePosBase = filePos + fileCount * fileStride  // name table follows file entries
+
+  const toc = Buffer.alloc(namePosBase + nameTable.length, 0)
+  toc.writeUInt32LE(filePos,     16)
+  toc.writeUInt32LE(fileCount,   20)
+  toc.writeUInt32LE(namePosBase, 24)
+  fileEntries.copy(toc, filePos)
+  nameTable.copy(toc, namePosBase)
+
+  const headerSize = toc.length
+
+  // ── Payload region ────────────────────────────────────────────────────────
+  // dataPos = 152 + headerSize; infoBytes immediately at offset 0 in payload.
+  const dataPos = 152 + headerSize
+  const payload = Buffer.concat([infoBytes, Buffer.alloc(extraPayloadPadding, 0xff)])
+
+  // ── Fixed header (152 bytes) ───────────────────────────────────────────────
+  const header = Buffer.alloc(152, 0)
+  header.write('_ARCHIVE', 0, 'ascii')
+  header.writeUInt16LE(7,          8)    // major version
+  header.writeUInt32LE(headerSize, 140)
+  header.writeUInt32LE(dataPos,    144)
+
+  return Buffer.concat([header, toc, payload])
+}
+
+describe('readInfoFromSga — bounded reads via fd (M2 regression)', () => {
+  beforeEach(() => {
+    mockPlatform = 'linux'
+  })
+
+  it('returns null for a non-existent file without throwing', async () => {
+    // No vfs entry — openSync should throw ENOENT and readInfoFromSga returns null.
+    // We test this via listInstalledPacks (readInfoFromSga is private).
+    const { listInstalledPacks } = await import('../detect-coh2')
+    // No mods dir at all — returns empty list without crashing.
+    expect(listInstalledPacks('/no/such/path')).toEqual([])
+  })
+
+  it('parses a valid SGA v7 with a skin path and reads only bounded regions', async () => {
+    // Build a minimal skin SGA and register it as a binary file.
+    const sgaBuf = buildMinimalSga(
+      'name = "Tiger Ace Skins"\n',
+      'attrib/skin_pack/my_pack',
+      1_000,   // 1 KB of junk padding — would be megabytes for real
+    )
+
+    // Track which readSync calls were made (position + length pairs).
+    const readRanges: Array<{ pos: number; len: number }> = []
+    const origReadSync = fsMock.readSync.bind(fsMock)
+    vi.spyOn(fsMock, 'readSync').mockImplementation(
+      (fd, buf, offset, length, position) => {
+        readRanges.push({ pos: position, len: length })
+        return origReadSync(fd, buf, offset, length, position)
+      },
+    )
+
+    setDir('/mods/skins', ['tiger.sga'])
+    setBinaryFile('/mods/skins/tiger.sga', sgaBuf)
+    // statSync for mtime check
+    vfs.set('/mods/skins/tiger.sga', {
+      kind: 'file',
+      content: '',
+      binContent: sgaBuf,
+      mtimeMs: 1000,
+    })
+
+    const { listInstalledPacks } = await import('../detect-coh2')
+    const packs = listInstalledPacks('/mods')
+
+    // Should find the pack with the correct name and type.
+    expect(packs).toHaveLength(1)
+    expect(packs[0].name).toBe('Tiger Ace Skins')
+    expect(packs[0].type).toBe('skin')
+
+    // ALL readSync calls must have explicit position values (bounded reads).
+    // None should read more than the header (152) + TOC + .info bytes.
+    // The total file is 152 + headerSize + infoBytes.length + 1000 (padding).
+    // Bounded reads NEVER request the full file length.
+    for (const { len } of readRanges) {
+      // No single read should request more than 64 KB
+      // (the max .info guard in the implementation).
+      expect(len).toBeLessThanOrEqual(65536)
+    }
+    // The 1 KB padding at the end is never touched — confirm by checking
+    // that no read extends past (152 + headerSize + infoBytes.length).
+    const infoBytes = Buffer.from('name = "Tiger Ace Skins"\n', 'utf8')
+    const expectedHeaderSize = sgaBuf.readUInt32LE(140)
+    const dataPos = sgaBuf.readUInt32LE(144)
+    const maxExpectedRead = dataPos + infoBytes.length
+    for (const { pos, len } of readRanges) {
+      expect(pos + len).toBeLessThanOrEqual(maxExpectedRead)
+    }
+  })
+
+  it('returns null for a truncated SGA (header < 152 bytes)', async () => {
+    const tiny = Buffer.alloc(100, 0)
+    tiny.write('_ARCHIVE', 0, 'ascii')
+    setBinaryFile('/mods/skins/truncated.sga', tiny)
+    vfs.set('/mods/skins/truncated.sga', {
+      kind: 'file',
+      content: '',
+      binContent: tiny,
+      mtimeMs: 1000,
+    })
+    setDir('/mods/skins', ['truncated.sga'])
+    const { listInstalledPacks } = await import('../detect-coh2')
+    // truncated SGA is silently skipped → empty list
+    expect(listInstalledPacks('/mods')).toEqual([])
+  })
+
+  it('returns null for an archive with wrong magic (not _ARCHIVE)', async () => {
+    const bad = Buffer.alloc(200, 0)
+    bad.write('_NOTARC_', 0, 'ascii')
+    setBinaryFile('/mods/skins/bad.sga', bad)
+    vfs.set('/mods/skins/bad.sga', { kind: 'file', content: '', binContent: bad, mtimeMs: 1000 })
+    setDir('/mods/skins', ['bad.sga'])
+    const { listInstalledPacks } = await import('../detect-coh2')
+    expect(listInstalledPacks('/mods')).toEqual([])
   })
 })

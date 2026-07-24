@@ -1,32 +1,28 @@
 /**
- * TopBar — top-left floating chrome.
+ * TopBar — floating chrome for the skin editor.
  *
- * Layout:
- *   [Faction lobby icon ▾]  [Paint] [Compose] [Publish]
- *                       │
- *                       └─ click opens a dropdown of the 5 factions; clicking
- *                          a cluster button opens a dropdown panel below the
- *                          bar that shows the cluster's sub-tabs along the top.
+ * Renders three pieces of chrome, none of which is a fixed menu strip:
+ *   1. A centered glass title pill (EditorTitlePill) showing the pack name,
+ *      Live Sync state, and a rename/publish popover (PackIdentityPopover).
+ *   2. A fixed top-left Home button (EditorHomeButton) that closes the pack
+ *      and returns to StartScreen — only rendered when `onClosePack` is
+ *      plumbed by the parent.
+ *   3. A floating panel body (top-left, below the Home button) that renders
+ *      the currently-open panel driven by the `activePanel` prop. Panels are
+ *      opened by the parent (Editor) via `setActivePanel` — the Edit-texture
+ *      pill, file-drop, and the bottom-center controls — not by a strip here.
  *
- * Cluster groups (the 7 underlying PanelIds are unchanged — only how the
- * top bar surfaces them):
- *   Paint   — Decals · Camo · Scene
- *   Compose — Parts · Reference
- *   Publish — Project · Export
+ * Panel bodies (one PanelId each): Decals · Camo · Parts · Scene · View ·
+ * Brush · Export. (The "reference" PanelId is defined but no longer surfaced
+ * as a selectable panel — see ReferencePanel.)
  *
- * Each cluster remembers the last sub-tab the user opened so re-clicking
- * the cluster button restores their context instead of reverting to the
- * first child.
- *
- * Replaces the previous 25vw LeftSidebar. Vehicle selection moved to a
- * bottom-center VehicleMenu; environment-preset selection moved to a
- * vertical 3-icon column on the right edge (see ScenePanel).
+ * Replaces the previous 25vw LeftSidebar. Vehicle selection lives in a
+ * bottom-center VehicleMenu; the Season toggle lives in the bottom-center
+ * control row (SeasonToggle in Editor.tsx), not in this bar.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  FileUp,
-  ChevronDown,
   LogOut,
   Star,
   Lock,
@@ -48,9 +44,6 @@ import {
 import type { VehicleSpec } from '@/lib/vehicles'
 import ImageLibrary from './ImageLibrary'
 import SkinPackInGamePreview from './SkinPackInGamePreview'
-import { defaultModsPath, detectOS } from '@/lib/ux'
-import { exportSkinPack, patchExport, hasKeyPool, type ExportProgress } from '@/lib/mod-export'
-import { installSkinPack, loadSavedModsHandle, pickModsFolder } from '@/lib/coh2-fs'
 import { SgaArchive } from '@/lib/sga'
 import { parsePrompt, listPresets, type CamoPreset, generateCamo } from '@/lib/camo-generator'
 import { generateCamoWithDiffusion } from '@/lib/ai/generate-camo-diffusion'
@@ -62,13 +55,14 @@ import { generateValidCoh2Texture } from '@/lib/ai/valid-coh2-texture'
 import { rewriteAdjustment } from '@/lib/ai/rewrite-adjustment'
 import { VoiceInput } from '@/components/VoiceInput'
 import type { DiffusionStatus } from '@/lib/ai/types'
-import PublishToWorkshopDialog, { makeSkinPublishTarget } from '@/components/PublishToWorkshopDialog'
+import { makeSkinPublishTarget } from '@/components/PublishToWorkshopDialog'
 import type { WorkshopPublishTarget } from '@/components/PublishToWorkshopDialog'
 import { PublishSection } from '@/components/PublishSection'
 import { PackIdentityPopover } from '@/components/PackIdentityPopover'
 import EditorTitlePill from '@/components/editor-primitives/EditorTitlePill'
 import { SlotIconGrid } from '@/components/SlotIconGrid'
 import { EditorHomeButton } from '@/components/editor-primitives'
+import { EDITOR_ACCENT } from '@/components/editor-primitives/tokens'
 import { useLiveSync } from '@/lib/live-sync'
 
 type PanelId = 'view' | 'decals' | 'reference' | 'export' | 'parts' | 'camo' | 'scene' | 'brush'
@@ -232,6 +226,8 @@ export default function TopBar(p: Props) {
       onToggle={() => setPackNameEditOpen(v => !v)}
       popoverOpen={packNameEditOpen}
       publishError={publishError}
+      liveSyncEnabled={sync.enabled}
+      onToggleLiveSync={sync.actions.toggle}
       popoverContent={
         <PackIdentityPopover
           open={packNameEditOpen}
@@ -254,8 +250,15 @@ export default function TopBar(p: Props) {
           }}
           extraSection={
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {/* Template selection has moved to the bottom-bar TemplateDecalPills
-                  pill so the centre-title popover no longer duplicates it. */}
+              {/* In-game slot preview — shows how the pack looks in the CoH2
+                  lobby (6 tiles = 3 summer + 3 winter). No build/install here;
+                  the pack is auto-deployed via Live Sync on every save. */}
+              <SkinPackInGamePreview
+                project={p.project}
+                activeSlotIdx={p.project.activeSlotIdx}
+                onSelectSlot={p.switchActiveSlot}
+                installRoot={p.installRoot}
+              />
               {p.onEditSlotIcon && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div
@@ -294,6 +297,12 @@ export default function TopBar(p: Props) {
                 setPublishError(msg)
                 setTimeout(() => setPublishError(null), 8000)
               }}
+              initialVisibility={p.project.workshopVisibility}
+              onPublished={(visibility) => {
+                const next = { ...p.project, workshopVisibility: visibility }
+                p.setProject(next)
+                persistActive(next)
+              }}
             />
           }
           locked={isUploading || isBuildingTarget}
@@ -308,16 +317,16 @@ export default function TopBar(p: Props) {
         onClick={p.onClosePack}
         style={{
           position: 'fixed',
-          top: 'calc(12px + var(--app-top-inset, 0px))',
-          left: 12,
+          top: 'calc(20px + var(--app-top-inset, 0px))',
+          left: 20,
           zIndex: 30,
         }}
       />
     )}
     {/* Panel content — floats below the home button when a panel is active */}
     <div
-      className="absolute left-3 z-30 flex flex-col items-start gap-2"
-      style={{ top: 'calc(0.75rem + var(--app-top-inset, 0px))' }}
+      className="absolute left-5 z-30 flex flex-col items-start gap-2"
+      style={{ top: 'calc(1.25rem + var(--app-top-inset, 0px))' }}
     >
       {p.activePanel && (
         <div
@@ -341,8 +350,11 @@ export default function TopBar(p: Props) {
             {p.activePanel === 'parts' && <PartsPanel {...p} />}
             {p.activePanel === 'camo' && <CamoPanel {...p} />}
             {p.activePanel === 'scene' && <ScenePanelBody {...p} />}
-            {p.activePanel === 'reference' && <ReferencePanel {...p} />}
-            {p.activePanel === 'export' && <ExportPanel {...p} />}
+            {/* Q9: the "Reference skin (ghost overlay)" panel is unimplemented
+                (auto-discovery of installed skins isn't built yet), so it is
+                intentionally not rendered as a selectable panel. The
+                'reference' PanelId is retained for prop compatibility with the
+                parent; re-add a body here once the feature lands. */}
           </div>
           <style>{`
             @keyframes panelSlideIn {
@@ -415,6 +427,36 @@ function Toggle<T extends string>({
   )
 }
 
+/** Collapsible "Advanced ▸" disclosure. Hides engine/model internals behind
+ *  a small toggle so the primary flow stays jargon-free (Q3). Controlled by
+ *  the caller so the open/closed state can persist across re-renders. */
+function Disclosure({
+  label,
+  open,
+  onToggle,
+  children,
+}: {
+  label: string
+  open: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className="mt-2 border-t border-white/[0.06] pt-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="w-full flex items-center gap-1 text-[10px] uppercase tracking-[1.5px] text-[var(--color-text-3)] hover:text-[var(--color-text-2)] transition-colors"
+      >
+        <span className={`inline-block transition-transform ${open ? 'rotate-90' : ''}`}>▸</span>
+        {label}
+      </button>
+      {open && <div className="mt-2">{children}</div>}
+    </div>
+  )
+}
+
 function Slider({
   label,
   suffix,
@@ -448,7 +490,8 @@ function Slider({
         step={step}
         value={value}
         onChange={e => onChange(parseFloat(e.target.value))}
-        className="w-full accent-[var(--color-accent)]"
+        className="w-full"
+        style={{ accentColor: EDITOR_ACCENT }}
       />
     </label>
   )
@@ -517,16 +560,18 @@ function ViewPanel(p: Props) {
             variant="secondary"
             className="rounded-lg"
             onClick={() => downloadProject(p.project)}
+            title="Save this project to a file on your computer"
           >
-            Save .coh2skin
+            Save project
           </Button>
           <Button
             size="sm"
             variant="secondary"
             className="rounded-lg"
             onClick={() => viewFileInputRef.current?.click()}
+            title="Open a saved project file from your computer"
           >
-            Load .coh2skin
+            Open project
           </Button>
           <input
             ref={viewFileInputRef}
@@ -538,21 +583,6 @@ function ViewPanel(p: Props) {
           />
         </div>
       </Section>
-
-      {/* Quick link to Export sub-tab — saves the user opening Publish → Export.
-          Sits above Pack actions because it's the most common forward step
-          ("I'm done editing → take me to export"), whereas Pack actions
-          are the destructive/exit branch. */}
-      <button
-        onClick={() => p.setActivePanel('export')}
-        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg
-                   bg-[var(--color-accent)]/10 border border-[var(--color-accent)]/30
-                   hover:bg-[var(--color-accent)]/20 text-[12px] font-medium text-[var(--color-accent)]
-                   transition-all duration-150"
-      >
-        <FileUp size={14} aria-hidden />
-        Export textures
-      </button>
 
       {/* Pack actions — close-pack + disconnect now share a single section
           rather than dangling at the bottom of the panel unattached. Both
@@ -759,8 +789,8 @@ function DecalsPanel(p: Props & { activeDecal: Decal | null }) {
 
       {/* 4. INHERITED — decals coming from the faction default. Shown
           read-only with a lock indicator so the user understands why
-          they can't be edited from here. To change them, use the
-          GenerateModal's "All <faction>" scope. */}
+          they can't be edited from here. To change them, apply a decal
+          with the "Every <faction> vehicle" scope. */}
       {inheritedDecals.length > 0 && (
         <Section label={`Inherited from ${p.vehicle.faction} default (${inheritedDecals.length})`}>
           <div className="space-y-1 text-[10px]">
@@ -768,14 +798,11 @@ function DecalsPanel(p: Props & { activeDecal: Decal | null }) {
               <div
                 key={d.id}
                 className="px-2 py-1.5 rounded flex items-center justify-between bg-white/[0.02] text-[var(--color-text-3)]"
-                title="Edit via Generate Modal → All faction scope"
+                title={`${DECAL_LABELS[d.type] ?? cap(d.type)} — inherited from the faction default. To change it, apply a decal with the "Every ${p.vehicle.faction} vehicle" scope.`}
               >
                 <span className="flex items-center gap-1.5">
                   <Lock size={10} className="opacity-50" />
-                  <span>
-                    {DECAL_LABELS[d.type] ?? cap(d.type)} ({d.x},{d.y}){d.rot ? ` ${d.rot}°` : ''}{' '}
-                    {d.size}px
-                  </span>
+                  <span>{DECAL_LABELS[d.type] ?? cap(d.type)}</span>
                 </span>
                 {d.id === (factionDefault?.mainDecalId ?? null) && (
                   <Star size={10} className="text-yellow-500 fill-yellow-500/80" />
@@ -847,8 +874,11 @@ function DecalRow({
         <Star size={12} className={isMain ? 'fill-yellow-400/90' : ''} />
       </button>
 
-      <span className="flex-1 font-mono">
-        {DECAL_LABELS[d.type] ?? cap(d.type)} ({d.x},{d.y}){d.rot ? ` ${d.rot}°` : ''} {d.size}px
+      <span
+        className="flex-1"
+        title={`Position ${d.x}, ${d.y} · Rotation ${d.rot ?? 0}° · Size ${d.size}`}
+      >
+        {DECAL_LABELS[d.type] ?? cap(d.type)}
       </span>
 
       <button
@@ -961,112 +991,6 @@ function ActiveDecalControls({ p, d }: { p: Props & { activeDecal: Decal | null 
   )
 }
 
-function ReferencePanel(_p: Props) {
-  return (
-    <div className="space-y-3">
-      {/* Auto-discovery of installed skins from mods/skins/subscriptions is
-          not yet implemented. This panel is a placeholder. */}
-      <Section label="Reference skin (ghost overlay)">
-        <p className="text-[10px] text-[var(--color-text-3)] leading-relaxed">
-          Coming soon — reference skins will be auto-discovered from your CoH2{' '}
-          <code>mods/skins/subscriptions</code> folder and overlaid as a ghost layer in the
-          viewport.
-        </p>
-      </Section>
-    </div>
-  )
-}
-
-function ExportPanel(p: Props) {
-  // Hover state for the 3D card is now owned by `SkinPackInGamePreview`,
-  // which renders both the grid and the fixed-position hover card inside
-  // its framed "as seen in-game" surface. The panel itself only manages
-  // the advanced collapse.
-  const [showAdvanced, setShowAdvanced] = useState(false)
-
-  const onSavePng = () => {
-    const cv = p.overlayCanvas
-    if (!cv) return
-    const url = cv.toDataURL('image/png')
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${p.vehicle.id}-${p.season}.png`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-  }
-
-  return (
-    <div className="space-y-3">
-      {/* "As seen in-game" preview — wraps the 6-tile shop grid + 3D
-          hover card in a single framed surface. Hovering any tile lands
-          the lobby-style preview card with the exact 3D view other
-          players will see. */}
-      <SkinPackInGamePreview
-        project={p.project}
-        activeSlotIdx={p.project.activeSlotIdx}
-        onSelectSlot={p.switchActiveSlot}
-        installRoot={p.installRoot}
-      />
-      <div className="mt-1 text-[10px] text-[var(--color-text-3)] leading-relaxed">
-        Each slot remembers a different version of your pack. Switching slots swaps the editor.
-        Exporting uses the first slot.
-      </div>
-
-      <Section label="Export skin pack">
-        <ExportSkinPackButton p={p} />
-      </Section>
-
-      <Section label="Install manually (advanced)">
-        <div className="text-[10px] text-[var(--color-text-3)] leading-relaxed mb-1.5">
-          If "Install to game" doesn't work, drop the mod file in this folder:
-        </div>
-        <code className="text-[10px] block break-all bg-black/30 rounded px-2 py-1.5 text-[var(--color-text-2)] leading-relaxed border border-white/5">
-          {defaultModsPath(detectOS())}
-        </code>
-        <button
-          onClick={() => {
-            navigator.clipboard?.writeText(defaultModsPath(detectOS()))
-            p.toast('Path copied', 'success')
-          }}
-          className="mt-1.5 text-[10px] text-[var(--color-accent)] hover:text-orange-300"
-        >
-          Copy path to clipboard ↗
-        </button>
-      </Section>
-
-      {/* Advanced — debug/utility actions that aren't part of the main
-          publish flow. Collapsed by default to keep the panel focused. */}
-      <div>
-        <button
-          onClick={() => setShowAdvanced(v => !v)}
-          className="text-[10px] text-[var(--color-text-3)] hover:text-white flex items-center gap-1"
-        >
-          <ChevronDown
-            size={10}
-            className={`transition-transform ${showAdvanced ? 'rotate-180' : ''}`}
-          />
-          Advanced
-        </button>
-        {showAdvanced && (
-          <div className="mt-2">
-            <Section label="Vehicle texture (PNG)">
-              <Button
-                size="sm"
-                variant="secondary"
-                className="w-full rounded-lg"
-                onClick={onSavePng}
-              >
-                Download {p.vehicle.id}_{p.season}.png
-              </Button>
-            </Section>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 /** Convert a raw mesh ID like `tiger_body_lod0` to a human label like `Tiger Body`. */
 function humanizeMeshName(name: string): string {
   return name
@@ -1113,7 +1037,7 @@ function PartsPanel(p: Props) {
                   p.setExplodeAll(false)
                   p.setSelectedPart(p.selectedPart === name ? null : name)
                 }}
-                title={name}
+                title={name ? humanizeMeshName(name) : '(unnamed)'}
                 className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] transition
                   ${
                     p.selectedPart === name
@@ -1133,8 +1057,8 @@ function PartsPanel(p: Props) {
       </Section>
       {p.selectedPart && (
         <div className="text-[10px] text-[var(--color-text-2)] leading-relaxed">
-          <span className="text-blue-300">{p.selectedPart}</span> selected. Paint strokes will land
-          on this part's UV region.
+          <span className="text-blue-300">{humanizeMeshName(p.selectedPart)}</span> selected. Paint
+          strokes will land on this part.
         </div>
       )}
     </div>
@@ -1184,6 +1108,21 @@ function CamoPanel(p: Props) {
   const [loras, setLoras] = useState<string[]>([])
   const [selectedLora, setSelectedLora] = useState<string | null>(null)
   const [loraWeight, setLoraWeight] = useState(0.85)
+
+  // Q3: engine internals (adapter strength, valid-atlas mode, model/seed
+  // metadata) are hidden behind an "Advanced" disclosure by default so the
+  // primary flow stays jargon-free. Collapsed on first open.
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+
+  // R2: progressive disclosure for the panel as a whole. The BASIC tier
+  // (scope · describe/preview/apply · paste-or-upload · quick presets) is
+  // always visible; the entire AI generation stack — the local diffusion
+  // "Generate with AI" section and the "Adjust this camo" refinement loop —
+  // lives inside one outer "Advanced ▸" accordion that is COLLAPSED by
+  // default, so first-time users see a clean preset→apply flow and only opt
+  // into the heavier AI tooling when they want it. No functionality is
+  // removed — everything below is reachable in one click.
+  const [aiSectionOpen, setAiSectionOpen] = useState(false)
 
   // "Valid CoH2 atlas" mode — when on, generation uses the per-vehicle body
   // mask and the vanilla atlas as the img2img init, so equipment regions
@@ -1457,7 +1396,7 @@ function CamoPanel(p: Props) {
       'no-model': {
         bg: 'bg-amber-950/60',
         text: 'text-amber-400',
-        label: 'No model in diffusion/models/',
+        label: 'No AI model installed',
       },
       idle: { bg: 'bg-white/5', text: 'text-[var(--color-text-3)]', label: 'Ready (cold)' },
       starting: {
@@ -1687,7 +1626,20 @@ function CamoPanel(p: Props) {
         </div>
       </Section>
 
-      {/* ── AI Generate (local) ─────────────────────────────────────────
+      {/* ── Advanced ▸ AI generation stack ───────────────────────────────
+          R2: the entire AI tooling — local diffusion generation plus the
+          img2img "Adjust this camo" refinement loop — is grouped behind one
+          outer accordion, collapsed by default. The BASIC tier above
+          (scope · describe/preview/apply · paste-or-upload · quick presets)
+          is all a first-time user needs to get a camo onto a skin; the AI
+          stack is a deliberate opt-in. Nothing is removed — every control
+          below is one click away. */}
+      <Disclosure
+        label="Advanced — AI generation"
+        open={aiSectionOpen}
+        onToggle={() => setAiSectionOpen(v => !v)}
+      >
+        {/* ── Generate with AI ────────────────────────────────────────────
           Tier-3 local diffusion path. Uses the stable-diffusion.cpp
           sidecar bundled alongside the Electron binary. Falls back
           gracefully when the sidecar is not present or has no model.
@@ -1695,25 +1647,27 @@ function CamoPanel(p: Props) {
           The prompt the user typed in "Describe your camo" above is
           reused verbatim as the free-form direction; faction + season
           context is injected automatically by generateCamoWithDiffusion.
-      ────────────────────────────────────────────────────────────────── */}
-      <Section label="AI Generate (local)">
-        {/* Status pill — engine / sidecar lifecycle state */}
+
+          Q3: engine internals (adapter strength, valid-atlas/UV mode, and
+          the model/seed/duration readout) live under an "Advanced" toggle;
+          the primary control is a plain "Style" picker. */}
+      <Section label="Generate with AI">
+        {/* Status pill — engine lifecycle state */}
         <div className="mb-2">{renderStatusPill(diffStatus)}</div>
 
-        {/* Style adapter (LoRA) selector. Only rendered when the diffusion
-            engine is reachable and we've fetched the loras list. An empty
-            loras array means no adapters are installed — we still show the
-            select with only the "None" option so the user knows it exists
-            and where to drop a .safetensors file. */}
+        {/* Style picker (backed by the LoRA adapter list). An empty loras
+            array means no styles are installed — we still show the select
+            with only the "Default" option so the primary control is always
+            present. */}
         <div className="mb-2">
-          <div className="text-[10px] text-[var(--color-text-2)] mb-0.5">Style adapter</div>
+          <div className="text-[10px] text-[var(--color-text-2)] mb-0.5">Style</div>
           <select
             value={selectedLora ?? ''}
             onChange={e => setSelectedLora(e.target.value || null)}
             className="w-full bg-black/30 rounded-md px-2.5 py-1.5 text-[11px] border border-white/10 text-white
                        focus:outline-none focus:border-[var(--color-accent)] focus:bg-black/40"
           >
-            <option value="">None (base model)</option>
+            <option value="">Default</option>
             {loras.map(name => (
               <option key={name} value={name}>
                 {name}
@@ -1721,43 +1675,6 @@ function CamoPanel(p: Props) {
             ))}
           </select>
         </div>
-
-        {/* Adapter strength slider — only visible when an adapter is chosen.
-            Range 0.0..1.5 matches the sd.cpp `<lora:name:weight>` syntax;
-            1.0 is full-strength, values above 1.0 amplify style at the
-            cost of coherence. 0.85 is a safe starting point for most
-            community-trained LoRAs. */}
-        {selectedLora && (
-          <Slider
-            label="Adapter strength"
-            suffix=""
-            value={loraWeight}
-            min={0}
-            max={1.5}
-            step={0.05}
-            onChange={setLoraWeight}
-          />
-        )}
-
-        {/* Valid-atlas toggle — when on, generation uses the vanilla diffuse
-            atlas as the img2img init and applies a per-vehicle body mask so
-            equipment (tracks, wheels, tools) keeps its vanilla colours and
-            the UV layout round-trips into the SGA. When off, the model
-            produces a flat 1024² camo patch that gets tiled across the
-            whole atlas — fine for hand-painting starting points, not for
-            direct export to a working skin. */}
-        <label className="flex items-center gap-2 mt-1.5 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={validAtlasMode}
-            onChange={e => setValidAtlasMode(e.target.checked)}
-            className="accent-[var(--color-accent)]"
-          />
-          <span className="text-[10px] text-[var(--color-text-2)] leading-tight">
-            Valid CoH2 atlas mode{' '}
-            <span className="text-[var(--color-text-3)]">(preserve equipment + UV)</span>
-          </span>
-        </label>
 
         {/* Generate button — full-width, same accent style as Apply to skin */}
         <button
@@ -1775,13 +1692,54 @@ function CamoPanel(p: Props) {
           {diffGenerating ? 'Generating…' : 'Generate'}
         </button>
 
-        {/* Last generate metadata line — model · seed · duration */}
-        {lastGenResult && (
-          <p className="mt-1.5 text-[9px] text-[var(--color-text-3)] leading-relaxed">
-            Last: {lastGenResult.model} &middot; seed {lastGenResult.seed} &middot;{' '}
-            {lastGenResult.durationMs}ms
-          </p>
-        )}
+        {/* Advanced — engine/model internals kept out of the primary flow. */}
+        <Disclosure
+          label="Advanced"
+          open={advancedOpen}
+          onToggle={() => setAdvancedOpen(v => !v)}
+        >
+          {/* Style strength slider — only meaningful when a non-default style
+              is chosen. Range 0.0..1.5 matches the sd.cpp `<lora:name:weight>`
+              syntax; 1.0 is full-strength, values above 1.0 amplify style at
+              the cost of coherence. 0.85 is a safe starting point. */}
+          {selectedLora && (
+            <Slider
+              label="Style strength"
+              suffix=""
+              value={loraWeight}
+              min={0}
+              max={1.5}
+              step={0.05}
+              onChange={setLoraWeight}
+            />
+          )}
+
+          {/* Preserve-equipment toggle — when on, generation keeps the
+              vehicle's original tracks/wheels/tools colours and the texture
+              layout so it round-trips cleanly into the game. When off, the
+              model produces a flat camo patch tiled across the whole texture
+              — fine as a hand-painting starting point, not for direct use. */}
+          <label className="flex items-center gap-2 mt-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={validAtlasMode}
+              onChange={e => setValidAtlasMode(e.target.checked)}
+              className=""
+              style={{ accentColor: EDITOR_ACCENT }}
+            />
+            <span className="text-[10px] text-[var(--color-text-2)] leading-tight">
+              Preserve equipment &amp; layout
+            </span>
+          </label>
+
+          {/* Last generate metadata line — model · seed · duration */}
+          {lastGenResult && (
+            <p className="mt-1.5 text-[9px] text-[var(--color-text-3)] leading-relaxed">
+              Last: {lastGenResult.model} &middot; seed {lastGenResult.seed} &middot;{' '}
+              {lastGenResult.durationMs}ms
+            </p>
+          )}
+        </Disclosure>
       </Section>
 
       {/* ── Adjust this camo ────────────────────────────────────────────────
@@ -1813,16 +1771,22 @@ function CamoPanel(p: Props) {
             />
           </div>
 
-          {/* Optional Haiku rewrite toggle */}
-          <label className="flex items-center gap-1.5 mb-2 cursor-pointer select-none">
+          {/* Optional AI prompt-polish toggle. Q3: label uses plain words —
+              the underlying model name and per-call cost are engine internals
+              kept out of the primary label. */}
+          <label
+            className="flex items-center gap-1.5 mb-2 cursor-pointer select-none"
+            title="Uses AI to rewrite your phrase into a more effective instruction. Small extra cost per adjustment."
+          >
             <input
               type="checkbox"
               checked={useHaikuRewrite}
               onChange={e => setUseHaikuRewrite(e.target.checked)}
-              className="w-3 h-3 accent-[var(--color-accent)]"
+              className="w-3 h-3"
+              style={{ accentColor: EDITOR_ACCENT }}
             />
             <span className="text-[10px] text-[var(--color-text-2)]">
-              Rewrite with Haiku (better prompts, ~$0.0005/call)
+              Improve my wording automatically
             </span>
           </label>
 
@@ -1851,15 +1815,12 @@ function CamoPanel(p: Props) {
           )}
         </Section>
       )}
+      </Disclosure>
     </div>
   )
 }
 
 // Hoisted so these arrays aren't re-created on every ScenePanelBody render.
-const SEASON_OPTIONS = [
-  { id: 'summer' as const, label: '☀ Summer' },
-  { id: 'winter' as const, label: '❄ Winter' },
-]
 const CREW_OPTIONS = [
   { id: 'off' as const, label: 'Hide' },
   { id: 'on' as const, label: 'Show' },
@@ -1872,9 +1833,9 @@ function ScenePanelBody(p: Props) {
 
   return (
     <div className="space-y-3">
-      <Section label="Season">
-        <Toggle value={p.season} onChange={p.setSeason} options={SEASON_OPTIONS} />
-      </Section>
+      {/* Q8: the Season toggle used to live here too, but the canonical
+          SeasonToggle already renders in the bottom-center control row
+          (Editor.tsx). Removed the duplicate — season is controlled there. */}
 
       {/* Show crew — adds a faction-appropriate soldier behind the
           vehicle as a "crewman" stand-in.  The toggle is intentionally
@@ -1890,7 +1851,7 @@ function ScenePanelBody(p: Props) {
           options={CREW_OPTIONS}
         />
         <p className="text-[9px] text-[var(--color-text-3)] leading-relaxed mt-1.5">
-          Adds a faction soldier behind the vehicle (T-pose — animation decoding TBD).
+          Adds a faction soldier behind the vehicle for scale (standing pose).
         </p>
       </Section>
     </div>
@@ -1910,201 +1871,4 @@ const DECAL_LABELS: Record<string, string> = {
   image: 'Image',
   star: 'Star',
   text: 'Text',
-}
-
-function ExportSkinPackButton({ p }: { p: Props }) {
-  const [busy, setBusy] = useState(false)
-  const [progress, setProgress] = useState<ExportProgress | null>(null)
-  const [built, setBuilt] = useState<{
-    bytes: Uint8Array
-    filename: string
-    modGuid: string
-    numericId: string
-    textureCount: number
-  } | null>(null)
-  const [keyPoolAvailable, setKeyPoolAvailable] = useState<boolean | null>(null)
-  const [publishDialogOpen, setPublishDialogOpen] = useState(false)
-
-  useState(() => {
-    hasKeyPool().then(setKeyPoolAvailable)
-  })
-
-  const editedCount = Object.values(p.project.vehicles).filter(
-    v => (v.decals?.length ?? 0) > 0,
-  ).length
-
-  const build = async () => {
-    if (busy) return
-    setBusy(true)
-    setProgress({ phase: 'init', message: 'Starting…' })
-    setBuilt(null)
-    try {
-      const useKeys = await hasKeyPool()
-      // In-game slot number (1..6) derived from the active export slot's
-      // per-season position. slots 0-2 (summer) and 3-5 (winter) both
-      // carry slotIdx 0-2 → game slot 1-3. Default to slot 3 if anything
-      // is missing so we never throw on legacy projects.
-      const activeSlot = p.project.exportSlots[p.project.activeSlotIdx]
-      const targetSlot = activeSlot ? activeSlot.slotIdx + 1 : 3
-      const result = useKeys
-        ? await patchExport(p.installRoot, p.project, ev => setProgress(ev))
-        : await exportSkinPack(p.installRoot, p.project, ev => setProgress(ev), targetSlot)
-      setBuilt(result)
-      p.toast(
-        `Built ${result.textureCount} vehicle${result.textureCount === 1 ? '' : 's'} — install or download below`,
-        'success',
-      )
-      setProgress(null)
-    } catch (err) {
-      p.toast(err instanceof Error ? err.message : 'Export failed', 'error')
-      setProgress(null)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const downloadBuilt = () => {
-    if (!built) return
-    const blob = new Blob([built.bytes as BlobPart], { type: 'application/octet-stream' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = built.filename
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-    p.toast(`Downloaded ${built.filename}`, 'success')
-  }
-
-  const installBuilt = async () => {
-    if (!built) return
-    try {
-      let mods = await loadSavedModsHandle()
-      if (!mods) {
-        p.toast('Pick your CoH2 mods folder (the one containing skins/) — we ask once.', 'info')
-        mods = await pickModsFolder()
-      }
-      if (!mods) return
-      await installSkinPack(mods, built.numericId, built.bytes)
-      p.toast('Installed! Restart CoH2 to see your skin.', 'success')
-    } catch (err) {
-      // Surface only generic, user-meaningful failure modes. The most likely
-      // real causes are: permission denied on the mods folder, or the user
-      // cancelled the picker. Keep the message plain.
-      const generic =
-        'Couldn\u2019t install — your mods folder may be read-only. Try the manual install instructions in Advanced.'
-      const reason =
-        err instanceof Error && /denied|permission/i.test(err.message)
-          ? generic
-          : 'Couldn\u2019t install — please try again.'
-      p.toast(reason, 'error')
-    }
-  }
-
-  return (
-    <div>
-      <Button
-        size="sm"
-        disabled={busy || editedCount === 0}
-        className="w-full rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-strong)] text-black font-semibold disabled:opacity-50"
-        onClick={build}
-      >
-        {busy
-          ? 'Exporting\u2026'
-          : built
-            ? `Rebuild ${editedCount} vehicle${editedCount === 1 ? '' : 's'}`
-            : `Export ${editedCount} vehicle${editedCount === 1 ? '' : 's'}`}
-      </Button>
-
-      {progress && (
-        <div className="mt-2 text-[10px] text-[var(--color-text-2)] leading-relaxed">
-          <div className="font-medium text-white">{progress.message}</div>
-          {progress.total ? (
-            <div className="mt-1.5 h-1 rounded-full bg-white/10 overflow-hidden">
-              <div
-                className="h-full bg-[var(--color-accent)] transition-all"
-                style={{ width: `${((progress.current ?? 0) / progress.total) * 100}%` }}
-              />
-            </div>
-          ) : null}
-        </div>
-      )}
-
-      {built && !busy && (
-        <div className="mt-2 grid grid-cols-2 gap-1.5">
-          <Button
-            size="sm"
-            className="rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-strong)] text-black"
-            onClick={installBuilt}
-          >
-            Install to game
-          </Button>
-          <Button size="sm" variant="secondary" className="rounded-lg" onClick={downloadBuilt}>
-            Download mod file
-          </Button>
-          <div className="col-span-2 text-[10px] text-[var(--color-text-3)] mt-1 leading-relaxed">
-            <span className="text-white">{p.project.packName || 'Untitled pack'}</span>
-            {' \u00B7 '}
-            {(built.bytes.byteLength / 1024 / 1024).toFixed(1)} MB
-          </div>
-        </div>
-      )}
-
-      {editedCount === 0 && !busy && (
-        <p className="mt-2 text-[10px] text-[var(--color-text-3)] leading-relaxed">
-          Place at least one decal on a vehicle to enable export.
-        </p>
-      )}
-
-      {keyPoolAvailable === false && !busy && (
-        <p className="mt-2 text-[10px] text-yellow-400/70 leading-relaxed">
-          Publish to Workshop to install in-game. Local install via mods/skins/ requires a signing
-          template — run{' '}
-          <span className="font-mono text-white/60">tools/publish-templates.sh</span> once to
-          enable it.
-        </p>
-      )}
-
-      {/* Publish to Workshop — available once the SGA is built. */}
-      {built && !busy && (
-        <div className="mt-3 pt-3 border-t border-white/10">
-          <Button
-            size="sm"
-            className="w-full rounded-lg font-semibold"
-            style={{
-              background: 'linear-gradient(135deg, rgba(31,84,147,0.85), rgba(12,48,100,0.85))',
-              color: 'white',
-              border: '1px solid rgba(96,165,250,0.25)',
-            }}
-            onClick={() => setPublishDialogOpen(true)}
-          >
-            ↑ Publish to Workshop
-          </Button>
-          <p className="mt-1.5 text-[10px] text-[var(--color-text-3)] leading-relaxed">
-            Build the mod first, then publish to share it with the community.
-          </p>
-        </div>
-      )}
-
-      {/* Publish dialog — rendered at the button level so it stays scoped */}
-      {publishDialogOpen && built && (
-        <PublishToWorkshopDialog
-          open={publishDialogOpen}
-          onClose={() => setPublishDialogOpen(false)}
-          target={makeSkinPublishTarget(
-            p.project,
-            built.bytes,
-            built.filename,
-            p.overlayCanvas,
-            workshopId => {
-              const next = { ...p.project, workshopId }
-              p.setProject(next)
-              persistActive(next)
-            },
-          )}
-        />
-      )}
-    </div>
-  )
 }

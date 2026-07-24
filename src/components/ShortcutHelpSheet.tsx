@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { DEFAULT_SHORTCUTS } from './editor-primitives/keyboard-shortcuts-data'
 
 /**
  * Press-and-hold "?" reveals the shortcut cheat-sheet. Self-contained — no
@@ -6,40 +7,33 @@ import { useEffect, useState } from 'react'
  * listener handles open/close. Releasing the key (or pressing Escape)
  * closes the sheet.
  *
+ * Data is sourced from keyboard-shortcuts-data.ts (same truth source as
+ * FaceplateEditor and DecalPackEditor) — the "Vehicle editor" group covers
+ * all skin-editor shortcuts.
+ *
  * Built with the brand glass tokens so it sits inside the existing visual
  * language without pulling in the shadcn neutral scale.
  */
 
-type Row = { keys: string[]; label: string }
+// Pull only the Vehicle editor group from the shared data.
+const SKIN_EDITOR_GROUP = DEFAULT_SHORTCUTS.find(g => g.title === 'Vehicle editor')!
 
+// Reshape into the skin-editor's classic multi-key format for rendering.
+// Each row in keyboard-shortcuts-data is [keyString, action] where keyString
+// can contain spaces (e.g. "LMB drag") — we render them as a single <kbd>.
+type Row = { keys: string[]; label: string }
 const GROUPS: { title: string; rows: Row[] }[] = [
   {
-    title: 'Editing',
-    rows: [
-      { keys: ['Ctrl', 'S'], label: 'Save project' },
-      { keys: ['Ctrl', 'Z'], label: 'Undo' },
-      { keys: ['Ctrl', 'Shift', 'Z'], label: 'Redo' },
-      { keys: ['Ctrl', 'Y'], label: 'Redo (alt)' },
-      { keys: ['Delete'], label: 'Remove selected decal' },
-      { keys: ['Esc'], label: 'Cancel placement / close panel' },
-    ],
-  },
-  {
-    title: 'View',
-    rows: [
-      { keys: ['R'], label: 'Reset camera' },
-      { keys: ['F', 'or', 'H'], label: 'Toggle UI chrome' },
-      { keys: ['?'], label: 'Show this sheet' },
-    ],
-  },
-  {
-    title: 'Mouse',
-    rows: [
-      { keys: ['LMB drag'], label: 'Orbit camera' },
-      { keys: ['RMB drag'], label: 'Pan camera' },
-      { keys: ['Wheel'], label: 'Zoom' },
-      { keys: ['Ctrl', 'V'], label: 'Paste camo (Camo panel)' },
-    ],
+    title: SKIN_EDITOR_GROUP.title,
+    rows: SKIN_EDITOR_GROUP.rows.map(([keys, label]) => ({
+      // Split compound combos like "Ctrl+Shift+Z" into separate key chips.
+      // Preserve space-separated combos like "LMB drag" as one chip since
+      // the "+" separator is the deliberate combinator marker.
+      keys: keys.includes('+')
+        ? keys.split('+').map(k => k.trim())
+        : [keys],
+      label,
+    })),
   },
 ]
 

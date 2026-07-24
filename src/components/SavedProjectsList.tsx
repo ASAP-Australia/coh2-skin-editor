@@ -15,7 +15,7 @@
  *      this button; the project itself stays in the list.
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
   Layers,
   UserSquare,
@@ -30,22 +30,22 @@ import {
 import {
   listAllSkinProjects,
   removeRecentProject,
-  loadById,
   clearSkinWorkshopId,
+  getProjectMeta,
   type RecentProjectEntry,
 } from '@/lib/project'
 import {
   listAllFaceplates,
   removeRecentFaceplate,
-  loadFaceplateById,
   clearFaceplateWorkshopId,
+  getFaceplateMeta,
   type RecentFaceplateEntry,
 } from '@/lib/faceplate-project'
 import {
   listAllDecalPacks,
   removeRecentDecalPack,
-  loadDecalPackById,
   clearDecalPackWorkshopId,
+  getDecalPackMeta,
   type RecentDecalPack,
 } from '@/lib/decal-pack-project'
 import { useToasts } from '@/components/Toasts'
@@ -88,31 +88,16 @@ export default function SavedProjectsList({
   onBack,
   onPickFromDisk,
 }: Props) {
-  // Lists are mirrored into local state so deletes can re-render without
-  // a parent refresh. Reads from localStorage are deferred to a useEffect
-  // so the component paints immediately (showing the loading state) before
-  // the synchronous JSON.parse work begins — prevents a visible freeze when
-  // several large projects (5–20 MB base64 each) are stored. We use the
-  // `listAll*` readers (NOT the 12-entry `getRecent*` registries) so the
-  // load-project menu shows every healthy snapshot the user still has on
-  // disk — projects they made months ago were previously invisible here
-  // once they fell off the recent list. Broken/corrupt snapshots are
-  // silently excluded by the loader-validity gate so they can't crash the
-  // editor on click. The custom scrollbar below handles arbitrarily-long
-  // lists.
+  // Lists are mirrored into local state so deletes can re-render without a
+  // parent refresh. Lazy initialisers call listAll* synchronously on first
+  // render — with the metadata index (Phase 3) these are now parse-free
+  // for indexed projects, so the list renders on the first paint with no
+  // "Loading projects…" intermediate state.
   const { api: toast, node: toastNode } = useToasts()
 
-  const [skins, setSkins] = useState<RecentProjectEntry[]>([])
-  const [faceplates, setFaceplates] = useState<RecentFaceplateEntry[]>([])
-  const [decalPacks, setDecalPacks] = useState<RecentDecalPack[]>([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    setSkins(listAllSkinProjects())
-    setFaceplates(listAllFaceplates())
-    setDecalPacks(listAllDecalPacks())
-    setLoading(false)
-  }, [])
+  const [skins, setSkins] = useState<RecentProjectEntry[]>(() => listAllSkinProjects())
+  const [faceplates, setFaceplates] = useState<RecentFaceplateEntry[]>(() => listAllFaceplates())
+  const [decalPacks, setDecalPacks] = useState<RecentDecalPack[]>(() => listAllDecalPacks())
 
   // Track which row is currently in "confirm delete" state so only one
   // row at a time shows the confirm UI. The key is `${group}:${id}` so
@@ -132,23 +117,24 @@ export default function SavedProjectsList({
   // on each call, so a new render cycle after clearing is sufficient).
   const [refreshNonce, setRefreshNonce] = useState(0)
 
-  const isEmpty = !loading && skins.length === 0 && faceplates.length === 0 && decalPacks.length === 0
+  const isEmpty = skins.length === 0 && faceplates.length === 0 && decalPacks.length === 0
 
   /** Return the workshopId for a project if it's a real published id.
-   *  Mirrors the app-wide `isRealWorkshopId` convention (PublishToWorkshopDialog /
-   *  live-sync): real CoH2 Workshop ids are ≤5e9; locally-generated fake ids from
-   *  freshPackId() land in [1e15, 9e15). */
+   *  Uses the lightweight metadata index — no full blob parse per row.
+   *  Mirrors the app-wide `isRealWorkshopId` convention: real CoH2 Workshop
+   *  ids are ≤5e9; locally-generated fake ids from freshPackId() land in
+   *  [1e15, 9e15). */
   function getRealWorkshopId(group: Group, id: string): string | null {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- nonce read forces re-evaluation on Workshop delete
     void refreshNonce
     try {
-      let workshopId: string | undefined
+      let workshopId: string | null | undefined
       if (group === 'skin') {
-        workshopId = loadById(id)?.workshopId
+        workshopId = getProjectMeta(id)?.workshopId
       } else if (group === 'faceplate') {
-        workshopId = loadFaceplateById(id)?.workshopId
+        workshopId = getFaceplateMeta(id)?.workshopId
       } else {
-        workshopId = loadDecalPackById(id)?.workshopId
+        workshopId = getDecalPackMeta(id)?.workshopId
       }
       if (!workshopId) return null
       const n = BigInt(workshopId)
@@ -247,11 +233,7 @@ export default function SavedProjectsList({
         <span>Back</span>
       </button>
 
-      {loading ? (
-        <div className="text-center py-6">
-          <p className="text-[13px] text-muted-foreground">Loading projects…</p>
-        </div>
-      ) : isEmpty ? (
+      {isEmpty ? (
         <div className="text-center py-6">
           <p className="text-[13px] text-muted-foreground mb-4">No saved projects yet.</p>
           <button

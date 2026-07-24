@@ -46,6 +46,14 @@ interface VehicleMenuProps {
   selected: VehicleSpec | null
   onSelect: (vehicle: VehicleSpec) => void
   dirtyVehicles: Set<string>
+  /**
+   * Set of vehicle ids that are covered by a faction-default livery (camoPreset
+   * or customDiffuseUrl set on the faction default). These get a small green
+   * "covered" badge so the maker can tell the whole faction is covered without
+   * visiting each vehicle individually. When omitted the badge is never shown
+   * (legacy behaviour for tests / surfaces without a project).
+   */
+  coveredVehicles?: Set<string>
   /** True while the parent is in the middle of swapping the rendered
    *  vehicle (model fetch + texture decode). Drives the rotating
    *  loading-beam around this rail. */
@@ -61,6 +69,7 @@ export default function VehicleMenu({
   selected,
   onSelect,
   dirtyVehicles,
+  coveredVehicles,
   loading = false,
   iconResolver,
 }: VehicleMenuProps) {
@@ -99,17 +108,19 @@ export default function VehicleMenu({
             appended at the end so no vehicle is ever hidden. */}
         <div
           ref={scrollContainerRef}
-          className="flex flex-nowrap items-center gap-0.5 overflow-x-auto"
+          className="flex flex-nowrap items-center gap-0.5 overflow-x-auto custom-scrollbar"
         >
           {orderedVehicles.map(vehicle => {
             const isActive = selected?.id === vehicle.id
             const isDirty = dirtyVehicles.has(vehicle.id)
+            const isCovered = coveredVehicles?.has(vehicle.id) ?? false
             return (
               <VehiclePill
                 key={vehicle.id}
                 vehicle={vehicle}
                 isActive={isActive}
                 isDirty={isDirty}
+                isCovered={isCovered}
                 onSelect={onSelect}
                 iconResolver={iconResolver}
               />
@@ -136,12 +147,15 @@ function VehiclePill({
   vehicle,
   isActive,
   isDirty,
+  isCovered,
   onSelect,
   iconResolver,
 }: {
   vehicle: VehicleSpec
   isActive: boolean
   isDirty: boolean
+  /** True when a faction-default livery covers this vehicle — shows a green dot badge. */
+  isCovered: boolean
   onSelect: (v: VehicleSpec) => void
   iconResolver?: VehicleIconResolver
 }) {
@@ -155,6 +169,7 @@ function VehiclePill({
       <button
         data-id={vehicle.id}
         onClick={() => onSelect(vehicle)}
+        title={isCovered ? `${vehicle.displayName} — covered by faction-default livery` : vehicle.displayName}
         className={`relative px-3 py-1.5 rounded-pill text-[11px] font-medium whitespace-nowrap transition-all duration-150 cursor-pointer ${
           isActive
             ? 'bg-white/95 text-black shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_2px_8px_rgba(0,0,0,0.25)]'
@@ -162,6 +177,13 @@ function VehiclePill({
         }`}
       >
         {vehicle.displayName}
+        {/* Coverage badge: green dot = faction-default livery covers this vehicle */}
+        {isCovered && !isDirty && (
+          <span
+            aria-label="Covered by faction-default livery"
+            className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_4px_#34d399]"
+          />
+        )}
         {isDirty && (
           <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-orange-400 shadow-[0_0_4px_#fb923c]" />
         )}
@@ -173,8 +195,8 @@ function VehiclePill({
     <button
       data-id={vehicle.id}
       onClick={() => onSelect(vehicle)}
-      title={vehicle.displayName}
-      aria-label={vehicle.displayName}
+      title={isCovered ? `${vehicle.displayName} — covered by faction-default livery` : vehicle.displayName}
+      aria-label={isCovered ? `${vehicle.displayName} — covered by faction-default livery` : vehicle.displayName}
       aria-pressed={isActive}
       className={`relative shrink-0 mx-0.5 rounded-xl transition-all duration-150 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-white/70 flex flex-col items-center ${
         isActive
@@ -192,6 +214,17 @@ function VehiclePill({
       >
         {vehicle.displayName}
       </span>
+      {/* Coverage badge: small green dot at top-left corner = faction-default
+       *  livery covers this vehicle. Mutually exclusive with dirty (orange):
+       *  dirty takes priority since it reflects an explicit vehicle-specific
+       *  edit that the maker should know about. */}
+      {isCovered && !isDirty && (
+        <span
+          aria-hidden
+          title="Covered by faction-default livery"
+          className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]"
+        />
+      )}
       {/* Dirty indicator — anchored to the pill's outer corner so it's
        *  visible against any icon content. */}
       {isDirty && (

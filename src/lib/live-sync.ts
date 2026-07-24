@@ -166,15 +166,25 @@ class LiveSyncManager {
   private _wsReason = ''
 
   constructor() {
-    // v1.0: Live Sync is always ON. Every edit (decal drag, camo change,
-    // name/icon update) is debounced and written into the user's CoH2
-    // mods folder automatically — no opt-out. The localStorage flag is
-    // persisted as 'true' so the badge reflects the correct state across
-    // sessions and the _resolveModsHandle() path can prompt for a folder
-    // on first use.
-    localStorage.setItem(LS_ENABLED_KEY, 'true')
-    this._state = 'idle'
-    this._reason = 'No changes yet'
+    // Q7 (Live Sync opt-out): Live Sync defaults ON — every edit (decal
+    // drag, camo change, name/icon update) is debounced and written into
+    // the user's CoH2 mods folder automatically — but the user can now
+    // pause it via the badge toggle. The enabled flag is persisted in
+    // localStorage so the choice survives across sessions. A missing flag
+    // (first run, or upgrade from the old always-on build that only ever
+    // wrote 'true') defaults to ON, preserving the prior default behaviour
+    // exactly. Only an explicit persisted 'false' starts the session paused.
+    const persisted = localStorage.getItem(LS_ENABLED_KEY)
+    if (persisted === 'false') {
+      this._state = 'disabled'
+      this._reason = 'Live Sync is off'
+    } else {
+      // Default ON. Re-assert the persisted flag so the badge and the
+      // _resolveModsHandle() first-use picker path see a consistent value.
+      localStorage.setItem(LS_ENABLED_KEY, 'true')
+      this._state = 'idle'
+      this._reason = 'No changes yet'
+    }
   }
 
   // ── Observable ──────────────────────────────────────────────────────────────
@@ -227,20 +237,30 @@ class LiveSyncManager {
   }
 
   /**
-   * Kept for binary-compatibility with the v0.x callers that may pass
-   * `false`. With v1.0's "Live Sync is permanently on" policy, this is
-   * effectively a no-op for both branches: `true` is the default state
-   * after construction, and `false` is silently ignored. The legacy
-   * "Disable Live Sync" UI was removed from `LiveSyncBadge` so this
-   * setter never fires with `false` in practice — it stays on the API
-   * to keep older unit tests compiling.
+   * Q7 (Live Sync opt-out): honour the disable flag.
+   *
+   * `setEnabled(true)`  — resume syncing. Transitions out of `disabled`,
+   *   persists the flag, fires the first-use mods-folder picker if needed,
+   *   and (when a mutation is already queued) triggers one sync of the
+   *   latest state so re-enabling doesn't require another edit to catch up.
+   *
+   * `setEnabled(false)` — PAUSE syncing. Persists the flag, cancels any
+   *   pending debounce / freshness timers, and moves to the `disabled`
+   *   state. While disabled, `schedule()` early-returns (see its
+   *   `isEnabled()` guard) so no build or FS write happens. Any in-flight
+   *   sync is allowed to finish, but its `finally` block will NOT replay
+   *   queued work because it re-checks `isEnabled()`.
+   *
+   * No-ops when the requested state already matches, so a redundant toggle
+   * doesn't reset timers or re-fire the picker.
    */
   setEnabled(enabled: boolean) {
-    localStorage.setItem(LS_ENABLED_KEY, 'true')
+    if (enabled === this.isEnabled()) return
+
+    localStorage.setItem(LS_ENABLED_KEY, enabled ? 'true' : 'false')
+
     if (enabled) {
-      if (this._state === 'disabled') {
-        this._setState('idle', 'No changes yet')
-      }
+      this._setState('idle', 'No changes yet')
       // First-time enable: if we don't have a writeable mods-folder
       // handle in IDB yet, kick off the directory picker now. This call
       // is wired to the click handler that triggered the call, so the
@@ -250,10 +270,27 @@ class LiveSyncManager {
       // changes yet", and the first scheduled sync surfaces a precise
       // "Connect to game install" error if no handle exists.
       void this._ensureModsHandleOnEnable()
+
+      // Resume: if a mutation was captured while paused (schedule() stores
+      // the latest project even though it early-returns on the write), sync
+      // that latest state now so re-enabling immediately reflects it. Only
+      // fires when nothing is already in flight.
+      if (this._queued && !this._inFlight) {
+        this._runSync(this._queued.kind, this._queued.project).catch(() => {
+          /* _runSync sets its own error state; nothing to do here */
+        })
+      }
+    } else {
+      // Pause: stop scheduled work and drop the debounce/freshness timers so
+      // no build or write fires while disabled. Keep `_queued` intact so a
+      // later re-enable can replay the most recent edit.
+      if (this._debounceTimer != null) {
+        window.clearTimeout(this._debounceTimer)
+        this._debounceTimer = null
+      }
+      this._stopFreshnessTicker()
+      this._setState('disabled', 'Live Sync is off')
     }
-    // `enabled === false` is intentionally a no-op in v1.0: the sink is
-    // always alive so users never have to remember to re-enable it
-    // before every editing session.
   }
 
   /** First-enable convenience: in Electron, auto-detect the mods folder
@@ -298,7 +335,13 @@ class LiveSyncManager {
    * is stored as `_queued` and replayed when the flight lands.
    */
   schedule(kind: SyncKind, project: AnyProject) {
-    if (!this.isEnabled()) return
+    // Q7: while paused, capture the latest project but do NOT build/write
+    // or touch state. Storing it lets a subsequent `setEnabled(true)` sync
+    // the most recent edit without waiting for another mutation.
+    if (!this.isEnabled()) {
+      this._queued = { kind, project }
+      return
+    }
 
     // Always store the latest work so a late-arriving mutation beats an
     // earlier one that hasn't fired yet.
@@ -326,6 +369,10 @@ class LiveSyncManager {
 
   /** Fire immediately, bypassing the debounce. */
   flush() {
+    // Q7: paused Live Sync must never write, even on an explicit flush.
+    // `_queued` may hold a captured edit for a later re-enable, so gate on
+    // isEnabled() rather than relying on _queued being empty.
+    if (!this.isEnabled()) return
     if (this._debounceTimer != null) {
       window.clearTimeout(this._debounceTimer)
       this._debounceTimer = null
@@ -402,15 +449,15 @@ class LiveSyncManager {
         this._scheduleWorkshopPush(kind, project, bytes.filename, wsId)
       }
     } catch (err: unknown) {
-      // Graceful degradation — key pool absent means this build doesn't ship
-      // the signing template SGA. Local install is not possible, but the
-      // project is still saved; Workshop publish still works. Show 'idle'
-      // (no red cross) with an informative tooltip instead of an error state.
+      // KeyPoolAbsentError is kept for back-compat but is no longer thrown
+      // by _build() — the unsigned exportSkinPack path runs whenever signing
+      // keys are absent, without needing the template SGA. This guard is
+      // intentionally left as dead code so any future re-introduction of the
+      // throw would still degrade gracefully rather than showing a red error.
       if (err instanceof KeyPoolAbsentError) {
         this._setState(
           'idle',
-          'Saved locally — in-game live sync requires the signing template ' +
-          '(run tools/publish-templates.sh or publish to Workshop to play in-game)',
+          'Saved locally — signing template unavailable (run tools/publish-templates.sh)',
         )
         return
       }
@@ -444,6 +491,13 @@ class LiveSyncManager {
       const isFetchFailure =
         name === 'TypeError' && msg.toLowerCase().includes('failed to fetch')
 
+      // I2b FIX: empty/new project has no vehicles with decals or a template —
+      // collectExportVehicleIds() throws this message. It is NOT a sync error;
+      // it means the project has nothing to export yet. Degrade to 'idle' so
+      // the user sees "Nothing to sync yet" instead of a red "Sync failed".
+      const isEmptyProject =
+        msg.includes('no vehicles with decals or a chosen template')
+
       if (isLocked) {
         this._setState('error', 'Close CoH2 to sync — the mod file is locked by the game')
       } else if (isPermission) {
@@ -456,8 +510,12 @@ class LiveSyncManager {
       } else if (isFetchFailure) {
         this._setState(
           'idle',
-          'Saved locally — in-game live sync requires the signing template ' +
-          '(publish to Workshop to play in-game)',
+          'Saved locally — connect your CoH2 mods folder for optional in-game live sync',
+        )
+      } else if (isEmptyProject) {
+        this._setState(
+          'idle',
+          'Nothing to sync yet — add a decal or select a template to enable live sync',
         )
       } else {
         this._setState('error', `Sync failed: ${msg}`)
@@ -578,12 +636,16 @@ class LiveSyncManager {
       await writeFile(previewPath, previewPng)
 
       // ── Compose the update input ──────────────────────────────────────────
-      const p = project as { packName?: string; packDescription?: string; workshopId?: string }
+      const p = project as { packName?: string; packDescription?: string; workshopId?: string; workshopVisibility?: 0 | 1 | 2 | 3 }
       const tagsByKind: Record<SyncKind, string[]> = {
         skin: ['Skin'],
         faceplate: ['Faceplate'],
         decal: ['Decal'],
       }
+      // Use the project's persisted visibility so an auto-sync NEVER demotes
+      // a Public/FriendsOnly item to Unlisted. Fall back to 3 (Unlisted) only
+      // when the project has never been published and has no stored visibility.
+      const updateVisibility: 0 | 1 | 2 | 3 = p.workshopVisibility ?? 3
       const input: {
         contentPath: string
         sgaPath?: string
@@ -591,7 +653,7 @@ class LiveSyncManager {
         title: string
         description: string
         tags: string[]
-        visibility: 3
+        visibility: 0 | 1 | 2 | 3
         changeNote: string
       } = {
         contentPath,
@@ -600,12 +662,11 @@ class LiveSyncManager {
         title: p.packName ?? 'Untitled',
         description: p.packDescription ?? '',
         tags: tagsByKind[kind],
-        // Preserve the existing Workshop visibility by using 3 (Unlisted)
-        // as a safe default — we cannot read back the current visibility
-        // without an extra IPC round-trip, and auto-syncing should never
-        // silently make a Private item Public. The user can change
-        // visibility explicitly via PublishSection.
-        visibility: 3 as const,
+        // Preserve the user's chosen visibility. Defaults to 3 (Unlisted) only
+        // when the project has no stored workshopVisibility (i.e. it was
+        // published before this field was added). An UPDATE must not silently
+        // flip a Public/FriendsOnly item to Unlisted.
+        visibility: updateVisibility,
         changeNote: 'Auto-synced by Live Sync',
       }
 
@@ -717,23 +778,47 @@ class LiveSyncManager {
       // Stable numeric id so live-sync overwrites the SAME `<numericId>.sga`
       // on every save. CoH2's engine scans mods/skins/ for `%I64u.sga` only.
       const stableNumericId = deriveNumericIdFromProjectId(skinProject.id)
-      // Use patchExport (signed template) instead of exportSkinPack (unsigned SGA).
-      // CoH2's engine rejects unsigned SGAs from mods/skins/; patchExport fetches
-      // the pre-signed template SGA, overwrites only RGT data bytes in-place so
-      // the RSA signature (which covers the TOC only) stays valid.
-      const { patchExport, hasKeyPool } = await import('@/lib/mod-export')
-      if (!await hasKeyPool()) {
-        // Signing template SGA (~377 MB) is not present in this build.
-        // Throw a typed sentinel so _runSync can degrade gracefully (idle,
-        // not error) rather than surfacing a red cross to the user.
-        throw new KeyPoolAbsentError()
+      // Prefer patchExport (signed template) when the key pool is present —
+      // the signed SGA satisfies CoH2's in-game loader. When the key pool is
+      // absent (release builds that don't ship the 377 MB template SGA), fall
+      // back to exportSkinPack (unsigned). Unsigned SGAs load fine in CoH2
+      // locally ([Sig:0], verified in-game); the signed path is only needed for
+      // Workshop publishing.
+      const { patchExport, exportSkinPack, hasSigningKeys } = await import('@/lib/mod-export')
+      let result: { bytes: Uint8Array; filename: string }
+      if (await hasSigningKeys()) {
+        try {
+          result = await patchExport(
+            installHandle,
+            skinProject,
+            () => {},
+            stableNumericId,
+          )
+        } catch (patchErr: unknown) {
+          // patchExport can fail if the template slot sizes no longer match
+          // (e.g. RGT format mismatch) or if the template SGA is corrupt.
+          // Unsigned SGAs load fine in CoH2 locally ([Sig:0]); only Workshop
+          // publishing requires the signed template. Degrade gracefully so
+          // live-sync always writes an SGA and reaches 'synced'.
+          const patchMsg = patchErr instanceof Error ? patchErr.message : String(patchErr)
+          console.warn(`[live-sync] patchExport failed (${patchMsg}); falling back to unsigned exportSkinPack`)
+          result = await exportSkinPack(
+            installHandle,
+            skinProject,
+            () => {},
+            undefined,
+            stableNumericId,
+          )
+        }
+      } else {
+        result = await exportSkinPack(
+          installHandle,
+          skinProject,
+          () => {},
+          undefined,
+          stableNumericId,
+        )
       }
-      const result = await patchExport(
-        installHandle,
-        skinProject,
-        () => {},
-        stableNumericId,
-      )
       // filename from ExportResult already has the extension; numericId is the raw numeric string
       return { bytes: result.bytes, filename: result.filename }
     } else if (kind === 'decal') {

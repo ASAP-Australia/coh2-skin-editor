@@ -118,12 +118,24 @@ Everything below is one of those arrows in detail.
   at `(0, 1.2, 0)` initially — this gets overridden per-vehicle to frame
   the bounding sphere
 - `OrbitControls` with damping
-- Lighting (3-point + hemisphere — NO env map / PMREM, those washed out
-  diffuse tones):
+- Lighting: analytic 3-point + hemisphere fill, **plus** PMREM-based
+  image-based lighting (IBL). An earlier revision of this doc claimed "NO
+  env map / PMREM" — that is now FALSE. `scene.environment` is set to a
+  PMREM-baked cubemap so `MeshPhysicalMaterial` vehicles get proper
+  reflectance. The env map is baked either from the real CoH2 skybox
+  `CubeTexture` (`in_game_field` preset) or from a `RoomEnvironment` via
+  `PMREMGenerator.fromScene(...)` (`Viewport.tsx:2699-2749`), and the scene's
+  `environmentIntensity` knob is set alongside it (0.55 for the field preset,
+  0.3 for the neutral one). Vehicle materials additionally cap their own
+  `envMapIntensity` at 0.3 because CoH2's spec/gloss model picks up far less
+  IBL than a full metalness/roughness PBR material (`Viewport.tsx:3834`).
+  The analytic lights that remain:
   - `HemisphereLight(0xa0b0c8, 0x202020, 0.50)` — cool sky / dim ground
   - Key `DirectionalLight(0xfff1d6, 1.10)` at `(5, 8, 5)` — warm front-right
   - Fill `DirectionalLight(0x90a8c8, 0.40)` at `(-6, 4, -3)` — cool front-left
-  - Rim `DirectionalLight(0xb0c4d8, 0.55)` at `(-2, 2, -8)` — back light
+  - Rim `DirectionalLight(0xb0c4d8, 0.55)` at `(-2, 2, -8)` — back light <!-- TODO verify exact analytic-light params against current preset system -->
+  - Per-faction exposure boost: British / AEF vehicles render at 1.3×
+    (`FACTION_LIGHT_BOOST`, `Viewport.tsx:858`)
 - Ground: 200×200 `PlaneGeometry` with `MeshStandardMaterial` color `0x1c1e22`
   rotated `-π/2` on X, accepts shadows
 - Subtle dark grid helper (10% opacity) above the ground — gives spatial cues
@@ -151,19 +163,58 @@ Everything below is one of those arrows in detail.
 8. Build geometry: partition meshes into "intact" vs "destroyed" by name
    regex (`destroy`, `wreck`, `dmg`, `_dam_`, `burnt`, `broken`, `destruction`),
    render only the requested set (so wrecked panels don't z-fight intact ones)
-9. For each visible submesh: `new MeshStandardMaterial({ map: diffuse,
-   normalMap, color: 0xffffff, metalness: 0.05, roughness: 0.85 })`,
-   `normalScale = (1.0, 1.0)` if normal map present
-10. Auto-fit: scale longest axis to ~5 units, centre X/Z, push bbox.min.y
+9. For each visible submesh: `new MeshPhysicalMaterial({ ... })`
+   (`Viewport.tsx:3795-3849`) — **not** `MeshStandardMaterial`. This is a
+   closer analogue of CoH2's `coh2_vehicle` spec/gloss shader. Four CoH2
+   texture channels are wired:
+   - `_dif` → `map` (sRGB albedo). Decoded with `colorSpace = sRGB`
+     (`Viewport.tsx:3444`).
+   - `_nrm` → `normalMap`, decoded linear. Critically `normalScale =
+     (1.0, -1.0)` (`Viewport.tsx:3856`) — the negative Y flips CoH2/Essence
+     DX-convention normal maps (Y-down) to Three.js/OpenGL (Y-up). The old
+     `(1.0, 1.0)` was wrong and inverted lighting on horizontal panels.
+   - `_gls` → `roughnessMap`, but **RGB-inverted at decode time**
+     (`Viewport.tsx:3465-3469`): CoH2 gloss is "1.0 = polished mirror,
+     0.0 = matte", whereas Three.js roughness is the opposite, so each
+     channel becomes `255 - v` (clamped to a floor of 26 ≈ 0.10 roughness).
+     Three.js samples the green channel.
+   - `_spc` → bound to **both** `specularIntensityMap` *and* `specularColorMap`
+     (`Viewport.tsx:3812-3813`). CoH2's `_spc` is an RGB spec/gloss specular
+     texture carrying both a per-pixel reflection strength and an authored
+     tint; Three.js splits those into two slots, so the same texture feeds
+     both to recover the hue that a scalar-only bind would discard.
+   - Scalar params: `metalness: 0` (CoH2 vehicles are dielectric,
+     `Viewport.tsx:3816`); `roughness: 1.0` when a gloss map is present
+     (let the map drive it), else `0.55`; `specularIntensity: 1.0` with a
+     spec map, else `0.5`; `side: DoubleSide` to mask inconsistent RGM winding.
+   - Note: CoH2's `_alp` channel is **NOT currently wired** into the material
+     (no `alphaMap` / `_alp` reference exists in `Viewport.tsx`); its role
+     here is unconfirmed. <!-- TODO verify _alp role -->
+10. National-insignia badge compositing: the badge is *not* painted into the
+    diffuse canvas — it is composited in the fragment shader via
+    `MeshPhysicalMaterial.onBeforeCompile` (`injectBadgeShader`,
+    `Viewport.tsx:727-809`). The shader samples the badge atlas through the
+    baked TC1 UV channel (the `uv2` attribute, Essence semantic 9) and
+    alpha-blends it over `diffuseColor` after `<map_fragment>`. It only
+    composites inside a fixed badge-cluster window `U∈[0.27,0.35] ×
+    V∈[0.03,0.09]` (`Viewport.tsx:794-796`) so wide-TC1 body polygons don't
+    smear the atlas across the hull. This is gated per-submesh by
+    `hasTightBadgeUv()` (`Viewport.tsx:702`) — MRGM-v8 merged geometry
+    delegates to the shader window; TRIM-v5 single-group geometry must have an
+    aggregate TC1 span < 0.2 in both axes to qualify. A faction team-colour
+    tint (`FACTION_BADGE_TINT`, `Viewport.tsx:873`) multiplies the sampled
+    badge, applied via `applyBadgeUniforms` (`Viewport.tsx:4327,4342`), so
+    previews read faction-coloured instead of ghost-white.
+11. Auto-fit: scale longest axis to ~5 units, centre X/Z, push bbox.min.y
     to y=0 so tracks rest on the ground
-11. Reframe camera: `dist = (radius / sin(fov/2)) * 0.85` from the model
+12. Reframe camera: `dist = (radius / sin(fov/2)) * 0.85` from the model
     centre along a `(1, 0.45, 1)` normalised direction → tank fills the
     viewport, slight 3/4 elevation
-12. `submeshMapsRef.current` populated with `name → Mesh` for the explode/
+13. `submeshMapsRef.current` populated with `name → Mesh` for the explode/
     parts feature
-13. Call `onModelLoaded(model, diffuseImage)` — Editor.tsx stores
+14. Call `onModelLoaded(model, diffuseImage)` — Editor.tsx stores
     `diffuseImage` in `baseDiffuseRef` and uses it as the painting bottom layer
-14. Bump `setModelTick(n => n+1)` — triggers the overlay-binding effect
+15. Bump `setModelTick(n => n+1)` — triggers the overlay-binding effect
 
 ### 3c. Overlay-binding effect (the live edit hook)
 - Triggered by `[overlayCanvas, modelTick]`

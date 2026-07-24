@@ -3,9 +3,8 @@
  * the bottom-center VehicleMenu rail in the vehicle (skin-pack) editor.
  *
  *   • Template pill   — pick the camo base this pack is seeded from. Choosing
- *                       a stock/saved template clones a fresh editable project
- *                       and switches the editor to it (same contract as the
- *                       centre-title PackIdentityPopover → TemplateSelectSection).
+ *                       a stock/saved/workshop template clones a fresh editable
+ *                       project and switches the editor to it.
  *   • Decal-pack pill — associate one of the user's saved decal packs with this
  *                       skin pack. Decal packs are a SEPARATE CoH2 mod, so this
  *                       is a quick-access association recorded on
@@ -27,21 +26,42 @@ import {
 } from '@/lib/project'
 import type { TemplateKind } from './TemplatePicker'
 import { listStockSkins } from '@/lib/stock-skins'
-import { detectWorkshopPath, listWorkshopItems, nativeFileFromPath } from '@/lib/native-fs'
-import { SgaArchive } from '@/lib/sga'
+import { listInstalledPacks } from '@/lib/native-fs'
 import type { Faction } from '@/lib/vehicles'
 import { VEHICLES } from '@/lib/vehicles'
 import {
   readStockDiffuseDataUrl,
   readWorkshopDiffuseDataUrlBySgaPath,
+  readInstalledPackIcon,
 } from '@/lib/template-diffuse'
+import { listWorkshopSkinsForFaction } from '@/lib/workshop-skins'
+import { FACTION_ICON_SRC } from '@/lib/factions'
 
 interface Option {
   id: string
   name: string
   hint?: string
   kind?: TemplateKind
+  /** Optional small preview image URL shown left of the name in the row.
+   *  When null/absent, a placeholder square is shown. */
+  previewUrl?: string | null
+  /** When true this entry is a non-interactive group separator/header row. */
+  isGroupHeader?: boolean
 }
+
+/** Returns true when the pack name is a raw numeric Workshop/file ID — i.e. the
+ *  .info name field was never set and fell back to the numeric basename. These are
+ *  the user's own live-sync synced-project artifacts, not real downloaded camos. */
+function isNumericPackName(name: string): boolean {
+  return /^\d+$/.test(name.trim())
+}
+
+/**
+ * Module-level cache for pack inventory icons, keyed by SGA absolute path.
+ * Persists across re-renders and menu open/close cycles so re-opening is instant.
+ * Stores `null` when the icon was fetched but absent/failed (avoids repeated IPC).
+ */
+const _packIconCache = new Map<string, string | null>()
 
 interface Props {
   project: Coh2SkinProject
@@ -72,6 +92,11 @@ export default function TemplateDecalPills({
   const [diffuseLoading, setDiffuseLoading] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
+  // Pack inventory icon URLs keyed by absolute SGA path.
+  // Populated lazily when the menu opens; entries from _packIconCache are
+  // re-hydrated synchronously so re-opening the menu is instant.
+  const [packIconUrls, setPackIconUrls] = useState<Record<string, string | null>>({})
+
   // Outside-click + Escape close.
   useEffect(() => {
     if (!openMenu) return
@@ -91,29 +116,169 @@ export default function TemplateDecalPills({
     }
   }, [openMenu])
 
-  // Template inventory: blank + the user's own saved skin packs (the same
-  // packs that appear in their inventory / Saved Projects list) + this
-  // faction's stock camos. Recomputed each open so newly-saved packs appear.
+  // Workshop template options: skin-type Workshop items for this faction.
+  // Prefetched on mount (and on faction change) so the menu opens instantly.
+  // null = first fetch not yet complete (cold-start race case only).
+  const [workshopTemplateOptions, setWorkshopTemplateOptions] = useState<Option[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    // Run on the idle callback when available so initial mount cost is deferred
+    // without blocking the first render; fall back to a microtask otherwise.
+    const run = () => {
+      void (async () => {
+        try {
+          const skins = await listWorkshopSkinsForFaction(faction)
+          if (cancelled) return
+          const options = skins.map(s => ({
+            id: `workshop:${s.itemId}`,
+            kind: 'workshop' as const,
+            name: s.name,
+            // sgaPath stored in hint for the async diffuse bake; NOT shown in UI rows (R3).
+            hint: s.sgaPath,
+            previewUrl: FACTION_ICON_SRC[faction] ?? null,
+          }))
+          setWorkshopTemplateOptions(options)
+        } catch {
+          if (!cancelled) setWorkshopTemplateOptions([])
+        }
+      })()
+    }
+    let idleId: number | undefined
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      idleId = window.requestIdleCallback(run, { timeout: 2000 })
+    } else {
+      Promise.resolve().then(run)
+    }
+    return () => {
+      cancelled = true
+      if (idleId !== undefined) window.cancelIdleCallback(idleId)
+    }
+  }, [faction])
+
+  // I3: Installed skin pack options — packs the user has downloaded and
+  // installed to their mods folder (type === 'skin'). Faction-filtered by
+  // checking whether the pack name contains a faction keyword that disagrees
+  // with the active faction; packs with no faction keyword are shown to all.
+  // Fetched on mount (and on faction change) so the template menu opens fast.
+  const [installedSkinOptions, setInstalledSkinOptions] = useState<Option[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const FACTION_KEYWORDS: Record<string, string[]> = {
+      german:      ['german', 'Wehrmacht', 'wehr', 'panzer', 'axis'],
+      soviet:      ['soviet', 'russian', 'ussr', 'allies_ru'],
+      west_german: ['west_german', 'oberkommando', 'okw'],
+      aef:         ['aef', 'american', 'us army', 'usf'],
+      british:     ['british', 'brit', 'uk '],
+    }
+    const factionKeys = FACTION_KEYWORDS[faction] ?? []
+    const otherFactionKeys = Object.entries(FACTION_KEYWORDS)
+      .filter(([f]) => f !== faction)
+      .flatMap(([, keys]) => keys)
+
+    void (async () => {
+      try {
+        const packs = await listInstalledPacks()
+        if (cancelled) return
+        const options = packs
+          .filter(p => p.type === 'skin')
+          // Hide numeric-named artifacts (live-sync synced-project SGAs whose
+          // .info name == the numeric file id — these are NOT real camos).
+          .filter(p => !isNumericPackName(p.name))
+          .filter(p => {
+            const nameLower = p.name.toLowerCase()
+            // If the pack name contains a DIFFERENT faction's keyword, skip it.
+            // If it matches THIS faction's keyword, or has no faction keyword at all, show it.
+            const matchesOther = otherFactionKeys.some(k => nameLower.includes(k.toLowerCase()))
+            if (matchesOther) {
+              // Only exclude if none of this faction's keywords also match (avoid false positives).
+              const matchesSelf = factionKeys.some(k => nameLower.includes(k.toLowerCase()))
+              return matchesSelf
+            }
+            return true
+          })
+          .map(p => ({
+            id: `installed:${p.id}`,
+            // No 'kind' — installed packs are referenced by id only (no diffuse
+            // bake or project clone); applyTemplate's fallback records the name
+            // in project.template as a lightweight reference.
+            name: p.name,
+            hint: p.path,
+            previewUrl: FACTION_ICON_SRC[faction] ?? null,
+          }))
+        if (!cancelled) setInstalledSkinOptions(options)
+      } catch {
+        if (!cancelled) setInstalledSkinOptions([])
+      }
+    })()
+    return () => { cancelled = true }
+  }, [faction])
+
+  // Template inventory — order: Blank → Your Camos (installed + saved) → Stock Vehicles → Workshop.
+  // Installed packs and saved projects appear prominently BEFORE the long stock-vehicle list
+  // so the user's real camos are immediately visible when the menu opens.
+  // Workshop/installed items are prefetched; recomputed on open so newly-saved packs appear.
   const templateOptions = useMemo<Option[]>(() => {
     if (openMenu !== 'template') return []
+    // R2: stock skins ARE filtered by faction (templates are faction-specific).
+    // Saved project templates are cross-faction (the user may want to seed from any pack).
+    // Workshop templates are already pre-filtered by faction (listWorkshopSkinsForFaction).
+    // I3: Installed skin packs are faction-filtered + numeric-noise-filtered by the fetch effect.
     const saved = listAllSkinProjects()
       .filter(p => p.id !== project.id) // don't offer the pack you're editing as its own template
       .map(p => ({
         id: p.id,
         kind: 'saved' as const,
         name: p.name,
-        hint: `${p.vehicleCount} vehicle${p.vehicleCount === 1 ? '' : 's'}`,
+        // R3: no path text — vehicle count hint suppressed from display;
+        // hint field is NOT shown in the row per the new row layout.
       }))
-    return [
-      { id: 'blank', kind: 'blank', name: 'Blank canvas', hint: 'Start with empty slots' },
-      ...saved,
-      ...listStockSkins()
-        .filter(s => s.factionId === faction)
-        .map(s => ({ id: `stock:${s.id}`, kind: 'stock' as const, name: s.name, hint: s.sgaName })),
-    ]
-  }, [openMenu, faction, project.id])
 
-  // Decal-pack options: "None" + every subscribed Steam Workshop item.
+    const installedPacks = (installedSkinOptions ?? []).map(opt => ({
+      ...opt,
+      // Inject real inventory icon when available; fall back to faction icon.
+      previewUrl: (opt.hint && packIconUrls[opt.hint] !== undefined)
+        ? packIconUrls[opt.hint]
+        : FACTION_ICON_SRC[faction] ?? null,
+    }))
+    const workshopPacks = workshopTemplateOptions ?? []
+    const yourCamos = [...installedPacks, ...saved]
+
+    const stockVehicles = listStockSkins()
+      .filter(s => s.factionId === faction) // R2: faction-filtered
+      .map(s => ({
+        id: `stock:${s.id}`,
+        kind: 'stock' as const,
+        name: s.name,
+        // R3: no path/sgaName shown in rows; faction icon as preview.
+        previewUrl: FACTION_ICON_SRC[s.factionId as Faction] ?? null,
+      }))
+
+    const result: Option[] = [{ id: 'blank', kind: 'blank', name: 'Blank canvas' }]
+
+    // Group: Your Camos / Installed — only show the separator when there is content.
+    if (yourCamos.length > 0) {
+      result.push({ id: '__group_your_camos__', name: 'Your Camos', isGroupHeader: true })
+      result.push(...yourCamos)
+    }
+
+    // Group: Stock Vehicles.
+    if (stockVehicles.length > 0) {
+      result.push({ id: '__group_stock__', name: 'Stock Vehicles', isGroupHeader: true })
+      result.push(...stockVehicles)
+    }
+
+    // Group: Workshop.
+    if (workshopPacks.length > 0) {
+      result.push({ id: '__group_workshop__', name: 'Workshop', isGroupHeader: true })
+      result.push(...workshopPacks)
+    }
+
+    return result
+  }, [openMenu, faction, project.id, installedSkinOptions, workshopTemplateOptions, packIconUrls])
+
+  // Decal-pack options: "None" + installed decal packs, faction-filtered.
   // Loading is async (IPC) so we keep the list in state and fire the
   // fetch whenever the decal menu opens. `null` means "loading in progress".
   const [workshopDecalOptions, setWorkshopDecalOptions] = useState<Option[] | null>(null)
@@ -123,54 +288,50 @@ export default function TemplateDecalPills({
     // Reset to loading state each time the menu opens so a fresh fetch runs.
     setWorkshopDecalOptions(null)
     let cancelled = false
+    // I4: Faction keyword map — same as the skin template filter above.
+    // InstalledPack has no faction field, so we infer from the pack name.
+    // Packs with no faction keyword in their name are universal (shown for all factions).
+    const FACTION_KEYWORDS: Record<string, string[]> = {
+      german:      ['german', 'Wehrmacht', 'wehr', 'panzer', 'axis'],
+      soviet:      ['soviet', 'russian', 'ussr', 'allies_ru'],
+      west_german: ['west_german', 'oberkommando', 'okw'],
+      aef:         ['aef', 'american', 'us army', 'usf'],
+      british:     ['british', 'brit', 'uk '],
+    }
+    const factionKeys = FACTION_KEYWORDS[faction] ?? []
+    const otherFactionKeys = Object.entries(FACTION_KEYWORDS)
+      .filter(([f]) => f !== faction)
+      .flatMap(([, keys]) => keys)
+
     void (async () => {
       try {
-        const root = await detectWorkshopPath()
-        if (cancelled || !root) {
-          if (!cancelled) setWorkshopDecalOptions([])
-          return
-        }
-        const items = await listWorkshopItems(root)
+        // listInstalledPacks reads the .info file from every .sga under
+        // mods/decals/subscriptions/ and returns {id, name, type, path}.
+        // The main process auto-detects the mods root when none is passed.
+        const packs = await listInstalledPacks()
         if (cancelled) return
-        // Resolve a human-readable name for each item from the SGA archive
-        // name field (128-byte UTF-16-LE in the 172-byte header — essentially
-        // free; no TOC enumeration, no payload decompression).
-        // Falls back to a prettified basename when the SGA is unreachable or
-        // its archiveName is blank, and keeps `Workshop #id` as last resort.
-        const options = await Promise.all(
-          items.map(async item => {
-            let name = ''
-            if (item.sgaPath) {
-              try {
-                const file = await nativeFileFromPath(item.sgaPath)
-                if (file) {
-                  const archive = await SgaArchive.open(file)
-                  name = archive.archiveName.trim()
-                }
-              } catch {
-                // Non-fatal — fall through to basename / id fallback below.
-              }
-              if (!name && item.sgaPath) {
-                // Derive from basename: strip directory + ".sga", replace
-                // underscores/hyphens with spaces, title-case.
-                const base = item.sgaPath.split(/[\\/]/).pop() ?? ''
-                const stripped = base.replace(/\.sga$/i, '')
-                if (stripped) {
-                  name = stripped
-                    .replace(/[_-]+/g, ' ')
-                    .replace(/\b\w/g, c => c.toUpperCase())
-                }
-              }
+        const options = packs
+          .filter(p => p.type === 'decal')
+          .filter(p => {
+            // I4: faction-filter by name keyword. Universal packs (no faction
+            // keyword) are shown for all factions. Faction-specific packs are
+            // hidden when their faction keyword doesn't match the active faction.
+            const nameLower = p.name.toLowerCase()
+            const matchesOther = otherFactionKeys.some(k => nameLower.includes(k.toLowerCase()))
+            if (matchesOther) {
+              const matchesSelf = factionKeys.some(k => nameLower.includes(k.toLowerCase()))
+              return matchesSelf
             }
-            return {
-              id: item.id,
-              name: name || `Workshop #${item.id}`,
-              hint: item.sgaPath ?? undefined,
-            }
-          }),
-        )
-        if (cancelled) return
-        setWorkshopDecalOptions(options)
+            return true
+          })
+          .map(p => ({
+            id: p.id,
+            name: p.name,
+            // hint carries the absolute SGA path so Editor.tsx can extract the
+            // badge texture for installed decal packs (R-installed fix).
+            hint: p.path,
+          }))
+        if (!cancelled) setWorkshopDecalOptions(options)
       } catch {
         // Non-fatal: fall back to empty list so the "No decal pack" option
         // still renders and the user can clear an existing association.
@@ -180,15 +341,69 @@ export default function TemplateDecalPills({
     return () => {
       cancelled = true
     }
-  }, [openMenu])
+  }, [openMenu, faction])
+
+  // ── Lazy pack icon loader ──────────────────────────────────────────────────
+  // When the template or decal menu opens, fire off readInstalledPackIcon for
+  // any option that has a hint (SGA path) and hasn't been fetched yet.
+  // Results land in packIconUrls (and _packIconCache for cross-session reuse).
+  useEffect(() => {
+    if (!openMenu) return
+
+    // Collect the set of SGA paths we need icons for, from whichever menu is open.
+    const paths: string[] = []
+    const sources = openMenu === 'template'
+      ? (installedSkinOptions ?? [])
+      : (workshopDecalOptions ?? [])
+
+    for (const opt of sources) {
+      if (opt.hint && !_packIconCache.has(opt.hint)) {
+        paths.push(opt.hint)
+      }
+      // Pre-populate state from cache for entries already fetched.
+      if (opt.hint && _packIconCache.has(opt.hint)) {
+        const cached = _packIconCache.get(opt.hint)
+        if (cached !== undefined) {
+          setPackIconUrls(prev => {
+            if (prev[opt.hint!] !== undefined) return prev // already in state
+            return { ...prev, [opt.hint!]: cached }
+          })
+        }
+      }
+    }
+
+    if (paths.length === 0) return
+    let cancelled = false
+
+    void (async () => {
+      // Load icons one by one (sequential, not parallel) to avoid saturating
+      // the IPC channel with many concurrent SGA opens.
+      for (const sgaPath of paths) {
+        if (cancelled) return
+        const url = await readInstalledPackIcon(sgaPath)
+        _packIconCache.set(sgaPath, url)
+        if (!cancelled) {
+          setPackIconUrls(prev => ({ ...prev, [sgaPath]: url }))
+        }
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [openMenu, installedSkinOptions, workshopDecalOptions])
 
   const decalOptions = useMemo<Option[]>(() => {
     if (openMenu !== 'decal') return []
     return [
       { id: '', name: 'No decal pack' },
-      ...(workshopDecalOptions ?? []),
+      ...(workshopDecalOptions ?? []).map(opt => ({
+        ...opt,
+        // Inject the real inventory icon when available; fall back to faction icon.
+        previewUrl: (opt.hint && packIconUrls[opt.hint] !== undefined)
+          ? packIconUrls[opt.hint]
+          : FACTION_ICON_SRC[faction] ?? null,
+      })),
     ]
-  }, [openMenu, workshopDecalOptions])
+  }, [openMenu, workshopDecalOptions, packIconUrls, faction])
 
   const templateName = project.template?.name ?? 'Blank canvas'
   const decalName = project.decalPackRef?.name ?? 'No decal pack'
@@ -229,10 +444,60 @@ export default function TemplateDecalPills({
     return VEHICLES.find(v => v.id === vehicleId)?.faction ?? faction
   }
 
+  /**
+   * Asynchronously bake the diffuse for an installed skin pack SGA into the
+   * given vehicle slot. Installed packs share the same SGA layout as workshop
+   * packs (art/armies/<faction>/vehicles/<vehicleId>/*_dif.rgt), so we reuse
+   * readWorkshopDiffuseDataUrlBySgaPath.  opt.hint carries the absolute .sga path.
+   */
+  async function fetchInstalledDiffuse(sgaPath: string | undefined, vehicleFact: Faction, vehicleId: string): Promise<string | null> {
+    if (!sgaPath) return null
+    try {
+      return await fetchWorkshopDiffuse(sgaPath, vehicleFact, vehicleId)
+    } catch {
+      return null
+    }
+  }
+
   function applyTemplate(opt: Option) {
     setOpenMenu(null)
+    // Skip group headers.
+    if (opt.isGroupHeader) return
     if (opt.id === project.template?.id) return
     const kind = opt.kind ?? 'blank'
+
+    // Installed skin pack: record the template reference AND asynchronously bake
+    // the installed SGA's diffuse for the current vehicle (same path layout as
+    // workshop packs). Respects templateScope: "This vehicle" patches only the
+    // current vehicle slot; "All vehicles" replaces the whole project template
+    // reference (diffuse is baked for the current vehicle only — other vehicles
+    // are lazily populated on demand when the user switches to them).
+    if (opt.id.startsWith('installed:')) {
+      const targetFaction = vehicleFaction(currentVehicleId)
+      const bakeTarget = currentVehicleId
+      const next: Coh2SkinProject = {
+        ...project,
+        template: { id: opt.id, kind: 'blank', name: opt.name },
+      }
+      setProject(next)
+      persistActive(next)
+
+      // Fire-and-forget diffuse bake.
+      setDiffuseLoading(true)
+      void fetchInstalledDiffuse(opt.hint, targetFaction, bakeTarget).then(dataUrl => {
+        setDiffuseLoading(false)
+        if (!dataUrl) return
+        const existing = next.vehicles[bakeTarget] ?? { id: bakeTarget, tac: null, name: null, decals: [] }
+        const veh = { ...structuredClone(existing), customDiffuseUrl: dataUrl }
+        const updated: Coh2SkinProject = {
+          ...next,
+          vehicles: { ...next.vehicles, [bakeTarget]: veh },
+        }
+        persistActive(updated)
+        setProject(updated)
+      }).catch(() => setDiffuseLoading(false))
+      return
+    }
 
     // "This vehicle" scope — copy only the matching vehicle slot from the
     // cloned template into the current project, leaving all other vehicles
@@ -358,7 +623,15 @@ export default function TemplateDecalPills({
     const scope: 'vehicle' | 'all' = decalScope === 0 ? 'vehicle' : 'all'
     const next: Coh2SkinProject = {
       ...project,
-      decalPackRef: opt.id ? { id: opt.id, name: opt.name } : undefined,
+      decalPackRef: opt.id
+        ? {
+            id: opt.id,
+            name: opt.name,
+            // hint carries the absolute SGA path for installed decal packs;
+            // undefined for user-created packs (they live in localStorage).
+            ...(opt.hint ? { path: opt.hint } : {}),
+          }
+        : undefined,
       decalScope: opt.id ? scope : undefined,
       decalScopeVehicleId: opt.id && scope === 'vehicle' ? currentVehicleId : undefined,
     }
@@ -389,7 +662,11 @@ export default function TemplateDecalPills({
           heading="Template"
           options={templateOptions}
           selectedId={project.template?.id ?? 'blank'}
-          emptyHint="No stock camos detected for this faction."
+          emptyHint={
+            workshopTemplateOptions === null
+              ? 'Loading workshop items…'
+              : 'No stock camos detected for this faction.'
+          }
           onPick={applyTemplate}
           headerContent={
             <ScopeToggle
@@ -492,13 +769,21 @@ function Dropdown({
   footerContent?: React.ReactNode
 }) {
   // Suppress the auto-injected blank/none-only case from looking empty.
-  const realCount = options.filter(o => o.id !== '' && o.id !== 'blank').length
+  const realCount = options.filter(o => !o.isGroupHeader && o.id !== '' && o.id !== 'blank').length
   return (
-    <div role="listbox" aria-label={heading} style={{ ...panelStyle, [align]: 0 }}>
+    <div role="listbox" aria-label={heading} className="custom-scrollbar" style={{ ...panelStyle, [align]: 0 }}>
       <div style={sectionHeaderStyle}>{heading}</div>
       {headerContent && <div style={headerContentStyle}>{headerContent}</div>}
       {realCount === 0 && <div style={emptyHintStyle}>{emptyHint}</div>}
       {options.map(opt => {
+        // Group header separator row — non-interactive.
+        if (opt.isGroupHeader) {
+          return (
+            <div key={opt.id} aria-hidden style={groupHeaderStyle}>
+              {opt.name}
+            </div>
+          )
+        }
         const isSelected = opt.id === selectedId
         return (
           <button
@@ -518,8 +803,20 @@ function Dropdown({
               if (!isSelected) e.currentTarget.style.background = 'transparent'
             }}
           >
-            <div style={optionNameStyle}>{opt.name}</div>
-            {opt.hint && <div style={optionHintStyle}>{opt.hint}</div>}
+            {/* R3: [preview image LEFT] [name RIGHT] — no path/hint text shown. */}
+            <div style={optionRowStyle}>
+              {opt.previewUrl ? (
+                <img
+                  src={opt.previewUrl}
+                  alt=""
+                  aria-hidden
+                  style={optionPreviewImgStyle}
+                />
+              ) : (
+                <div style={optionPreviewPlaceholderStyle} aria-hidden />
+              )}
+              <div style={optionNameStyle}>{opt.name}</div>
+            </div>
           </button>
         )
       })}
@@ -559,11 +856,27 @@ const sectionHeaderStyle: CSSProperties = {
   color: 'rgba(247,247,250,0.45)',
 }
 
+/** Non-interactive group separator label inside the dropdown. Visually distinct
+ *  from the top-level panel heading (sectionHeaderStyle) — slightly smaller,
+ *  lighter weight, with a subtle top rule to create visual separation. */
+const groupHeaderStyle: CSSProperties = {
+  padding: '8px 8px 2px',
+  marginTop: 2,
+  fontSize: 8.5,
+  fontWeight: 600,
+  letterSpacing: '0.09em',
+  textTransform: 'uppercase',
+  color: 'rgba(247,247,250,0.30)',
+  borderTop: '0.5px solid rgba(255,255,255,0.07)',
+  userSelect: 'none',
+  pointerEvents: 'none',
+}
+
 const optionStyle: CSSProperties = {
   display: 'block',
   width: '100%',
   textAlign: 'left',
-  padding: '6px 8px',
+  padding: '5px 8px',
   borderRadius: 6,
   border: 'none',
   cursor: 'pointer',
@@ -572,11 +885,42 @@ const optionStyle: CSSProperties = {
   color: 'inherit',
 }
 
-const optionNameStyle: CSSProperties = { fontSize: 12, color: 'rgba(247,247,250,0.92)' }
-const optionHintStyle: CSSProperties = {
-  marginTop: 1,
-  fontSize: 10,
-  color: 'rgba(247,247,250,0.5)',
+/** R3: row layout — [preview 20×20] [name]. No path/hint text. */
+const optionRowStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+}
+
+const optionPreviewImgStyle: CSSProperties = {
+  width: 20,
+  height: 20,
+  objectFit: 'contain',
+  flexShrink: 0,
+  borderRadius: 3,
+  opacity: 0.85,
+  pointerEvents: 'none',
+  userSelect: 'none',
+}
+
+/** Shown when no previewUrl is available. Matches the image slot size. */
+const optionPreviewPlaceholderStyle: CSSProperties = {
+  width: 20,
+  height: 20,
+  flexShrink: 0,
+  borderRadius: 3,
+  background: 'rgba(255,255,255,0.08)',
+  border: '0.5px solid rgba(255,255,255,0.10)',
+}
+
+const optionNameStyle: CSSProperties = {
+  fontSize: 12,
+  color: 'rgba(247,247,250,0.92)',
+  flex: 1,
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 }
 const emptyHintStyle: CSSProperties = {
   padding: '4px 8px 6px',

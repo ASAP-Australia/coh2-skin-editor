@@ -18,15 +18,13 @@
  *     symmetry to be disable-able from this entry point — defaulting to
  *     off here satisfies that without requiring an extra step.
  *
- * Visually mirrors `GenerateButton` and `ExplodeButton` so the three pill
- * controls (Explode / Generate / Edit Texture) feel like a single family.
+ * Visually mirrors `GenerateButton` so the pill controls feel like a family.
  * Same glass background, same height, same hover affordance.
  *
  * Pressed state: when the brush is already on, the pill renders as
  * pressed (brighter background + accent text) so the user has a clear
  * "you are currently editing the texture" signal — clicking it again
- * exits paint mode and closes the brush panel, mirroring the toggle
- * pattern of the ExplodeButton.
+ * exits paint mode and closes the brush panel.
  */
 
 import { Brush } from 'lucide-react'

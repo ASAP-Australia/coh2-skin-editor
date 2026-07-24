@@ -7,17 +7,19 @@ import {
   useRef,
   useState,
 } from 'react'
+import { Stamp, Paintbrush, Boxes, Sun, Download, Loader2 } from 'lucide-react'
 import { useDecalHistory } from '@/lib/decal-history'
 const Viewport = lazy(() => import('./Viewport'))
+import ViewportGuard from './ViewportGuard'
 import TopBar from './TopBar'
 import ScenePanel from './ScenePanel'
 import FactionPanel from './FactionPanel'
 import VehicleMenu, { type VehicleIconResolver } from './VehicleMenu'
 import TemplateDecalPills from './TemplateDecalPills'
 import SeasonToggle from './SeasonToggle'
-import ExplodeButton from './ExplodeButton'
 import EditTextureButton from './EditTextureButton'
 import VehicleTextureEditor from './VehicleTextureEditor'
+import { UndoRedoBar } from '@/components/editor-primitives'
 import { extractBodyUvWireframe } from '@/lib/uv-wireframe'
 import ShortcutHelpSheet from './ShortcutHelpSheet'
 import OnboardingOverlay from './OnboardingOverlay'
@@ -49,20 +51,27 @@ import {
 } from '@/lib/brush'
 // (relTime removed with bottom-right "saved Xs ago" indicator)
 import { SgaArchive } from '@/lib/sga'
-import { scheduleLiveSync } from '@/lib/live-sync'
-import { generateCamo, type CamoPreset } from '@/lib/camo-generator'
+import { scheduleLiveSync, deriveNumericIdFromProjectId } from '@/lib/live-sync'
+import { collectExportVehicleIds } from '@/lib/mod-export'
+import { isElectron, detectModsPath, writeFile } from '@/lib/native-fs'
+import { generateCamo, applyWeathering, CAMO_OVERLAY_ALPHA, type CamoPreset } from '@/lib/camo-generator'
 // vehicle-3d-renderer is dynamically imported so its Three.js dependency
 // doesn't land in the main chunk — it's only needed after the editor mounts.
 // The import() call is placed inside the useEffect below so bundlers see it
 // as a code-split boundary rather than a static dep.
 import { type PresetId, SCENE_PRESETS, loadPresetId, persistPresetId } from '@/lib/scene-settings'
+import { SKYBOX_ENVS, filterEnvsBySeason, seasonOfEnv } from '@/lib/skybox'
 import { schedulePrefetch } from '@/lib/preload'
 import { resolveVehicleIcon } from '@/lib/vehicle-icons'
-import { loadDecalPackById } from '@/lib/decal-pack-project'
+import { loadDecalPackById, findDecalPackIdByWorkshopId } from '@/lib/decal-pack-project'
 import { rasteriseDecal } from '@/lib/decal-pack-export'
 import { bakeDecalOntoDiffuse } from '@/lib/king-tiger-decal-bake'
 import { resolveDecalUvRect } from '@/lib/vehicle-uv-registry'
+import { readInstalledDecalImage } from '@/lib/template-diffuse'
 import type { RgmMesh } from '@/lib/rgm'
+import { buildCamoExclusionMask } from '@/lib/camo-mask'
+import { composeLayers } from '@/lib/layer-compositor'
+import { makeTextureRenderLayer } from '@/lib/texture-layer-model'
 
 // Models with known parser defects (packed-stride RGM variants where every
 // submesh is skipped → empty viewport). Verified 2026-06-02 via
@@ -133,10 +142,17 @@ export default function Editor({
   // vehicleIdRef is populated below once vehicleId state is available;
   // we declare the ref here and assign it at the vehicleId declaration site.
   const vehicleIdRef = useRef<string>('')
+  // Late-bound getter for baseDiffuse canvas — assigned after baseDiffuseRef
+  // is declared below (line ~481). Both are refs so the indirection is free.
+  const getDiffuseCanvasRef = useRef<() => HTMLCanvasElement | null>(() => null)
+  // Late-bound callback for restoring pixel data after a paint undo.
+  const onDiffuseRestoredRef = useRef<(dataUrl: string) => void>(() => {})
   const history = useDecalHistory(
     useCallback(() => projectRef.current, []),
     setProject,
     useCallback(() => vehicleIdRef.current, []),
+    useCallback(() => getDiffuseCanvasRef.current(), []),
+    useCallback((dataUrl: string) => onDiffuseRestoredRef.current(dataUrl), []),
   )
 
   const [season, setSeason] = useState<'summer' | 'winter'>('summer')
@@ -203,7 +219,7 @@ export default function Editor({
     setBrushOnState(v)
     if (v) setPlaceModeState('off')
   }, [])
-  // Exploded parts view
+  // Parts view — explode bottom-button removed (F4); TopBar panel still exposes explode control.
   const [parts, setParts] = useState<string[]>([])
   const [selectedPart, setSelectedPart] = useState<string | null>(null)
   const [explodeAll, setExplodeAll] = useState(false)
@@ -214,30 +230,13 @@ export default function Editor({
    *  happy; what matters is the re-render triggered by the setter. */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_historyGeneration, setHistoryGeneration] = useState(0)
-  // Toggle handler shared between the ExplodeButton click and the E-key
-  // global shortcut. Wrapped in useCallback so the bottom-row JSX doesn't
-  // re-create the inline lambda on every Editor render.
-  const toggleExplode = useCallback(() => {
-    setExplodeAll(prev => {
-      const next = !prev
-      // Activating explode: clear any single-part isolate selection so all
-      // parts start in the full-explode spread.
-      // Deactivating explode: clear selection so the viewport collapses cleanly.
-      setSelectedPart(null)
-      return next
-    })
-  }, [])
-  // E-key shortcut → toggle explode. Listens for the custom event the
-  // global keydown handler dispatches (mirrors the R-key viewport-reset
-  // pattern further down).
-  useEffect(() => {
-    const onToggle = () => toggleExplode()
-    window.addEventListener('coh2:toggle-explode', onToggle)
-    return () => window.removeEventListener('coh2:toggle-explode', onToggle)
-  }, [toggleExplode])
   // Environment / skybox
   const [envArchive, setEnvArchive] = useState<SgaArchive | null>(null)
-  const [envName, setEnvName] = useState('mission_06')
+  // F2a: initialise to a summer-classified env so the first frame never
+  // shows a winter sky when season defaults to 'summer'.
+  const [envName, setEnvName] = useState<string>(
+    () => filterEnvsBySeason([...SKYBOX_ENVS], 'summer')[0] ?? 'mission_06',
+  )
   // Toggle between intact and destroyed/wrecked variants of the model.
   const [showDestroyed] = useState(false)
   // Show crew — when on, a single soldier from the vehicle's faction is
@@ -286,16 +285,11 @@ export default function Editor({
   // drives the LoadingBorder beam around its owning UI control.
   const [vehicleLoading, setVehicleLoading] = useState(false)
   const [seasonLoading, setSeasonLoading] = useState(false)
-  // When the season toggle is clicked, the Viewport can resolve the swap
-  // almost instantly if both texture sets are already decoded into the
-  // GPU cache (e.g. winter→summer→winter while staying on the same
-  // vehicle). In that case `onSeasonReady` fires within ~10 ms of the
-  // click — too fast for the LoadingBorder beam to even appear, let alone
-  // complete a sweep. Tracking the start time and enforcing a min-display
-  // window of 600 ms guarantees the beam always reads as a smooth pulse.
+  // Season loading: beam shows while textures bind, clears on onSeasonReady.
+  // No artificial minimum hold — the beam reflects real readiness only.
+  // An 8 s safety timeout (effect below) clears it if onSeasonReady never fires.
   const seasonLoadingStartedAtRef = useRef<number>(0)
   const seasonLoadingClearTimerRef = useRef<number | null>(null)
-  const SEASON_MIN_LOADING_MS = 600
   const setPresetId = useCallback((id: PresetId) => {
     setPresetIdState(id)
     persistPresetId(id)
@@ -309,12 +303,20 @@ export default function Editor({
       if (s !== season) {
         setSeasonLoading(true)
         seasonLoadingStartedAtRef.current = performance.now()
-        // Clear any pending "delayed off" from a previous swap so the next
-        // onSeasonReady starts a fresh min-window.
         if (seasonLoadingClearTimerRef.current != null) {
           window.clearTimeout(seasonLoadingClearTimerRef.current)
           seasonLoadingClearTimerRef.current = null
         }
+        // F2a: if the current env is season-classified and disagrees with the
+        // new season, swap to the first env appropriate for the new season.
+        setEnvName(prev => {
+          const envSeason = seasonOfEnv(prev)
+          if (envSeason === 'either') return prev
+          if (envSeason !== s) {
+            return filterEnvsBySeason([...SKYBOX_ENVS], s)[0] ?? prev
+          }
+          return prev
+        })
       }
       setSeason(s)
     },
@@ -327,19 +329,14 @@ export default function Editor({
     },
     [vehicleId],
   )
-  // Called by Viewport once the new season's textures are bound. May
-  // arrive in <10 ms for cached swaps; in that case we hold the loading
-  // flag up to `SEASON_MIN_LOADING_MS` so the beam has time to sweep.
+  // Called by Viewport once the new season's textures are bound.
+  // Clears the loading beam immediately — real readiness, no min hold.
   const handleSeasonReady = useCallback(() => {
-    const elapsed = performance.now() - seasonLoadingStartedAtRef.current
-    const remaining = Math.max(0, SEASON_MIN_LOADING_MS - elapsed)
     if (seasonLoadingClearTimerRef.current != null) {
       window.clearTimeout(seasonLoadingClearTimerRef.current)
-    }
-    seasonLoadingClearTimerRef.current = window.setTimeout(() => {
-      setSeasonLoading(false)
       seasonLoadingClearTimerRef.current = null
-    }, remaining)
+    }
+    setSeasonLoading(false)
   }, [])
   // Both vehicle- and season-loading are cleared by precise completion
   // callbacks from the Viewport (`onModelLoaded` and `onSeasonReady`),
@@ -470,6 +467,29 @@ export default function Editor({
     return s
   }, [project.vehicles])
 
+  // Set of vehicle ids covered by the currently-selected faction's default
+  // livery (camoPreset or customDiffuseUrl on the faction default). When the
+  // faction default has a livery set, ALL vehicles in that faction inherit it
+  // unless they have a vehicle-specific override. This drives the green
+  // coverage badge on VehicleMenu pills so makers can see at a glance that
+  // the whole faction is covered without visiting each vehicle.
+  const coveredVehicles = useMemo(() => {
+    const fd = project.factionDefaults?.[selectedFaction]
+    const hasFactionDefault = !!(fd?.camoPreset ?? fd?.customDiffuseUrl)
+    if (!hasFactionDefault) return new Set<string>()
+    // All vehicles in this faction are covered by default; subtract any that
+    // have a vehicle-specific override (per-vehicle overrides supersede the
+    // faction default, so those vehicles have their own livery and are not
+    // simply "covered by default").
+    const s = new Set<string>()
+    for (const v of factionVehicles) {
+      const veh = project.vehicles?.[v.id]
+      const hasVehicleOverride = !!(veh?.camoPreset ?? veh?.customDiffuseUrl)
+      if (!hasVehicleOverride) s.add(v.id)
+    }
+    return s
+  }, [project.factionDefaults, project.vehicles, selectedFaction, factionVehicles])
+
   // ---- offscreen 2048² canvas where we composite the diffuse + decals.
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null)
   // eslint-disable-next-line react-hooks/refs -- lazy initialization: ref is only written when null, safe to call during render per React docs on lazy ref init
@@ -479,6 +499,9 @@ export default function Editor({
     overlayCanvasRef.current = c
   }
   const baseDiffuseRef = useRef<HTMLCanvasElement | null>(null)
+  // Wire the late-bound canvas getter now that baseDiffuseRef is available.
+  // eslint-disable-next-line react-hooks/refs -- intentional ref-assign pattern
+  getDiffuseCanvasRef.current = () => baseDiffuseRef.current
   /** Immutable snapshot of the *vanilla* CoH2 diffuse atlas for the
    *  current vehicle. `baseDiffuseRef` gets mutated each time we apply
    *  camo / imported skin, so we need a pristine copy to re-composite
@@ -495,6 +518,11 @@ export default function Editor({
    * before the new model arrives.
    */
   const loadedMeshesRef = useRef<RgmMesh[] | null>(null)
+  // UV-space exclusion mask (opaque where camo must NOT paint: tracks / wheels /
+  // running gear / wreck / stowed equipment). Rebuilt per model load; null when
+  // the vehicle has no excluded submeshes. Consumed by renderCamoPresetToOverlay
+  // via a `destination-out` erase so vanilla shows through on those regions.
+  const camoExclusionMaskRef = useRef<HTMLCanvasElement | null>(null)
   /**
    * Pre-baked decal-pack preview canvas: the current baseDiffuse composited
    * with the first visible decal from project.decalPackRef baked into the
@@ -519,6 +547,30 @@ export default function Editor({
    * be regenerated.
    */
   const [decalPreviewTick, setDecalPreviewTick] = useState(0)
+  /**
+   * Path-A badge decal source for the 3D viewport's TC1-based overlay.
+   * - For INSTALLED packs: a DataURL string (raw badge atlas from SGA).
+   * - For LOCAL packs: a 2048×2048 HTMLCanvasElement with the decal rasterised
+   *   at the badge atlas cell [585, 80, 104, 96].
+   * - null = no badge overlay (Viewport hides it via uDecalAlpha=0).
+   *
+   * Kept separate from decalPreviewCanvasRef so the 3D viewport shader path
+   * and the 2D overlay canvas bake path remain independent.
+   */
+  const [badgeDecalSource, setBadgeDecalSource] = useState<string | HTMLCanvasElement | null>(null)
+  /**
+   * Phase 2 — texture layer compositor.
+   *
+   * Incremental-paint snapshot of all layers BELOW the paint layer.
+   * Populated at stroke-begin (onStrokeBegin) by composing BaseDiffuse
+   * into a scratch 2048² canvas.  Each dab then does two cheap blits:
+   *   1. drawImage(belowPaintSnapshotRef) — the static below layers
+   *   2. drawImage(baseDiffuseRef)         — the live paint layer
+   * Full composeLayers only runs at stroke-end (and on model/season load).
+   *
+   * null between strokes and before the first model load.
+   */
+  const belowPaintSnapshotRef = useRef<HTMLCanvasElement | null>(null)
   /** Bumps each time we repaint or apply camo. The Viewport reads this
    *  via the `overlayVersion` prop and uses it to gate when the 2048²
    *  CanvasTexture is re-uploaded to the GPU. Without it the viewport
@@ -527,6 +579,43 @@ export default function Editor({
    *  cause of camera-rotation jank). */
   const [overlayVersion, setOverlayVersion] = useState(0)
   const bumpOverlay = useCallback(() => setOverlayVersion(v => v + 1), [])
+
+  // ---- Phase 2: incremental-paint snapshot helpers ------------------------
+  //
+  // rebuildBelowPaintSnapshot composites all layers BELOW the paint layer
+  // (i.e. only the BaseDiffuse layer, which is vanillaDiffuseRef) into a
+  // scratch 2048² canvas and stores it in belowPaintSnapshotRef.
+  //
+  // This is called:
+  //   • at onStrokeBegin (before each drag-paint stroke)
+  //   • at the end of onModelLoaded (so a vehicle/season change invalidates
+  //     any stale snapshot immediately, making the next stroke correct)
+  //
+  // Implemented as an async helper; callers that don't need to await it
+  // (e.g. the synchronous snapshot at stroke-begin) fire-and-forget the
+  // Promise but the snapshot is ready before the first dab because the
+  // brush down-event is async-awaited before the first onComposite call.
+  const rebuildBelowPaintSnapshot = useCallback(async () => {
+    const vanilla = vanillaDiffuseRef.current
+    // No vanilla diffuse yet (model not loaded) — clear stale snapshot.
+    if (!vanilla) {
+      belowPaintSnapshotRef.current = null
+      return
+    }
+    const renderLayer = makeTextureRenderLayer(vanilla, null)
+    const composited = await composeLayers(
+      [{ id: 'base-diffuse', kind: 'base-diffuse' as const, visible: true, opacity: 1 }],
+      {},
+      2048,
+      2048,
+      null,
+      renderLayer,
+    )
+    const snap = document.createElement('canvas')
+    snap.width = snap.height = 2048
+    snap.getContext('2d')!.drawImage(composited, 0, 0)
+    belowPaintSnapshotRef.current = snap
+  }, [])
 
   // ---- Decal-pack preview composite effect --------------------------------
   //
@@ -559,19 +648,84 @@ export default function Editor({
       return
     }
 
-    // Load the decal pack synchronously from localStorage.
-    const pack = loadDecalPackById(decalPackRef.id)
-    if (!pack) {
+    // Scope gate: when the user pinned the decal preview to a single vehicle,
+    // clear the preview on every other vehicle. Checked before the heavier
+    // localStorage / SGA lookup so we short-circuit fast.
+    if (project.decalScope === 'vehicle'
+        && project.decalScopeVehicleId
+        && project.decalScopeVehicleId !== vehicleId) {
       decalPreviewCanvasRef.current = null
       repaintRef.current?.()
       return
     }
 
-    // Scope gate: when the user pinned the decal preview to a single vehicle,
-    // clear the preview on every other vehicle.
-    if (project.decalScope === 'vehicle'
-        && project.decalScopeVehicleId
-        && project.decalScopeVehicleId !== vehicleId) {
+    // ── INSTALLED DECAL PACK PATH ─────────────────────────────────────────
+    // When decalPackRef.path is set the pack is an INSTALLED (downloaded) mod —
+    // its badge texture lives in the SGA at
+    //   art/armies/<faction>/badges/<guid>/default_dif.rgt
+    // We extract it asynchronously and bake it onto the vehicle diffuse.
+    if (decalPackRef.path) {
+      let cancelled = false
+      const sgaPath = decalPackRef.path
+      const currentFaction = vehicle.faction
+
+      void (async () => {
+        const rect = resolveDecalUvRect(vehicleId, loadedMeshesRef.current)
+        const base = baseDiffuseRef.current
+        if (!rect || !base) {
+          // Model/rect not yet available; the effect will re-run on decalPreviewTick.
+          return
+        }
+
+        const dataUrl = await readInstalledDecalImage(sgaPath, currentFaction)
+        if (cancelled) return
+        if (!dataUrl) {
+          decalPreviewCanvasRef.current = null
+          repaintRef.current?.()
+          return
+        }
+
+        // Decode the PNG dataURL into an Image then bake using the existing path.
+        const img = new Image()
+        img.onload = () => {
+          if (cancelled) return
+          // Recheck base (may have changed while we were async).
+          const liveBase = baseDiffuseRef.current
+          if (!liveBase) {
+            decalPreviewCanvasRef.current = null
+            repaintRef.current?.()
+            return
+          }
+          const bakedCanvas = bakeDecalOntoDiffuse(
+            liveBase,
+            img as unknown as HTMLCanvasElement,
+            rect,
+          )
+          decalPreviewCanvasRef.current = bakedCanvas
+          repaintRef.current?.()
+          viewportFaceDecalRef.current?.()
+        }
+        img.onerror = () => {
+          if (cancelled) return
+          decalPreviewCanvasRef.current = null
+          repaintRef.current?.()
+        }
+        img.src = dataUrl
+      })()
+
+      return () => { cancelled = true }
+    }
+
+    // ── LOCALSTORAGE DECAL PACK PATH ──────────────────────────────────────
+    // Load the decal pack synchronously from localStorage.
+    // For Workshop-sourced ids the primary id may not be stored locally; try
+    // looking up the local copy via the workshopId index before giving up.
+    let pack = loadDecalPackById(decalPackRef.id)
+    if (!pack) {
+      const localId = findDecalPackIdByWorkshopId(decalPackRef.id)
+      if (localId) pack = loadDecalPackById(localId)
+    }
+    if (!pack) {
       decalPreviewCanvasRef.current = null
       repaintRef.current?.()
       return
@@ -648,6 +802,122 @@ export default function Editor({
   // ^ vehicleId ensures the effect re-runs when the user switches vehicles.
   //   decalPreviewTick ensures it re-runs when a new model loads (new baseDiffuse).
 
+  // ── Path-A badge decal source (3D viewport TC1 shader overlay) ─────────────
+  // Computes `badgeDecalSource` independently of the 2D canvas bake path so the
+  // TC1-based badge overlay in Viewport is always up-to-date without requiring
+  // the hull UV rect resolution that the canvas bake needs.
+  //
+  // INSTALLED packs: pass the raw badge atlas DataURL directly — Viewport loads
+  // it as an Image and uploads with flipY=false.
+  // LOCAL packs: rasterise the first visible decal into a 2048×2048 wrapper
+  // canvas at the TC1 badge cluster cell [585, 80, 104, 96].
+  useEffect(() => {
+    const decalPackRef = project.decalPackRef
+
+    if (!decalPackRef) {
+      setBadgeDecalSource(null)
+      return
+    }
+
+    // Scope gate: same as the canvas-bake effect
+    if (project.decalScope === 'vehicle'
+        && project.decalScopeVehicleId
+        && project.decalScopeVehicleId !== vehicleId) {
+      setBadgeDecalSource(null)
+      return
+    }
+
+    // ── INSTALLED PACK ────────────────────────────────────────────────────
+    // For installed packs: load the badge atlas RGT, then extract ONLY the
+    // badge-cluster cell into a transparent wrapper canvas. This prevents
+    // wide-TC1 body submeshes (hull shell, turret body) on MRGM v8 vehicles
+    // from sampling non-badge atlas pixels and causing a smear.
+    //
+    // The TC1 tight cluster is at U=[0.286,0.337]×V=[0.039,0.086] (span
+    // ≈0.051×0.047). In the atlas image at size W×H:
+    //   srcX = round(0.286 * W),  srcW = round(0.051 * W)
+    //   srcY = round(0.039 * H),  srcH = round(0.047 * H)
+    // The wrapper canvas uses the same dimensions as the atlas, placing the
+    // extracted cell at the identical position so TC1 coordinates still address
+    // the badge — everything outside the cell is transparent (alpha=0).
+    if (decalPackRef.path) {
+      let cancelled = false
+      void (async () => {
+        const dataUrl = await readInstalledDecalImage(decalPackRef.path!, vehicle.faction)
+        if (cancelled) return
+        if (!dataUrl) { setBadgeDecalSource(null); return }
+
+        // Extract badge cell into a transparent wrapper canvas so wide-TC1
+        // submeshes (hull body, turret shell) sample transparent pixels and
+        // receive no badge overlay, matching the local-pack wrapper behaviour.
+        const img = new Image()
+        img.onload = () => {
+          if (cancelled) return
+          const W = img.width || 512
+          const H = img.height || 512
+          // Badge cluster pixel coords in the atlas
+          const srcX = Math.round(0.286 * W)
+          const srcY = Math.round(0.039 * H)
+          const srcW = Math.round(0.051 * W)
+          const srcH = Math.round(0.047 * H)
+          const wrapper = document.createElement('canvas')
+          wrapper.width = W
+          wrapper.height = H
+          const ctx = wrapper.getContext('2d')!
+          // Clear to transparent — only the badge cell pixel region will be opaque
+          ctx.clearRect(0, 0, W, H)
+          ctx.drawImage(img, srcX, srcY, srcW, srcH, srcX, srcY, srcW, srcH)
+          setBadgeDecalSource(wrapper)
+        }
+        img.onerror = () => { if (!cancelled) setBadgeDecalSource(null) }
+        img.src = dataUrl
+      })()
+      return () => { cancelled = true }
+    }
+
+    // ── LOCAL PACK ────────────────────────────────────────────────────────
+    let pack = loadDecalPackById(decalPackRef.id)
+    if (!pack) {
+      const localId = findDecalPackIdByWorkshopId(decalPackRef.id)
+      if (localId) pack = loadDecalPackById(localId)
+    }
+    if (!pack) {
+      setBadgeDecalSource(null)
+      return
+    }
+
+    const allDecals = pack.parts
+      ? pack.parts.flatMap(p => p.shared.filter(d => d.visible))
+      : pack.decals.filter(d => d.visible)
+    const firstDecal = allDecals[0]
+    if (!firstDecal) { setBadgeDecalSource(null); return }
+
+    const srcImage = pack.sourceImages[firstDecal.sourceImageId]
+    if (!srcImage) { setBadgeDecalSource(null); return }
+
+    // Rasterise the decal then place it into the badge atlas cell.
+    // TC1 cluster: U∈[0.286,0.337]×V∈[0.039,0.086] → pixel coords in 2048²:
+    //   x = round(0.286 * 2048) = 586, y = round(0.039 * 2048) = 80
+    //   w = round(0.051 * 2048) = 104, h = round(0.047 * 2048) = 96
+    const BADGE_X = 586, BADGE_Y = 80, BADGE_W = 104, BADGE_H = 96
+    const img = new Image()
+    img.onload = () => {
+      const decalCanvas = rasteriseDecal(firstDecal, img, { supersample: 4 })
+      const wrapper = document.createElement('canvas')
+      wrapper.width = wrapper.height = 2048
+      const ctx = wrapper.getContext('2d')!
+      // Clear to transparent — non-badge pixels are alpha=0, so the shader
+      // only composites the badge and leaves the rest of the hull untouched.
+      ctx.clearRect(0, 0, 2048, 2048)
+      ctx.drawImage(decalCanvas, 0, 0, decalCanvas.width, decalCanvas.height,
+        BADGE_X, BADGE_Y, BADGE_W, BADGE_H)
+      setBadgeDecalSource(wrapper)
+    }
+    img.onerror = () => setBadgeDecalSource(null)
+    img.src = srcImage.dataUrl
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.decalPackRef, project.decalScope, project.decalScopeVehicleId, vehicleId, decalPreviewTick])
+
   // Per-slot icon editor — null means not open; number is the global
   // exportSlots index being edited. Opened from the SlotIconGrid inside
   // the PackIdentityPopover.
@@ -661,9 +931,100 @@ export default function Editor({
   // vehicle's body meshes — drives the texture editor's "unwrap" overlay.
   const [uvLines, setUvLines] = useState<Float32Array | null>(null)
 
+  // Q6: explicit "Export .sga" affordance. Live Sync writes silently (and its
+  // disk write is a no-op in the browser), so first-timers get no visible file
+  // and no feedback. This button builds the SAME SGA Live Sync builds and
+  // either downloads it (browser) or writes it to mods/skins/ + toasts the
+  // path (Electron). `exporting` gates the button while the build runs.
+  const [exporting, setExporting] = useState(false)
+  // A skin only exports when at least one vehicle has decals or a chosen
+  // template/diffuse — otherwise exportSkinPack throws "no vehicles with
+  // decals or a chosen template". Mirror that gate so the button is disabled
+  // (with a hint) until there's something to export.
+  const canExport = useMemo(
+    () => collectExportVehicleIds(project).length > 0,
+    [project],
+  )
+
+  // Q6: build the current skin's SGA and deliver it to the user.
+  //
+  // Build path mirrors Live Sync exactly (live-sync.ts:731-776): a stable
+  // numeric id derived from project.id, prefer the signed `patchExport` when
+  // the key pool is present, else the unsigned `exportSkinPack`. The engine
+  // scans mods/skins/ for `%I64u.sga` only, so we keep ExportResult.filename
+  // (already `<numericId>.sga`) for BOTH the browser download and the disk
+  // write — a human-readable name would be invisible to the game's scanner.
+  //
+  // Delivery:
+  //   • Electron → write to <modsPath>/skins/<numericId>.sga (same location
+  //     Live Sync targets, live-sync.ts:884-891) and toast the full path.
+  //   • Browser → trigger a real Blob download (createObjectURL + <a download>),
+  //     matching the existing downloadProject/downloadFaceplate idiom.
+  const handleExportSga = useCallback(async () => {
+    if (exporting) return
+    if (!canExport) {
+      toast.push('Nothing to export yet — paint a skin, pick a template, or add a decal first', 'info')
+      return
+    }
+    setExporting(true)
+    try {
+      const stableNumericId = deriveNumericIdFromProjectId(project.id)
+      const { patchExport, exportSkinPack, hasSigningKeys } = await import('@/lib/mod-export')
+      let result: { bytes: Uint8Array; filename: string }
+      if (await hasSigningKeys()) {
+        try {
+          result = await patchExport(root, project, () => {}, stableNumericId)
+        } catch (patchErr: unknown) {
+          // Signed path can fail on template slot-size mismatch; unsigned SGAs
+          // load fine locally ([Sig:0]) — degrade so export always succeeds.
+          const msg = patchErr instanceof Error ? patchErr.message : String(patchErr)
+          console.warn(`[editor] patchExport failed (${msg}); falling back to unsigned exportSkinPack`)
+          result = await exportSkinPack(root, project, () => {}, undefined, stableNumericId)
+        }
+      } else {
+        result = await exportSkinPack(root, project, () => {}, undefined, stableNumericId)
+      }
+
+      if (isElectron()) {
+        // Write to the same mods/skins/ folder Live Sync targets.
+        const modsPath = await detectModsPath()
+        if (!modsPath) {
+          toast.push('Could not locate the CoH2 mods folder — is the game installed?', 'error')
+          return
+        }
+        const destPath = `${modsPath}/skins/${result.filename}`
+        await writeFile(destPath, result.bytes)
+        toast.push(`Exported to ${destPath}`, 'success')
+      } else {
+        // Browser: trigger a real file download of the SGA bytes. Keep the
+        // numeric `%I64u.sga` filename so a user who drops it into
+        // mods/skins/ has it picked up by the engine.
+        const blob = new Blob([new Uint8Array(result.bytes)], { type: 'application/octet-stream' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = result.filename
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+        toast.push(`Downloaded ${result.filename} — drop it in …/My Games/Company of Heroes 2/mods/skins/`, 'success')
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[editor] Export .sga failed', err)
+      toast.push(`Export failed: ${msg}`, 'error')
+    } finally {
+      setExporting(false)
+    }
+  }, [exporting, canExport, project, root, toast])
+
   // Save indicator — 'saved' for 1.5 s after each auto-save, then clears.
   const [saveIndicator, setSaveIndicator] = useState<'saved' | null>(null)
   const saveTimerRef = useRef<number | null>(null)
+  // Persist-throttle: 400 ms trailing debounce so rapid brush dabs / drag
+  // ticks don't each trigger a multi-MB JSON.stringify + localStorage write.
+  const persistDebounceRef = useRef<number | null>(null)
 
   // Apply camo to the base diffuse canvas + persist to project state.
   //
@@ -688,27 +1049,82 @@ export default function Editor({
     (preset: CamoPreset) => {
       const cv = overlayCanvasRef.current
       if (!cv) return
-      const camo = document.createElement('canvas')
-      camo.width = camo.height = 2048
-      generateCamo(camo, preset)
+      const W = 2048, H = 2048
+
       const composite = document.createElement('canvas')
-      composite.width = composite.height = 2048
+      composite.width = composite.height = W
       const cctx = composite.getContext('2d')!
-      if (vanillaDiffuseRef.current) {
-        cctx.drawImage(vanillaDiffuseRef.current, 0, 0, 2048, 2048)
-        cctx.globalCompositeOperation = 'multiply'
+
+      if (preset.maskedMode && vanillaDiffuseRef.current) {
+        // P0 FIX — Honved (and any future masked preset):
+        // 1. Draw the stock vanilla diffuse as the base layer — preserves all
+        //    UV detail, panel lines, equipment pixels byte-identical.
+        cctx.drawImage(vanillaDiffuseRef.current, 0, 0, W, H)
+
+        // 2. Generate the camo blob canvas (transparent background, no opaque fill).
+        //    maskCanvas not available in renderer (requires Electron IPC), so
+        //    we use source-atop compositing: draw camo above vanilla then punch
+        //    through via globalCompositeOperation so non-body areas are suppressed.
+        //    For runtime masking the AI path (generateValidCoh2Texture) handles
+        //    per-pixel mask×generated+(1-mask)×vanilla correctly — this branch
+        //    covers the procedural preview path only.
+        const camo = document.createElement('canvas')
+        camo.width = camo.height = W
+        generateCamo(camo, preset, null) // maskedMode=true, no mask PNG at render time
+
+        // Draw camo over vanilla at CAMO_OVERLAY_ALPHA (80%) so stock shading /
+        // panel lines / rivets remain 20% visible — not buried by a flat fill.
+        // source-atop restricts camo to already-opaque atlas pixels (body only),
+        // keeping the transparent background and equipment sub-regions intact.
+        cctx.globalCompositeOperation = 'source-atop'
+        cctx.globalAlpha = CAMO_OVERLAY_ALPHA
         cctx.drawImage(camo, 0, 0)
+        cctx.globalAlpha = 1
         cctx.globalCompositeOperation = 'source-over'
+
+        // P2 — Apply procedural weathering (dust, grime, chips, exhaust, sun fade,
+        //       period desaturation) directly to the composite canvas.
+        applyWeathering(cctx, W, H, preset.seed)
       } else {
-        cctx.drawImage(camo, 0, 0)
+        // Legacy path: opaque camo + multiply blend over vanilla.
+        const camo = document.createElement('canvas')
+        camo.width = camo.height = W
+        generateCamo(camo, preset)
+        if (vanillaDiffuseRef.current) {
+          cctx.drawImage(vanillaDiffuseRef.current, 0, 0, W, H)
+          cctx.globalCompositeOperation = 'multiply'
+          cctx.drawImage(camo, 0, 0)
+          cctx.globalCompositeOperation = 'source-over'
+        } else {
+          cctx.drawImage(camo, 0, 0)
+        }
       }
+
+      // ARMOR-ONLY: restore the exact vanilla diffuse over the excluded UV
+      // regions (tracks / wheels / running gear / wreck / stowed equipment) so
+      // camo (and weathering) never lands on them. We re-stamp the pristine
+      // vanilla, clipped to the exclusion mask, on top of the composite.
+      const exMask = camoExclusionMaskRef.current
+      if (exMask && vanillaDiffuseRef.current) {
+        const patch = document.createElement('canvas')
+        patch.width = patch.height = W
+        const pctx = patch.getContext('2d')!
+        pctx.drawImage(vanillaDiffuseRef.current, 0, 0, W, H)
+        // Keep only vanilla pixels inside the excluded (opaque) mask regions.
+        pctx.globalCompositeOperation = 'destination-in'
+        pctx.drawImage(exMask, 0, 0, W, H)
+        pctx.globalCompositeOperation = 'source-over'
+        // Paint that vanilla patch over the camo composite.
+        cctx.drawImage(patch, 0, 0)
+      }
+
       const ctx = cv.getContext('2d')!
-      ctx.clearRect(0, 0, 2048, 2048)
+      ctx.clearRect(0, 0, W, H)
       ctx.drawImage(composite, 0, 0)
       if (baseDiffuseRef.current) {
         const bctx = baseDiffuseRef.current.getContext('2d')
         if (bctx) {
-          bctx.clearRect(0, 0, 2048, 2048)
+          bctx.clearRect(0, 0, W, H)
           bctx.drawImage(composite, 0, 0)
         }
       }
@@ -767,14 +1183,52 @@ export default function Editor({
     (img: HTMLImageElement, scope: 'vehicle' | 'faction' | 'all' = 'vehicle') => {
       const cv = overlayCanvasRef.current
       if (!cv) return
+      const W = 2048, H = 2048
       const ctx = cv.getContext('2d')!
-      ctx.clearRect(0, 0, 2048, 2048)
-      ctx.drawImage(img, 0, 0, 2048, 2048)
+      ctx.clearRect(0, 0, W, H)
+      // P0 FIX — AI path: composite the generated image OVER the vanilla
+      // diffuse so the stock detail / panel lines are not wiped.
+      // The AI path (generateValidCoh2Texture) already applies the
+      // mask×generated+(1-mask)×vanilla composite, so `img` already has
+      // equipment preserved — we just draw vanilla first as a fallback for
+      // callers that pass un-masked images (e.g. direct imports).
+      // Restore pristine vanilla over the armor-exclusion mask regions
+      // (tracks / wheels / running gear / wreck / stowed equipment) so an
+      // imported/pasted camo image doesn't cover them either.
+      const exMask = camoExclusionMaskRef.current
+      const restoreExcluded = (c: CanvasRenderingContext2D) => {
+        if (!exMask || !vanillaDiffuseRef.current) return
+        const patch = document.createElement('canvas')
+        patch.width = patch.height = W
+        const pctx = patch.getContext('2d')!
+        pctx.drawImage(vanillaDiffuseRef.current, 0, 0, W, H)
+        pctx.globalCompositeOperation = 'destination-in'
+        pctx.drawImage(exMask, 0, 0, W, H)
+        pctx.globalCompositeOperation = 'source-over'
+        c.drawImage(patch, 0, 0)
+      }
+      if (vanillaDiffuseRef.current) {
+        ctx.drawImage(vanillaDiffuseRef.current, 0, 0, W, H)
+        ctx.globalCompositeOperation = 'source-atop'
+        ctx.drawImage(img, 0, 0, W, H)
+        ctx.globalCompositeOperation = 'source-over'
+      } else {
+        ctx.drawImage(img, 0, 0, W, H)
+      }
+      restoreExcluded(ctx)
       if (baseDiffuseRef.current) {
         const bctx = baseDiffuseRef.current.getContext('2d')
         if (bctx) {
-          bctx.clearRect(0, 0, 2048, 2048)
-          bctx.drawImage(img, 0, 0, 2048, 2048)
+          bctx.clearRect(0, 0, W, H)
+          if (vanillaDiffuseRef.current) {
+            bctx.drawImage(vanillaDiffuseRef.current, 0, 0, W, H)
+            bctx.globalCompositeOperation = 'source-atop'
+            bctx.drawImage(img, 0, 0, W, H)
+            bctx.globalCompositeOperation = 'source-over'
+          } else {
+            bctx.drawImage(img, 0, 0, W, H)
+          }
+          restoreExcluded(bctx)
         }
       }
       setCamoPreset(null)
@@ -841,12 +1295,21 @@ export default function Editor({
     if (!cv) return
     const ctx = cv.getContext('2d')!
     ctx.clearRect(0, 0, 2048, 2048)
-    // Use the decal-pack preview canvas (baseDiffuse + baked decal) when
-    // available, otherwise fall back to bare baseDiffuse. When
-    // decalPreviewCanvasRef is null (no decalPackRef set, or rect unresolved),
-    // this path is IDENTICAL to the original behavior.
-    const baseSource = decalPreviewCanvasRef.current ?? baseDiffuseRef.current
-    if (baseSource) ctx.drawImage(baseSource, 0, 0, 2048, 2048)
+    // F2b: fall-back chain for the base diffuse source:
+    // 1. decalPreviewCanvas (baseDiffuse + baked decal pack preview)
+    // 2. baseDiffuse (vehicle's current diffuse, possibly user-painted)
+    // 3. vanillaDiffuse (pristine CoH2 diffuse — used for brand-new blank
+    //    projects that have no customDiffuseUrl, so the stock tank texture
+    //    shows instead of a transparent/invisible hull on first frame)
+    // If ALL are null (model not yet loaded) skip drawImage so the overlay
+    // stays empty — Viewport keeps the model's own SGA texture rather than
+    // binding a blank canvas over it.
+    const baseSource =
+      decalPreviewCanvasRef.current ??
+      baseDiffuseRef.current ??
+      vanillaDiffuseRef.current
+    if (!baseSource) return
+    ctx.drawImage(baseSource, 0, 0, 2048, 2048)
     const renderCtx: RenderContext = {
       ctx,
       palette: project.palette,
@@ -901,6 +1364,35 @@ export default function Editor({
   // eslint-disable-next-line react-hooks/refs -- intentional "ref-as-latest-value" to bridge declaration order
   repaintRef.current = repaint
 
+  // Wire the late-bound diffuse-restore callback now that baseDiffuseRef,
+  // overlayCanvasRef, bumpOverlay, and repaint are all available.
+  // eslint-disable-next-line react-hooks/refs -- intentional ref-assign pattern
+  onDiffuseRestoredRef.current = (dataUrl: string) => {
+    const img = new Image()
+    img.onload = () => {
+      // Restore baseDiffuse canvas
+      if (baseDiffuseRef.current) {
+        const bctx = baseDiffuseRef.current.getContext('2d')
+        if (bctx) {
+          bctx.clearRect(0, 0, 2048, 2048)
+          bctx.drawImage(img, 0, 0, 2048, 2048)
+        }
+      }
+      // Restore overlay canvas
+      const cv = overlayCanvasRef.current
+      if (cv) {
+        const ctx = cv.getContext('2d')
+        if (ctx) {
+          ctx.clearRect(0, 0, 2048, 2048)
+          ctx.drawImage(img, 0, 0, 2048, 2048)
+        }
+      }
+      bumpOverlay()
+      repaint()
+    }
+    img.src = dataUrl
+  }
+
   // Hover-preview repaint — repaints the canvas so the ghost decal moves
   // with the cursor, but does NOT bump overlayVersion so no GPU re-upload
   // happens.  Called from a separate effect that tracks only hover/placeMode.
@@ -913,17 +1405,42 @@ export default function Editor({
 
   useEffect(() => {
     repaint()
-    persistActive(project)
-    // v1.0: Live Sync is permanently on — every persist triggers a
-    // debounced .sga rebuild. Rapid changes (e.g. brush dabs) coalesce
-    // into a single export 1500 ms after the last one.
+    // v1.0: Live Sync is permanently on — every change triggers a debounced
+    // .sga rebuild. Rapid changes (brush dabs, drag ticks) coalesce into a
+    // single export 1500 ms after the last one.
     scheduleLiveSync('skin', project)
-    // Flash the save indicator briefly after each persist.
+    // Persist throttle: 400 ms trailing debounce so multi-MB JSON.stringify +
+    // localStorage write is not called on every pointermove tick. projectRef
+    // is always current, so the debounced write lands the latest state.
+    if (persistDebounceRef.current != null) window.clearTimeout(persistDebounceRef.current)
+    persistDebounceRef.current = window.setTimeout(() => {
+      persistActive(projectRef.current)
+      persistDebounceRef.current = null
+    }, 400)
+    // Flash the save indicator briefly after each change.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: save indicator is updated synchronously then auto-cleared via setTimeout
     setSaveIndicator('saved')
     if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current)
     saveTimerRef.current = window.setTimeout(() => setSaveIndicator(null), 1500)
+    // No flush in this cleanup — flushing here defeats the debounce because
+    // React runs cleanup on every project change (every brush dab / drag tick),
+    // which would make this a synchronous write per change. The unmount flush
+    // is handled by the empty-dep effect below.
   }, [repaint, project])
+
+  // Flush the trailing debounced persist write ONLY on unmount / project-switch.
+  // Separated into its own empty-dep effect so it fires exactly once on unmount
+  // and not on every dependency change (which would defeat the debounce above).
+  useEffect(() => {
+    return () => {
+      if (persistDebounceRef.current != null) {
+        window.clearTimeout(persistDebounceRef.current)
+        persistDebounceRef.current = null
+        persistActive(projectRef.current)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only run on unmount
+  }, [])
 
   // ---- decal manipulation helpers
   const updateProject = (mut: (p: Coh2SkinProject) => void) => {
@@ -957,6 +1474,78 @@ export default function Editor({
       p.lastVehicleId = vehicle.id
     })
   }, [vehicle.id])
+
+  // ---- Phase 2: incremental per-dab composite (VehicleTextureEditor hot path) ---
+  //
+  // Called by VehicleTextureEditor.onComposite on EVERY brush dab.
+  // Must complete in <5 ms on a 2048² canvas — see perf test.
+  //
+  // Fast path: if a below-paint snapshot is ready, do only two drawImages
+  // into overlayCanvasRef (total ~1-3 ms).  Falls back to full repaint()
+  // when no snapshot is available (first dab before model load, or
+  // if rebuildBelowPaintSnapshot hasn't resolved yet).
+  const onDabComposite = useCallback(() => {
+    const ov = overlayCanvasRef.current
+    const snap = belowPaintSnapshotRef.current
+    const paint = baseDiffuseRef.current
+    if (ov && snap && paint) {
+      // Incremental path: two blits only — no composeLayers, no paintDecals.
+      const ctx = ov.getContext('2d')
+      if (ctx) {
+        ctx.clearRect(0, 0, 2048, 2048)
+        ctx.drawImage(snap, 0, 0)  // below-paint layers (BaseDiffuse)
+        ctx.drawImage(paint, 0, 0) // live paint layer (TexturePaintLayer)
+        bumpOverlay()
+        return
+      }
+    }
+    // Fallback: full repaint (snapshot not ready yet).
+    repaint()
+  }, [bumpOverlay, repaint])
+
+  // ---- Phase 2: stroke-begin for VehicleTextureEditor ---
+  // Captures undo snapshot AND builds the below-paint snapshot so the
+  // incremental dab path has a fresh basis for this stroke.
+  const onVteStrokeBegin = useCallback(() => {
+    history.commit('Paint')
+    setHistoryGeneration(g => g + 1)
+    // Fire-and-forget: the snapshot is ready before the first pointer-move
+    // dab because onPointerDown awaits before onPointerMove fires.
+    void rebuildBelowPaintSnapshot()
+  }, [history, rebuildBelowPaintSnapshot])
+
+  // ---- Phase 2: stroke-end for VehicleTextureEditor ---
+  // Runs full composeLayers → overlayCanvasRef, then persists the stroke.
+  // This is the ONLY place where the full composite runs in the hot path
+  // (once per stroke, not once per dab).
+  const onVteStrokeEnd = useCallback(async () => {
+    const ov = overlayCanvasRef.current
+    const vanilla = vanillaDiffuseRef.current
+    const paint = baseDiffuseRef.current
+    if (ov && vanilla && paint) {
+      const renderLayer = makeTextureRenderLayer(vanilla, paint)
+      const full = await composeLayers(
+        [
+          { id: 'base-diffuse', kind: 'base-diffuse' as const, visible: true, opacity: 1 },
+          { id: 'paint', kind: 'paint' as const, visible: true, opacity: 1 },
+        ],
+        {},
+        2048,
+        2048,
+        null,
+        renderLayer,
+      )
+      const ctx = ov.getContext('2d')
+      if (ctx) {
+        ctx.clearRect(0, 0, 2048, 2048)
+        ctx.drawImage(full, 0, 0)
+      }
+      bumpOverlay()
+    }
+    // Free the below-paint snapshot after stroke ends.
+    belowPaintSnapshotRef.current = null
+    persistBrushStroke()
+  }, [bumpOverlay, persistBrushStroke])
 
   // Wipe paint back to the pristine vanilla diffuse and clear the
   // persisted customDiffuseUrl so a reload doesn't restore the wipe-out.
@@ -1162,14 +1751,7 @@ export default function Editor({
         return
       }
 
-      // ── E ── toggle explode mode (no modifier). Mirrors the pill button
-      // in the bottom-center row. We dispatch a custom event so we don't
-      // have to thread setExplodeAll through this ref-based handler — the
-      // bottom row already owns the state.
-      if (!mod && !e.shiftKey && !e.altKey && (e.key === 'e' || e.key === 'E')) {
-        window.dispatchEvent(new CustomEvent('coh2:toggle-explode'))
-        return
-      }
+
     }
 
     document.addEventListener('keydown', onShortcut)
@@ -1402,6 +1984,18 @@ export default function Editor({
   // Guard: faction-first preload fires at most once per session.
   const factionPreloadFiredRef = useRef(false)
 
+  // R1 fix: when the Editor transitions from invisible (editor-loading) to
+  // visible (editor phase), the RAF loop may have already cleared
+  // needsRenderRef after its last render during opacity:0. Call repaint() on
+  // the visibility-true transition so the Viewport's overlay effect sets
+  // needsRenderRef=true again, guaranteeing at least one rendered frame is
+  // composited at the moment the browser starts revealing the canvas.
+  useEffect(() => {
+    if (visible) repaint()
+  // repaint is stable (useCallback); only re-run when visible transitions
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible])
+
   // overlayCanvasRef.current is initialized via the lazy-init guard above and
   // is stable across renders; it's safe to read here for passing to children.
   // eslint-disable-next-line react-hooks/refs -- offscreen canvas ref is set before this point via lazy-init guard and does not change
@@ -1428,6 +2022,7 @@ export default function Editor({
           carries the rest. Lazy-loaded so Three.js doesn't block the
           initial JS parse on first paint. */}
       <Suspense fallback={<div className="absolute inset-0 bg-black" />}>
+        <ViewportGuard label="Skin Viewport">
         <Viewport
           root={root}
           vehicle={hideTank ? null : vehicle}
@@ -1440,6 +2035,12 @@ export default function Editor({
             // from the previous vehicle doesn't flash on screen while the
             // new one is being baked asynchronously.
             loadedMeshesRef.current = model ? model.meshes : null
+            // Build the armor-only camo exclusion mask for this vehicle so
+            // camo (procedural preset or imported image) never paints on
+            // tracks / wheels / running gear / wreck / stowed equipment.
+            camoExclusionMaskRef.current = model
+              ? buildCamoExclusionMask(model.meshes, vehicle.id, vehicle.faction)
+              : null
             decalPreviewCanvasRef.current = null
             // Bump tick so the decal-preview effect re-fires with the new
             // baseDiffuse and meshes.
@@ -1580,6 +2181,10 @@ export default function Editor({
               // Warmup already fired this session — reveal immediately.
               fireReady()
             }
+            // Phase 2: invalidate the below-paint snapshot whenever a new
+            // model/season loads so the NEXT stroke composites against
+            // the freshly-loaded vanilla diffuse rather than stale pixels.
+            void rebuildBelowPaintSnapshot()
           }}
           onSeasonReady={handleSeasonReady}
           onPick={addDecal}
@@ -1611,7 +2216,9 @@ export default function Editor({
           controlsEnabled={true}
           preloadRef={viewportPreloadRef}
           faceDecalRef={viewportFaceDecalRef}
+          badgeDecalSource={badgeDecalSource}
         />
+        </ViewportGuard>
       </Suspense>
 
       {/* Floating chrome — fades on idle.
@@ -1628,7 +2235,12 @@ export default function Editor({
         style={{ opacity: showChrome ? 1 : 0.35 }}
       >
         <div className="pointer-events-auto select-none">
-          {/* Top-left: faction lobby + 7 menu buttons + dropdown panel */}
+          {/* Top-left: faction lobby chip + the active panel's dropdown body.
+              TopBar no longer renders its own menu-button strip — the panels
+              (Decals / Camo / Parts / Scene) are opened by the PanelNavRail
+              rendered just below, which drives `setActivePanel`. TopBar owns
+              only the faction lobby popover and the panel *body* that slides
+              in whenever `activePanel` is non-null. */}
           <TopBar
             activePanel={activePanel}
             setActivePanel={setActivePanel}
@@ -1660,7 +2272,7 @@ export default function Editor({
             selectedPart={selectedPart}
             setSelectedPart={setSelectedPart}
             explodeAll={explodeAll}
-            setExplodeAll={setExplodeAll}
+            setExplodeAll={v => { setExplodeAll(v); if (!v) setSelectedPart(null) }}
             envArchive={envArchive}
             setEnvArchive={setEnvArchive}
             envName={envName}
@@ -1680,6 +2292,128 @@ export default function Editor({
             startEyedrop={handleStartEyedrop}
             clearBrushPaint={clearBrushPaint}
           />
+
+          {/* Panel nav rail (Q1) — the ONLY visible control that opens the
+              skin-editor panels. Before this existed, Decals/Camo/Parts/Scene
+              were reachable only by dropping a file (→decals) or the
+              Edit-texture pill (→brush), leaving the core creative panels
+              undiscoverable. Each item drives the existing `setActivePanel`;
+              clicking the already-active item toggles the panel closed. Docks
+              top-left beside the home button (offset right when the home
+              button is present via `onClosePack`); the TopBar panel *body*
+              slides in just below at `left-5`. */}
+          <nav
+            aria-label="Editor panels"
+            className="glass-hud absolute z-30 flex items-center gap-0.5 p-1 rounded-2xl"
+            style={{
+              top: 'calc(20px + var(--app-top-inset, 0px))',
+              left: onClosePack ? 64 : 20,
+            }}
+          >
+            {([
+              { key: 'decals', label: 'Decals', Icon: Stamp },
+              { key: 'camo', label: 'Camo', Icon: Paintbrush },
+              { key: 'parts', label: 'Parts', Icon: Boxes },
+              { key: 'scene', label: 'Scene', Icon: Sun },
+            ] as const).map(({ key, label, Icon }) => {
+              const active = activePanel === key
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setActivePanel(active ? null : key)}
+                  aria-pressed={active}
+                  title={`${label} panel`}
+                  aria-label={`${label} panel`}
+                  className={[
+                    'inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1.5',
+                    'text-[11px] font-medium cursor-pointer select-none',
+                    'transition-all duration-150 focus:outline-none',
+                    'focus-visible:ring-1 focus-visible:ring-white/30',
+                    active
+                      ? 'bg-white/12 text-white'
+                      : 'text-[var(--color-text-2)] hover:text-white hover:bg-white/10 active:scale-95',
+                  ].join(' ')}
+                >
+                  <Icon size={14} strokeWidth={2} aria-hidden />
+                  <span>{label}</span>
+                </button>
+              )
+            })}
+          </nav>
+
+          {/* Shared Undo/Redo control (R1) — one consistent affordance across
+              all three editors. The skin editor was previously keyboard-only
+              (Ctrl+Z / Ctrl+Y still work); this exposes the same project
+              history (useDecalHistory) as visible buttons. Docks just below
+              the panel nav rail, aligned to the same left offset, wrapped in a
+              glass-hud pill so it reads as matched chrome. */}
+          <div
+            className="glass-hud absolute z-30 inline-flex items-center rounded-2xl p-1"
+            style={{
+              top: 'calc(72px + var(--app-top-inset, 0px))',
+              left: onClosePack ? 64 : 20,
+            }}
+          >
+            <UndoRedoBar
+              canUndo={history.canUndo()}
+              canRedo={history.canRedo()}
+              onUndo={() => {
+                const s = history.undo()
+                if (s) toast.push(`Undo: ${s.label}`, 'info')
+                setHistoryGeneration(g => g + 1)
+              }}
+              onRedo={() => {
+                const s = history.redo()
+                if (s) toast.push(`Redo: ${s.label}`, 'info')
+                setHistoryGeneration(g => g + 1)
+              }}
+              size={32}
+            />
+          </div>
+
+          {/* Export .sga (Q6) — the ONLY explicit, discoverable export control.
+              Live Sync writes silently (and no-ops in the browser), so without
+              this a first-timer never sees a file or any confirmation. Builds
+              the SAME SGA Live Sync builds (patchExport/exportSkinPack) and
+              either downloads it (browser) or writes it to mods/skins/ +
+              toasts the path (Electron). Disabled until the project has
+              something to export (a painted skin / chosen template / decals),
+              with a hint on hover. Docks top-right, clear of the left-docked
+              panel nav rail and the App-level window controls. */}
+          <button
+            type="button"
+            onClick={handleExportSga}
+            disabled={exporting || !canExport}
+            title={
+              !canExport
+                ? 'Paint a skin, pick a template, or add a decal first'
+                : isElectron()
+                  ? 'Export the skin .sga into the game’s mods/skins folder'
+                  : 'Download the skin .sga (drop it in mods/skins to install)'
+            }
+            aria-label="Export skin as .sga"
+            className={[
+              'glass-hud absolute z-30 inline-flex items-center gap-1.5',
+              'rounded-2xl px-3 py-2 text-[11px] font-medium select-none',
+              'transition-all duration-150 focus:outline-none',
+              'focus-visible:ring-1 focus-visible:ring-white/30',
+              exporting || !canExport
+                ? 'text-[var(--color-text-3)] opacity-60 cursor-not-allowed'
+                : 'text-white hover:bg-white/10 active:scale-95 cursor-pointer',
+            ].join(' ')}
+            style={{
+              top: 'calc(20px + var(--app-top-inset, 0px))',
+              right: 132,
+            }}
+          >
+            {exporting ? (
+              <Loader2 size={14} strokeWidth={2} className="animate-spin" aria-hidden />
+            ) : (
+              <Download size={14} strokeWidth={2} aria-hidden />
+            )}
+            <span>{exporting ? 'Exporting…' : 'Export .sga'}</span>
+          </button>
 
           {/* Save indicator — fades in briefly after each auto-save.
                Inline style override applies the same --app-top-inset shim
@@ -1714,68 +2448,63 @@ export default function Editor({
           {/* Right edge: 3 stacked scene-preset icons */}
           <ScenePanel presetId={presetId} setPresetId={setPresetId} />
 
-          {/* Bottom-center: SeasonToggle + GenerateButton + VehicleMenu.
+          {/* Bottom-center: toolbar row + VehicleMenu.
+              F7 layout: [TemplateDecalPills][SeasonToggle][EditTexture] on one row,
+              then VehicleMenu rail below.
               Faction picking lives in the TopBar (lobby icon); this strip is
               purely vehicle navigation. Centered via left-1/2 + translate so
               it stays visually balanced regardless of vehicle-row width. */}
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex flex-col gap-2 items-center">
-            <div className="flex items-center justify-center gap-4">
-              {/* Explode: toggles the CAD-style exploded view so the user
-               *  can see every submesh separately. Click an exploded part
-               *  in the viewport to isolate it; click Collapse to reassemble.
-               *  Hidden until a vehicle is loaded — there's nothing to
-               *  explode otherwise. */}
-              <ExplodeButton active={explodeAll} disabled={!vehicle} onClick={toggleExplode} />
-              {/* "Back" affordance — visible only while a part is isolated
-               *  inside explode mode. Clicking returns to the full exploded
-               *  view without collapsing (ESC does the same). */}
-              {explodeAll && selectedPart && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedPart(null)}
-                  className="relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium cursor-pointer transition-all duration-150 select-none"
-                  style={{
-                    background: 'rgba(20, 22, 28, 0.72)',
-                    color: 'rgb(229, 231, 235)',
-                    backdropFilter: 'blur(36px) saturate(160%)',
-                    border: '0.5px solid rgba(255,255,255,0.18)',
-                    boxShadow:
-                      '0 8px 22px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
-                  }}
-                  title="Back to exploded view (Esc)"
-                  aria-label="Back to exploded view"
-                >
-                  ← Back to exploded view
-                </button>
-              )}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex flex-col gap-3 items-center">
+            {/* "Back to full view" affordance — visible only while a part is
+             *  isolated via the TopBar Parts panel. Clicking clears the selection
+             *  and returns to the full (possibly exploded) view. */}
+            {selectedPart && (
+              <button
+                type="button"
+                onClick={() => setSelectedPart(null)}
+                className="relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium cursor-pointer transition-all duration-150 select-none"
+                style={{
+                  background: 'rgba(20, 22, 28, 0.72)',
+                  color: 'rgb(229, 231, 235)',
+                  backdropFilter: 'blur(36px) saturate(160%)',
+                  border: '0.5px solid rgba(255,255,255,0.18)',
+                  boxShadow:
+                    '0 8px 22px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
+                }}
+                title="Back to full view (Esc)"
+                aria-label="Back to full view"
+              >
+                ← Back to full view
+              </button>
+            )}
+            {/* F7: template + decal pills LEFT; season toggle + Edit Texture
+             *  RIGHT of decal pill, all on the same row. */}
+            <div className="flex items-end justify-center gap-2">
+              {/* Template + decal-pack quick-pick pills */}
+              <TemplateDecalPills
+                project={project}
+                setProject={setProject}
+                faction={vehicle.faction}
+                onVehicleChange={handleSetVehicleId}
+                currentVehicleId={vehicleId}
+                installRoot={root}
+              />
               <SeasonToggle value={season} onChange={handleSetSeason} loading={seasonLoading} />
               {/* Edit Texture pill — opens the FULL-SCREEN vehicle-texture
                   editor (A3): the live in-game atlas shown large, with brush
-                  tools and a back button in the top-left. Previously this
-                  merely toggled the cramped Decals side panel. */}
+                  tools and a back button in the top-left. */}
               <EditTextureButton
                 brushOn={textureEditorOpen}
                 disabled={!vehicle}
                 onClick={() => setTextureEditorOpen(true)}
               />
             </div>
-            {/* Template + decal-pack quick-pick pills, sitting directly above
-                the vehicle selector rail. Template selection clones a fresh
-                project (same contract as the centre-title identity popover);
-                decal-pack selection records an association on the project. */}
-            <TemplateDecalPills
-              project={project}
-              setProject={setProject}
-              faction={vehicle.faction}
-              onVehicleChange={handleSetVehicleId}
-              currentVehicleId={vehicleId}
-              installRoot={root}
-            />
             <VehicleMenu
               vehicles={factionVehicles}
               selected={vehicle}
               onSelect={handleVehicleSelect}
               dirtyVehicles={dirtyVehicles}
+              coveredVehicles={coveredVehicles}
               loading={vehicleLoading}
               iconResolver={resolveIcon}
             />
@@ -1828,9 +2557,9 @@ export default function Editor({
           version={overlayVersion}
           brush={brushSettings}
           setBrush={setBrushSettings}
-          onStrokeBegin={() => { history.commit('Paint'); setHistoryGeneration(g => g + 1) }}
-          onComposite={repaint}
-          onStrokeEnd={persistBrushStroke}
+          onStrokeBegin={onVteStrokeBegin}
+          onComposite={onDabComposite}
+          onStrokeEnd={onVteStrokeEnd}
           onClear={clearBrushPaint}
           onBack={() => setTextureEditorOpen(false)}
           onUndo={() => { const s = history.undo(); if (s) toast.push(`Undo: ${s.label}`, 'info'); setHistoryGeneration(g => g + 1) }}

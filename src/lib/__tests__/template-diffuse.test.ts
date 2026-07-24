@@ -252,6 +252,71 @@ describe('readWorkshopDiffuseDataUrlBySgaPath', () => {
 })
 
 // ---------------------------------------------------------------------------
+// readInstalledDecalImage — badge RGT extraction from installed decal SGAs
+// ---------------------------------------------------------------------------
+describe('readInstalledDecalImage', () => {
+  beforeEach(() => {
+    activeCtx = { putImageData: vi.fn() }
+    activeGetContext = vi.fn(() => activeCtx)
+    activeToDataURL = vi.fn(() => FAKE_DATA_URL)
+    mockListPaths.mockReset()
+    mockReadByPath.mockReset()
+    _mockNativeFileReturn = null
+  })
+
+  it('returns null outside Electron (nativeFileFromPath returns null)', async () => {
+    _mockNativeFileReturn = null
+    const { readInstalledDecalImage } = await import('../template-diffuse')
+    expect(await readInstalledDecalImage('/mods/decals/123.sga', 'german')).toBeNull()
+  })
+
+  it('returns the fake dataURL when a matching default_dif.rgt badge exists for the faction', async () => {
+    _mockNativeFileReturn = new File([], '123.sga')
+    const badgePath = 'art/armies/german/badges/8df2e3a315914d72a803c0f94398a544/default_dif.rgt'
+    mockListPaths.mockReturnValue([
+      'attrib/vehicle_decal/8df2e3a315914d72a803c0f94398a544.rgd',
+      badgePath,
+    ])
+    mockReadByPath.mockResolvedValue(new Uint8Array(64).fill(5))
+    const { readInstalledDecalImage } = await import('../template-diffuse')
+    const result = await readInstalledDecalImage('/mods/decals/123.sga', 'german')
+    expect(result).toBe(FAKE_DATA_URL)
+    expect(mockReadByPath).toHaveBeenCalledWith(badgePath.toLowerCase())
+  })
+
+  it('returns null when the archive has no badge for the requested faction', async () => {
+    _mockNativeFileReturn = new File([], '123.sga')
+    // Only has soviet badges, not german
+    mockListPaths.mockReturnValue([
+      'art/armies/soviet/badges/8df2e3a315914d72a803c0f94398a544/default_dif.rgt',
+    ])
+    mockReadByPath.mockResolvedValue(new Uint8Array(8))
+    const { readInstalledDecalImage } = await import('../template-diffuse')
+    expect(await readInstalledDecalImage('/mods/decals/123.sga', 'german')).toBeNull()
+  })
+
+  it('returns null when readByPath returns null (RGT missing from archive)', async () => {
+    _mockNativeFileReturn = new File([], '123.sga')
+    mockListPaths.mockReturnValue([
+      'art/armies/german/badges/someguid/default_dif.rgt',
+    ])
+    mockReadByPath.mockResolvedValue(null)
+    const { readInstalledDecalImage } = await import('../template-diffuse')
+    expect(await readInstalledDecalImage('/mods/decals/123.sga', 'german')).toBeNull()
+  })
+
+  it('tolerates backslash path separators in the SGA TOC', async () => {
+    _mockNativeFileReturn = new File([], '123.sga')
+    const badgePath = 'art\\armies\\british\\badges\\abc123\\default_dif.rgt'
+    mockListPaths.mockReturnValue([badgePath])
+    mockReadByPath.mockResolvedValue(new Uint8Array(64).fill(6))
+    const { readInstalledDecalImage } = await import('../template-diffuse')
+    const result = await readInstalledDecalImage('/mods/decals/123.sga', 'british')
+    expect(result).toBe(FAKE_DATA_URL)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Integration: stock template clone → async diffuse bake → non-null URL
 // ---------------------------------------------------------------------------
 describe('stock template apply → non-null customDiffuseUrl (integration)', () => {
@@ -292,5 +357,133 @@ describe('stock template apply → non-null customDiffuseUrl (integration)', () 
     const veh = clone!.vehicles[skin.vehicleId] ?? { id: skin.vehicleId, tac: null, name: null, decals: [] }
     clone!.vehicles[skin.vehicleId] = { ...veh, customDiffuseUrl: dataUrl }
     expect(clone!.vehicles[skin.vehicleId].customDiffuseUrl).toBe(FAKE_DATA_URL)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ddsToDataUrl — inline DDS (DXT5/BC3 or DXT1/BC1) → PNG dataURL
+// ---------------------------------------------------------------------------
+
+/** Build a minimal valid DDS byte buffer for a 4×4 texture with the given
+ *  FourCC. The payload is all-zeroes (valid BC1/BC3 — decodes to black). */
+function makeFakeDds(fourCC: string, w = 4, h = 4): Uint8Array {
+  // BC3 = 16 bytes/block, BC1 = 8 bytes/block
+  const bytesPerBlock = (fourCC === 'DXT5') ? 16 : 8
+  const blocksW = Math.ceil(w / 4)
+  const blocksH = Math.ceil(h / 4)
+  const payloadLen = blocksW * blocksH * bytesPerBlock
+  const buf = new Uint8Array(128 + payloadLen)
+  const view = new DataView(buf.buffer)
+
+  // 'DDS ' magic
+  buf.set([0x44, 0x44, 0x53, 0x20], 0)
+  // DDS_HEADER
+  view.setUint32(4, 124, true)         // size
+  view.setUint32(8, 0x00081007, true)  // flags
+  view.setUint32(12, h, true)          // height
+  view.setUint32(16, w, true)          // width
+  view.setUint32(20, payloadLen, true) // pitchOrLinearSize
+  view.setUint32(76, 32, true)         // pixelformat.size
+  view.setUint32(80, 0x4, true)        // pixelformat.flags (FOURCC)
+  buf.set(fourCC.split('').map(c => c.charCodeAt(0)), 84)
+  view.setUint32(108, 0x1000, true)    // caps1
+  // payload stays zeroed
+  return buf
+}
+
+describe('ddsToDataUrl', () => {
+  beforeEach(() => {
+    activeCtx = { putImageData: vi.fn() }
+    activeGetContext = vi.fn(() => activeCtx)
+    activeToDataURL = vi.fn(() => FAKE_DATA_URL)
+  })
+
+  it('returns a PNG dataURL for a valid 4×4 DXT5 DDS', async () => {
+    const dds = makeFakeDds('DXT5', 4, 4)
+    const { ddsToDataUrl } = await import('../template-diffuse')
+    const result = ddsToDataUrl(dds)
+    expect(result).toBe(FAKE_DATA_URL)
+    expect(activeCtx.putImageData).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns a PNG dataURL for a valid 4×4 DXT1 DDS', async () => {
+    const dds = makeFakeDds('DXT1', 4, 4)
+    const { ddsToDataUrl } = await import('../template-diffuse')
+    const result = ddsToDataUrl(dds)
+    expect(result).toBe(FAKE_DATA_URL)
+    expect(activeCtx.putImageData).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns null for an unsupported FourCC', async () => {
+    const dds = makeFakeDds('DXT2', 4, 4)
+    const { ddsToDataUrl } = await import('../template-diffuse')
+    expect(ddsToDataUrl(dds)).toBeNull()
+  })
+
+  it('returns null for a buffer shorter than 128 bytes', async () => {
+    const { ddsToDataUrl } = await import('../template-diffuse')
+    expect(ddsToDataUrl(new Uint8Array(64))).toBeNull()
+  })
+
+  it('returns null when canvas.getContext returns null', async () => {
+    activeGetContext = vi.fn(() => null)
+    const dds = makeFakeDds('DXT5', 4, 4)
+    const { ddsToDataUrl } = await import('../template-diffuse')
+    expect(ddsToDataUrl(dds)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// readInstalledPackIcon — ui/assets/textures/*_i1.dds extractor
+// ---------------------------------------------------------------------------
+describe('readInstalledPackIcon', () => {
+  beforeEach(() => {
+    activeCtx = { putImageData: vi.fn() }
+    activeGetContext = vi.fn(() => activeCtx)
+    activeToDataURL = vi.fn(() => FAKE_DATA_URL)
+    mockListPaths.mockReset()
+    mockReadByPath.mockReset()
+    _mockNativeFileReturn = null
+  })
+
+  it('returns null outside Electron (nativeFileFromPath returns null)', async () => {
+    _mockNativeFileReturn = null
+    const { readInstalledPackIcon } = await import('../template-diffuse')
+    expect(await readInstalledPackIcon('/mods/skins/pack.sga')).toBeNull()
+  })
+
+  it('returns the fake dataURL when a _i1.dds DXT5 entry exists', async () => {
+    _mockNativeFileReturn = new File([], 'pack.sga')
+    const iconPath = 'ui/assets/textures/abcdef1234567890abcdef1234567890_i1.dds'
+    mockListPaths.mockReturnValue([iconPath])
+    // Provide a valid 4×4 DXT5 DDS bytes so ddsToDataUrl can decode it.
+    mockReadByPath.mockResolvedValue(makeFakeDds('DXT5', 4, 4))
+    const { readInstalledPackIcon } = await import('../template-diffuse')
+    const result = await readInstalledPackIcon('/mods/skins/pack.sga')
+    expect(result).toBe(FAKE_DATA_URL)
+  })
+
+  it('returns null when the archive has no _i1.dds entry', async () => {
+    _mockNativeFileReturn = new File([], 'pack.sga')
+    mockListPaths.mockReturnValue(['attrib/vehicle_decal/abc.rgd'])
+    mockReadByPath.mockResolvedValue(new Uint8Array(256))
+    const { readInstalledPackIcon } = await import('../template-diffuse')
+    expect(await readInstalledPackIcon('/mods/skins/pack.sga')).toBeNull()
+  })
+
+  it('returns null when readByPath returns null', async () => {
+    _mockNativeFileReturn = new File([], 'pack.sga')
+    mockListPaths.mockReturnValue(['ui/assets/textures/abcdef1234567890abcdef1234567890_i1.dds'])
+    mockReadByPath.mockResolvedValue(null)
+    const { readInstalledPackIcon } = await import('../template-diffuse')
+    expect(await readInstalledPackIcon('/mods/skins/pack.sga')).toBeNull()
+  })
+
+  it('tolerates backslash separators in the SGA TOC', async () => {
+    _mockNativeFileReturn = new File([], 'pack.sga')
+    mockListPaths.mockReturnValue(['ui\\assets\\textures\\abcdef1234567890abcdef1234567890_i1.dds'])
+    mockReadByPath.mockResolvedValue(makeFakeDds('DXT5', 4, 4))
+    const { readInstalledPackIcon } = await import('../template-diffuse')
+    expect(await readInstalledPackIcon('/mods/skins/pack.sga')).toBe(FAKE_DATA_URL)
   })
 })

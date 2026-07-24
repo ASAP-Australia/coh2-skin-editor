@@ -781,3 +781,219 @@ export function listStockArchives(installRoot: string): StockArchive[] {
   out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   return out
 }
+
+// ---------------------------------------------------------------------------
+// InstalledPack — enumerate skin / decal packs from the mods dirs
+// ---------------------------------------------------------------------------
+
+export interface InstalledPack {
+  /** Unique key: absolute path of the .sga file. */
+  id: string
+  /** Human-readable pack name parsed from the .info embedded in the SGA.
+   *  Falls back to the basename (without .sga) when no .info is present. */
+  name: string
+  /** 'skin' | 'decal' | 'faceplate' | 'unknown' inferred from the .info
+   *  path pattern or internal TOC paths. */
+  type: 'skin' | 'decal' | 'faceplate' | 'unknown'
+  /** Absolute path to the .sga archive. */
+  path: string
+}
+
+// Path + mtime → parsed result cache (avoids re-parsing unchanged archives).
+const packCache = new Map<string, { mtimeMs: number; pack: InstalledPack }>()
+
+/**
+ * Read the .info metadata from a CoH2 SGA v7 archive using only bounded reads:
+ * (1) 152-byte fixed header, (2) headerSize TOC bytes, (3) the single .info
+ * file's bytes.  Never reads the full archive — skin packs can be hundreds of
+ * MB and a full readFileSync on the main process freezes the window chrome.
+ *
+ * Pure Node.js — no renderer, no Electron APIs.
+ */
+function readInfoFromSga(sgaPath: string): { name: string | null; type: 'skin' | 'decal' | 'faceplate' | 'unknown' } | null {
+  let fd: number
+  try {
+    fd = fs.openSync(sgaPath, 'r')
+  } catch {
+    return null
+  }
+
+  try {
+    // ── Step 1: read the 152-byte fixed header ───────────────────────────
+    const header = Buffer.allocUnsafe(152)
+    const hRead = fs.readSync(fd, header, 0, 152, 0)
+    if (hRead < 152) return null
+    if (header.slice(0, 8).toString('ascii') !== '_ARCHIVE') return null
+    const major = header.readUInt16LE(8)
+    if (major !== 7) return null
+
+    const headerSize = header.readUInt32LE(140)
+    const dataPos    = header.readUInt32LE(144)
+
+    // ── Step 2: read headerSize TOC bytes immediately following the header ─
+    if (headerSize < 32) return null
+    const toc = Buffer.allocUnsafe(headerSize)
+    const tocRead = fs.readSync(fd, toc, 0, headerSize, 152)
+    if (tocRead < headerSize) return null
+
+    const filePos     = toc.readUInt32LE(16)
+    const fileCount   = toc.readUInt32LE(20)
+    const namePosBase = toc.readUInt32LE(24)
+
+    // Helper: read a NUL-terminated UTF-8 string at given offset inside toc
+    function readName(off: number): string {
+      const absOff = namePosBase + off
+      let end = absOff
+      while (end < toc.length && toc[end] !== 0) end++
+      return toc.slice(absOff, end).toString('utf8')
+    }
+
+    // ── Step 3: scan file entries to collect paths + find .info ──────────
+    const allPaths: string[] = []
+    let infoFileEntry: { dataPos: number; storeLen: number; uncompLen: number; storage: number } | null = null
+
+    for (let i = 0; i < fileCount; i++) {
+      const o = filePos + i * 30
+      if (o + 30 > toc.length) break
+      const nameOff   = toc.readUInt32LE(o)
+      const fDataPos  = toc.readUInt32LE(o + 4)
+      const storeLen  = toc.readUInt32LE(o + 8)
+      const uncompLen = toc.readUInt32LE(o + 12)
+      const storage   = toc[o + 21]
+      const fname     = readName(nameOff)
+      allPaths.push(fname)
+      if (fname.endsWith('.info') && !infoFileEntry) {
+        infoFileEntry = { dataPos: fDataPos, storeLen, uncompLen, storage }
+      }
+    }
+
+    // Infer type from paths
+    let type: 'skin' | 'decal' | 'faceplate' | 'unknown' = 'unknown'
+    for (const rawP of allPaths) {
+      const lc = rawP.replace(/\\/g, '/').toLowerCase()
+      if (lc.includes('attrib/skin_pack/'))      { type = 'skin';      break }
+      if (lc.includes('attrib/vehicle_decal/'))  { type = 'decal';     break }
+      if (lc.includes('attrib/decal/'))          { type = 'decal';     break }
+      if (lc.includes('/badges/'))               { type = 'decal';     break }
+      if (lc.includes('attrib/faceplate/'))      { type = 'faceplate'; break }
+    }
+
+    // ── Step 4: bounded-read of the .info payload bytes only ─────────────
+    let name: string | null = null
+    if (infoFileEntry) {
+      const { dataPos: fDP, storeLen, uncompLen, storage } = infoFileEntry
+      const abs = dataPos + fDP
+      // Guard against obviously bogus offsets (corrupt archive)
+      if (storeLen > 0 && storeLen <= 65536) {
+        const raw = Buffer.allocUnsafe(storeLen)
+        const infoRead = fs.readSync(fd, raw, 0, storeLen, abs)
+        const slice = raw.slice(0, infoRead)
+        try {
+          let text: string
+          if (storage === 0 || storeLen === uncompLen) {
+            text = slice.toString('utf8')
+          } else {
+            // zlib-deflated (storage 1 or 2)
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const zlib = require('zlib') as typeof import('zlib')
+            let inflated: Buffer
+            try {
+              inflated = zlib.inflateSync(slice)
+            } catch {
+              inflated = zlib.inflateRawSync(slice)
+            }
+            text = inflated.toString('utf8')
+          }
+          const m = text.match(/^\s*name\s*=\s*"((?:[^"\\]|\\.)*)"/m)
+          if (m) {
+            name = m[1]
+              .replace(/\\"/g, '"')
+              .replace(/\\\\/g, '\\')
+              .replace(/\\n/g, '\n')
+              .trim() || null
+          }
+        } catch {
+          /* silently skip unparseable .info */
+        }
+      }
+    }
+
+    return { name, type }
+  } finally {
+    try { fs.closeSync(fd) } catch { /* ignore close errors */ }
+  }
+}
+
+/**
+ * Enumerate all installed skin + decal packs under the user's CoH2 mods directory.
+ *
+ * Scans:
+ *   `<modsRoot>/skins/*.sga`                     — skin packs
+ *   `<modsRoot>/decals/subscriptions/*.sga`       — decal subscriptions
+ *   `<modsRoot>/faceplates/subscriptions/*.sga`   — faceplate subscriptions
+ *
+ * Each .sga is opened (TOC + .info only, no payload) to read the human-readable
+ * pack name.  Results are keyed by path+mtime and cached at module scope so
+ * repeated opens (e.g. menu re-open) are instant.
+ *
+ * Junk / unparseable archives are silently skipped.
+ * Returns [] when modsRoot is falsy or doesn't exist.
+ */
+export function listInstalledPacks(modsRoot: string): InstalledPack[] {
+  if (!modsRoot) return []
+  const p = pickPath(os.platform())
+  const subdirs: Array<{ dir: string; defaultType: 'skin' | 'decal' | 'faceplate' }> = [
+    { dir: p.join(modsRoot, 'skins'),                       defaultType: 'skin' },
+    { dir: p.join(modsRoot, 'decals', 'subscriptions'),     defaultType: 'decal' },
+    { dir: p.join(modsRoot, 'faceplates', 'subscriptions'), defaultType: 'faceplate' },
+  ]
+
+  const result: InstalledPack[] = []
+
+  for (const { dir, defaultType } of subdirs) {
+    let entries: string[]
+    try {
+      entries = fs.readdirSync(dir)
+    } catch {
+      continue
+    }
+
+    for (const fname of entries) {
+      if (!fname.toLowerCase().endsWith('.sga')) continue
+      const sgaPath = p.join(dir, fname)
+
+      // Check cache first
+      let mtimeMs = 0
+      try {
+        mtimeMs = fs.statSync(sgaPath).mtimeMs
+      } catch {
+        continue
+      }
+
+      const cached = packCache.get(sgaPath)
+      if (cached && cached.mtimeMs === mtimeMs) {
+        result.push(cached.pack)
+        continue
+      }
+
+      // Parse the SGA
+      const info = readInfoFromSga(sgaPath)
+      if (!info) continue  // skip unreadable/non-SGA files silently
+
+      const displayName = info.name
+        ?? fname.replace(/\.sga$/i, '').replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+
+      const pack: InstalledPack = {
+        id: sgaPath,
+        name: displayName,
+        type: info.type !== 'unknown' ? info.type : defaultType,
+        path: sgaPath,
+      }
+
+      packCache.set(sgaPath, { mtimeMs, pack })
+      result.push(pack)
+    }
+  }
+
+  return result
+}

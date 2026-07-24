@@ -32,7 +32,7 @@ export default function FactionPanel({ selected, onSelect, packFactions }: Props
   const present = new Set(packFactions ?? [])
   return (
     <div
-      className="glass-hud fixed top-1/2 left-3 -translate-y-1/2 z-30 flex flex-col gap-2 p-1.5 rounded-2xl"
+      className="glass-hud fixed top-1/2 left-5 -translate-y-1/2 z-30 flex flex-col gap-2 p-1.5 rounded-2xl"
     >
       {FACTIONS.map(({ id }) => {
         const active = selected === id

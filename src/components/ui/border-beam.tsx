@@ -38,6 +38,11 @@ interface Props {
   borderRadius?: number
   borderWidth?: number
   className?: string
+  /** When false, the beam animation and all glow layers are hidden
+   *  (animation: none, pseudo-element + bloom opacity → 0). The wrapper
+   *  div and children still render — only the decorative beam is
+   *  suppressed. Defaults to true. */
+  active?: boolean
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -140,6 +145,7 @@ export function BorderBeam({
   borderRadius = 16,
   borderWidth = 1,
   className = '',
+  active = true,
 }: Props) {
   const id = useId().replace(/:/g, '_')
   const n  = borderRadius
@@ -197,6 +203,18 @@ export function BorderBeam({
   const p = 0.7
   const g = 0.8
 
+  // When `active` is false we pause the spin animation and fade all glow
+  // layers to zero opacity. Using opacity + animation-play-state means the
+  // transition is GPU-only (compositor) so the hide/show is cheap even if
+  // the component re-renders with different `active` values. The transition
+  // duration (160ms) is fast enough that the beam disappears promptly on
+  // click without feeling jarring.
+  const beamOpacityTransition = 'opacity 160ms ease-out'
+  const afterOpacity   = active ? `calc(${h.toFixed(2)} * var(--bb-strength))` : '0'
+  const beforeOpacity  = active ? `calc(${p.toFixed(2)} * var(--bb-strength))` : '0'
+  const bloomOpacity   = active ? `calc(${g.toFixed(2)} * var(--bb-strength))` : '0'
+  const animPlayState  = active ? 'running' : 'paused'
+
   const css = `
     @property --bb-angle-${id} {
       syntax: "<angle>";
@@ -210,6 +228,7 @@ export function BorderBeam({
       isolation: isolate;
       --bb-strength: ${strength};
       animation: bb-spin-${id} ${duration}s linear infinite;
+      animation-play-state: ${animPlayState};
     }
     @keyframes bb-spin-${id} {
       to { --bb-angle-${id}: 360deg; }
@@ -236,7 +255,8 @@ export function BorderBeam({
               mask-composite: intersect, exclude;
       pointer-events: none;
       z-index: 2;
-      opacity: calc(${h.toFixed(2)} * var(--bb-strength));
+      opacity: ${afterOpacity};
+      transition: ${beamOpacityTransition};
     }
 
     /* ::before — the warm halo / inner glow (z 1) */
@@ -259,7 +279,8 @@ export function BorderBeam({
       mask-composite: intersect, add;
       pointer-events: none;
       z-index: 1;
-      opacity: calc(${p.toFixed(2)} * var(--bb-strength));
+      opacity: ${beforeOpacity};
+      transition: ${beamOpacityTransition};
       clip-path: inset(0 round ${n}px);
     }
 
@@ -278,7 +299,8 @@ export function BorderBeam({
       filter: blur(8px) brightness(1.3) saturate(1.2);
       pointer-events: none;
       z-index: 3;
-      opacity: calc(${g.toFixed(2)} * var(--bb-strength));
+      opacity: ${bloomOpacity};
+      transition: ${beamOpacityTransition};
     }
 
     @media (prefers-reduced-motion: reduce) {

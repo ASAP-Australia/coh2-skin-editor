@@ -123,18 +123,23 @@ export const SCENE_PRESETS: Record<PresetId, ScenePreset> = {
     // setup. Result: every facet of the model receives light from at least
     // 2 directions and there are no dark cavities, regardless of normal-map
     // orientation or face winding.
+    //
+    // Reflections: scene.environment is nulled in Viewport.tsx when this preset
+    // is active — no IBL env map pickup, no environment reflections.
     label: 'Studio Grid',
     description:
       'Dark gray background with reference grid and uniform 6-axis fill — every panel of the tank fully visible.',
     toneMapping: 'neutral',
-    exposure: 0.95,
-    // Strong hemi carries the bulk of the lift — neutral light grey
-    // sky (was 0xc4d0e4 sky-blue, which poured a noticeable cool wash
-    // onto painted-steel panels and read as a permanent "blue tint" on
-    // any vehicle viewed in studio mode). A near-white sky with a
-    // mid-grey ground keeps the volumetric cue (lit faces brighter than
-    // shaded ones) without colour-shifting the diffuse.
-    hemi: { sky: 0xe8e8e8, ground: 0x808080, intensity: 1.25 },
+    // Bumped 0.95 → 1.1 for a fully-illuminated studio look. Composes
+    // with FACTION_LIGHT_BOOST (british/aef × 1.3 → 1.43) without blowing
+    // out; neutral tone mapping has no highlight roll-off so this is a safe
+    // linear lift.
+    exposure: 1.1,
+    // Stronger hemi for flat, even studio illumination — near-white sky +
+    // mid-grey ground keeps the volumetric cue without colour-shifting the
+    // diffuse. Intensity raised 1.25 → 1.5 to eliminate dark undercarriage
+    // cavities. Composes with faction boost: british/aef get × 1.3 → 1.95.
+    hemi: { sky: 0xe8e8e8, ground: 0x808080, intensity: 1.5 },
     directionalLights: [
       // One soft key from above-front so painted-steel surfaces still
       // pick up a directional highlight — without this the whole model
@@ -142,14 +147,16 @@ export const SCENE_PRESETS: Record<PresetId, ScenePreset> = {
       { color: 0xfff4e0, intensity: 0.55, position: [4, 9, 5] },
     ],
     omniLights: [
-      // Six soft fills from the bbox-radius axes. Sum is 2.4 — enough
-      // to defeat dark patches without saturating the spec response.
-      { color: 0xffffff, intensity: 0.4, position: [SHOWCASE_OMNI_RADIUS, 0, 0] },
-      { color: 0xffffff, intensity: 0.4, position: [-SHOWCASE_OMNI_RADIUS, 0, 0] },
-      { color: 0xffffff, intensity: 0.4, position: [0, SHOWCASE_OMNI_RADIUS, 0] },
-      { color: 0xffffff, intensity: 0.4, position: [0, -SHOWCASE_OMNI_RADIUS, 0] },
-      { color: 0xffffff, intensity: 0.4, position: [0, 0, SHOWCASE_OMNI_RADIUS] },
-      { color: 0xffffff, intensity: 0.4, position: [0, 0, -SHOWCASE_OMNI_RADIUS] },
+      // Six fills from the bbox-radius axes. Intensity raised 0.4 → 0.5
+      // (sum 3.0) to give even illumination from every direction. No
+      // env map reflections are active for this preset, so this is
+      // purely diffuse+specular from direct lights only.
+      { color: 0xffffff, intensity: 0.5, position: [SHOWCASE_OMNI_RADIUS, 0, 0] },
+      { color: 0xffffff, intensity: 0.5, position: [-SHOWCASE_OMNI_RADIUS, 0, 0] },
+      { color: 0xffffff, intensity: 0.5, position: [0, SHOWCASE_OMNI_RADIUS, 0] },
+      { color: 0xffffff, intensity: 0.5, position: [0, -SHOWCASE_OMNI_RADIUS, 0] },
+      { color: 0xffffff, intensity: 0.5, position: [0, 0, SHOWCASE_OMNI_RADIUS] },
+      { color: 0xffffff, intensity: 0.5, position: [0, 0, -SHOWCASE_OMNI_RADIUS] },
     ],
     background: { kind: 'color', hex: 0x2e3039 },
     showGrid: true,
@@ -163,9 +170,11 @@ export const SCENE_PRESETS: Record<PresetId, ScenePreset> = {
     description:
       'Black backdrop with omni-directional lighting — every panel of the tank fully visible.',
     toneMapping: 'neutral',
-    // Lower exposure than studio so the painted-steel _spc map doesn't
-    // turn the whole hull into a chrome ball under the 6-axis lights.
-    exposure: 0.85,
+    // Bumped 0.85 → 1.0 for a brighter overall look without blowing out
+    // highlights (neutral tone mapping is linear). Composes with
+    // FACTION_LIGHT_BOOST: british/aef × 1.3 → 1.3. No env map reflections
+    // are active for this preset (scene.environment nulled in Viewport.tsx).
+    exposure: 1.0,
     // Slight warm/cool hemi tint (sky-warm, ground-cool) gives volume
     // without piling on more direct light. Intensity is kept low; the
     // omni rig below carries the visibility budget.

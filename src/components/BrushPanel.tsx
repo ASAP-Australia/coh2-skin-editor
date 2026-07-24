@@ -1,6 +1,7 @@
 import { useId } from 'react'
 import { Eraser, FlipHorizontal2 } from 'lucide-react'
 import type { BrushSettings } from '@/lib/brush'
+import { EDITOR_ACCENT } from '@/components/editor-primitives/tokens'
 
 interface Props {
   brushOn: boolean
@@ -230,7 +231,8 @@ function Slider(props: {
         step={props.step}
         value={props.value}
         onChange={e => props.onChange(Number(e.target.value))}
-        className="w-full accent-[var(--color-accent)]"
+        className="w-full"
+        style={{ accentColor: EDITOR_ACCENT }}
       />
     </div>
   )

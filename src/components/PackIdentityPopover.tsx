@@ -442,6 +442,7 @@ export function PackIdentityPopover({
           }}
           placeholder="Short description (optional)"
           rows={3}
+          className="custom-scrollbar"
           style={{
             ...INPUT_STYLE,
             resize: 'vertical',

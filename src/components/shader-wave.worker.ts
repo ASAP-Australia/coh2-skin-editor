@@ -217,8 +217,9 @@ self.onmessage = (e: MessageEvent<WorkerMsg>) => {
       }
 
       renderer.setClearColor(0x212121)
-      renderer.setPixelRatio(Math.min(msg.dpr, 1.25))
-      renderer.setSize(msg.width, msg.height, false)
+      const initDpr = Math.min(msg.dpr, 1.25)
+      renderer.setPixelRatio(initDpr)
+      renderer.setSize(Math.floor(msg.width * initDpr) / initDpr, Math.floor(msg.height * initDpr) / initDpr, false)
 
       scene = new Scene()
       camera = new PerspectiveCamera(45, msg.width / msg.height, 0.1, 100)
@@ -260,8 +261,12 @@ self.onmessage = (e: MessageEvent<WorkerMsg>) => {
 
     case 'resize': {
       if (!renderer || !camera) return
-      renderer.setPixelRatio(Math.min(msg.dpr, 1.25))
-      renderer.setSize(msg.width, msg.height, false)
+      const dpr = Math.min(msg.dpr, 1.25)
+      renderer.setPixelRatio(dpr)
+      // Math.floor on the DPR-scaled pixel buffer so rounding never produces
+      // a buffer 1px wider/taller than the container, which would cause a
+      // transient overflow scrollbar. `false` keeps CSS size at 100%/100%.
+      renderer.setSize(Math.floor(msg.width * dpr) / dpr, Math.floor(msg.height * dpr) / dpr, false)
       camera.aspect = msg.width / msg.height
       camera.updateProjectionMatrix()
 

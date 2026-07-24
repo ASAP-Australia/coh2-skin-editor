@@ -23,7 +23,7 @@ import {
  * main-thread rendering transparently when OffscreenCanvas is unavailable or
  * the worker's WebGL context creation fails.
  *
- * Drop into any route as a fixed-position absolute backdrop:
+ * Drop into a positioned container as an absolute backdrop:
  *   <ShaderWaveBackground />
  */
 const MAX_RIPPLES = 5
@@ -243,7 +243,14 @@ export default function ShaderWaveBackground({ noRipples = false }: Props) {
         const w = container.clientWidth
         const h = container.clientHeight
         if (w === 0 || h === 0) return
-        renderer.setSize(w, h)
+        // Pass `false` so Three.js does NOT set canvas.style.width/height
+        // to the pixel-buffer size — we keep CSS size at 100%/100% via the
+        // createCanvas() styles above. Also clamp the pixel buffer with
+        // Math.floor so DPR rounding never produces a 1px overshoot that
+        // causes the canvas to exceed its container and trigger a scrollbar.
+        const dpr = Math.min(window.devicePixelRatio, 1.25)
+        renderer.setPixelRatio(dpr)
+        renderer.setSize(Math.floor(w * dpr) / dpr, Math.floor(h * dpr) / dpr, false)
         camera.aspect = w / h
         camera.updateProjectionMatrix()
       }
@@ -429,7 +436,7 @@ export default function ShaderWaveBackground({ noRipples = false }: Props) {
     <div
       ref={containerRef}
       aria-hidden
-      className="fixed inset-0 -z-10 pointer-events-none"
+      className="absolute inset-0 -z-10 pointer-events-none"
       style={{ backgroundColor: '#212121' }}
     />
   )

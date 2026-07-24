@@ -358,3 +358,289 @@ describe('G11 — snap-to-grid target generation', () => {
     expect(targets.filter(t => t.kind === 'y')).toHaveLength(31)
   })
 })
+
+// ─── G9 extended: drag gesture undo in one step ───────────────────────────────
+// Mirrors the engine harness from editor-history.test.ts but in the context
+// of DecalPackEditor's expected drag-undo behaviour.
+
+const G9_UNDO_LIMIT = 50
+
+interface G9Pos { x: number; y: number }
+interface G9HarnessEntry { snap: G9Pos; label: string }
+
+interface G9Harness {
+  current: G9Pos
+  past: G9HarnessEntry[]
+  future: G9HarnessEntry[]
+  gestureDepth: number
+}
+
+function g9Create(): G9Harness {
+  return { current: { x: 0, y: 0 }, past: [], future: [], gestureDepth: 0 }
+}
+
+function g9BeginGesture(h: G9Harness, label: string) {
+  if (h.gestureDepth === 0) {
+    h.past.push({ snap: { ...h.current }, label })
+    if (h.past.length > G9_UNDO_LIMIT) h.past.shift()
+    h.future = []
+  }
+  h.gestureDepth += 1
+}
+
+function g9EndGesture(h: G9Harness) {
+  if (h.gestureDepth > 0) h.gestureDepth -= 1
+}
+
+function g9Mutate(h: G9Harness, pos: G9Pos, undoable: boolean) {
+  if (undoable && h.gestureDepth === 0) {
+    h.past.push({ snap: { ...h.current }, label: '' })
+    if (h.past.length > G9_UNDO_LIMIT) h.past.shift()
+    h.future = []
+  }
+  h.current = pos
+}
+
+function g9Undo(h: G9Harness): boolean {
+  if (h.past.length === 0) return false
+  const entry = h.past.pop()!
+  h.future.unshift({ snap: { ...h.current }, label: entry.label })
+  h.current = entry.snap
+  return true
+}
+
+describe('G9 extended — drag gesture is ONE undo step', () => {
+  it('simulated drag (begin → n mutates → end) is undone in one step', () => {
+    const h = g9Create()
+
+    // Simulate drag: pointerdown → begin gesture → 5 pointermove ticks → pointerup → end gesture
+    g9BeginGesture(h, 'Move decal')
+    g9Mutate(h, { x: 20, y: 30 }, false)
+    g9Mutate(h, { x: 40, y: 50 }, false)
+    g9Mutate(h, { x: 60, y: 70 }, false)
+    g9Mutate(h, { x: 80, y: 90 }, false)
+    g9Mutate(h, { x: 100, y: 110 }, false)
+    g9EndGesture(h)
+
+    expect(h.current).toEqual({ x: 100, y: 110 })
+    expect(h.past).toHaveLength(1)
+
+    const didUndo = g9Undo(h)
+    expect(didUndo).toBe(true)
+    expect(h.current).toEqual({ x: 0, y: 0 })
+    expect(h.past).toHaveLength(0)
+  })
+
+  it('multi-move (G9): two separate drags = two undo steps', () => {
+    const h = g9Create()
+
+    g9BeginGesture(h, 'Move decal 1')
+    g9Mutate(h, { x: 50, y: 50 }, false)
+    g9EndGesture(h)
+
+    g9BeginGesture(h, 'Move decal 2')
+    g9Mutate(h, { x: 100, y: 100 }, false)
+    g9EndGesture(h)
+
+    expect(h.past).toHaveLength(2)
+
+    g9Undo(h)
+    expect(h.current).toEqual({ x: 50, y: 50 })
+    g9Undo(h)
+    expect(h.current).toEqual({ x: 0, y: 0 })
+  })
+})
+
+// ─── d3: N / Ctrl+D / [ ] shortcut logic ─────────────────────────────────────
+// Tests for the new DPE keyboard shortcut bindings added in Phase 6 (d3).
+// Pure logic re-implementations of the key-handler branches.
+
+interface SimpleDecal { id: string; x: number; y: number }
+
+/** Simulates the moveDecal function from DPE: swaps decal with neighbour. */
+function moveDecalInList(list: SimpleDecal[], id: string, dir: -1 | 1): SimpleDecal[] {
+  const idx = list.findIndex(d => d.id === id)
+  if (idx < 0) return list
+  const j = idx + dir
+  if (j < 0 || j >= list.length) return list
+  const next = list.slice()
+  ;[next[idx], next[j]] = [next[j], next[idx]]
+  return next
+}
+
+/** Simulates duplicateDecal: inserts a copy immediately after the original. */
+function duplicateDecalInList(list: SimpleDecal[], id: string, newId: string): SimpleDecal[] {
+  const orig = list.find(d => d.id === id)
+  if (!orig) return list
+  const idx = list.findIndex(d => d.id === id)
+  const copy: SimpleDecal = { ...orig, id: newId }
+  const next = list.slice()
+  next.splice(idx + 1, 0, copy)
+  return next
+}
+
+describe('d3 — [ / ] select-mode reorder', () => {
+  const list: SimpleDecal[] = [
+    { id: 'a', x: 0, y: 0 },
+    { id: 'b', x: 10, y: 0 },
+    { id: 'c', x: 20, y: 0 },
+  ]
+
+  it('[ moves selected decal toward index 0 (down in list)', () => {
+    const result = moveDecalInList(list, 'b', -1)
+    expect(result.map(d => d.id)).toEqual(['b', 'a', 'c'])
+  })
+
+  it('] moves selected decal toward end (up in list)', () => {
+    const result = moveDecalInList(list, 'b', 1)
+    expect(result.map(d => d.id)).toEqual(['a', 'c', 'b'])
+  })
+
+  it('[ on first item is a no-op', () => {
+    const result = moveDecalInList(list, 'a', -1)
+    expect(result.map(d => d.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('] on last item is a no-op', () => {
+    const result = moveDecalInList(list, 'c', 1)
+    expect(result.map(d => d.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('unknown id is a no-op', () => {
+    const result = moveDecalInList(list, 'z', 1)
+    expect(result.map(d => d.id)).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('d3 — Ctrl+D duplicate logic', () => {
+  it('inserts copy immediately after original', () => {
+    const list: SimpleDecal[] = [
+      { id: 'a', x: 0, y: 0 },
+      { id: 'b', x: 10, y: 0 },
+    ]
+    const result = duplicateDecalInList(list, 'a', 'a_copy')
+    expect(result.map(d => d.id)).toEqual(['a', 'a_copy', 'b'])
+  })
+
+  it('copy preserves original properties', () => {
+    const list: SimpleDecal[] = [{ id: 'x', x: 42, y: 7 }]
+    const result = duplicateDecalInList(list, 'x', 'x_copy')
+    expect(result[1]).toMatchObject({ x: 42, y: 7 })
+    expect(result[1].id).toBe('x_copy')
+  })
+
+  it('list length increases by 1', () => {
+    const list: SimpleDecal[] = [{ id: 'a', x: 0, y: 0 }, { id: 'b', x: 10, y: 0 }]
+    expect(duplicateDecalInList(list, 'a', 'a2')).toHaveLength(3)
+  })
+
+  it('unknown id is a no-op', () => {
+    const list: SimpleDecal[] = [{ id: 'a', x: 0, y: 0 }]
+    expect(duplicateDecalInList(list, 'z', 'z2')).toHaveLength(1)
+  })
+})
+
+// ─── G9-multi: Multi-decal drag = ONE undo frame, equal delta ─────────────────
+// Mirrors handleKonvaDragEnd logic: one mutate() call writes ALL selected
+// decal positions, wrapped in ONE gesture (beginGesture → endGesture).
+// The harness reuses the G9Harness structure but tracks multiple decals.
+
+interface MultiPos { [id: string]: G9Pos }
+
+interface MultiDragHarness {
+  positions: MultiPos
+  past: { snap: MultiPos; label: string }[]
+  future: { snap: MultiPos; label: string }[]
+  gestureDepth: number
+}
+
+function mdCreate(initial: MultiPos): MultiDragHarness {
+  return { positions: { ...initial }, past: [], future: [], gestureDepth: 0 }
+}
+
+function mdBeginGesture(h: MultiDragHarness, label: string) {
+  if (h.gestureDepth === 0) {
+    h.past.push({ snap: { ...h.positions }, label })
+    h.future = []
+  }
+  h.gestureDepth += 1
+}
+
+function mdEndGesture(h: MultiDragHarness) {
+  if (h.gestureDepth > 0) h.gestureDepth -= 1
+}
+
+/** Simulate handleKonvaDragEnd: writes ALL final positions in one mutate. */
+function mdDragEnd(h: MultiDragHarness, finalPositions: MultiPos) {
+  mdEndGesture(h)
+  // One undoable write for the entire group — mimics `mutate(p => ...all updates...)`
+  h.positions = { ...h.positions, ...finalPositions }
+}
+
+function mdUndo(h: MultiDragHarness): boolean {
+  if (h.past.length === 0) return false
+  const entry = h.past.pop()!
+  h.future.unshift({ snap: { ...h.positions }, label: entry.label })
+  h.positions = { ...entry.snap }
+  return true
+}
+
+describe('G9-multi — multi-decal drag is ONE undo frame', () => {
+  it('dragging two selected decals creates only one undo frame', () => {
+    const h = mdCreate({ a: { x: 10, y: 10 }, b: { x: 50, y: 50 } })
+
+    // Simulate: onDragStart → beginGesture, n moves per frame (no undo writes),
+    // onDragEnd → endGesture + one mutate with all final positions.
+    mdBeginGesture(h, 'Move decal')
+    // (n drag-move frames with no state writes — omitted, they only move nodes imperatively)
+    mdDragEnd(h, { a: { x: 30, y: 30 }, b: { x: 70, y: 70 } })
+
+    expect(h.positions).toEqual({ a: { x: 30, y: 30 }, b: { x: 70, y: 70 } })
+    expect(h.past).toHaveLength(1)
+
+    // One undo step reverts BOTH decals.
+    mdUndo(h)
+    expect(h.positions).toEqual({ a: { x: 10, y: 10 }, b: { x: 50, y: 50 } })
+    expect(h.past).toHaveLength(0)
+  })
+
+  it('all selected decals move by the same delta', () => {
+    const starts: MultiPos = { p: { x: 20, y: 30 }, q: { x: 80, y: 90 } }
+    const dx = 15, dy = -5
+    // Compute finals as starts + delta (mirrors handleKonvaDragMove companion logic).
+    const finals: MultiPos = {}
+    for (const [id, pos] of Object.entries(starts)) {
+      finals[id] = { x: pos.x + dx, y: pos.y + dy }
+    }
+
+    const h = mdCreate(starts)
+    mdBeginGesture(h, 'Move decal')
+    mdDragEnd(h, finals)
+
+    for (const [id, start] of Object.entries(starts)) {
+      const got = h.positions[id]
+      expect(got.x - start.x).toBe(dx)
+      expect(got.y - start.y).toBe(dy)
+    }
+  })
+
+  it('two separate multi-drag gestures create two undo frames', () => {
+    const h = mdCreate({ a: { x: 0, y: 0 }, b: { x: 10, y: 10 } })
+
+    mdBeginGesture(h, 'Move decal')
+    mdDragEnd(h, { a: { x: 5, y: 5 }, b: { x: 15, y: 15 } })
+
+    mdBeginGesture(h, 'Move decal')
+    mdDragEnd(h, { a: { x: 20, y: 20 }, b: { x: 30, y: 30 } })
+
+    expect(h.past).toHaveLength(2)
+
+    mdUndo(h)
+    expect(h.positions).toEqual({ a: { x: 5, y: 5 }, b: { x: 15, y: 15 } })
+
+    mdUndo(h)
+    expect(h.positions).toEqual({ a: { x: 0, y: 0 }, b: { x: 10, y: 10 } })
+
+    expect(h.past).toHaveLength(0)
+  })
+})

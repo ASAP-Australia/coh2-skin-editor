@@ -34,6 +34,7 @@
 
 import type { Faction } from '../vehicles'
 import type { DiffusionEditImageResponse } from './types'
+import { applyWeathering } from '../camo-generator'
 
 // ── Negative prompt — shared across all camo generation paths ────────────────
 
@@ -104,8 +105,17 @@ export interface ValidCoh2TextureInput {
    *  camo pattern while preserving the underlying atlas structure (and giving
    *  the body mask a clean "before" pattern to swap in). Lower values blend
    *  the vanilla palette through; higher values risk re-laying-out the UV
-   *  islands which would invalidate the mask alignment. */
+   *  islands which would invalidate the mask alignment.
+   *
+   *  For the Honved pack, pass 0.55 (lower than default) to preserve more of
+   *  the Panzer III/IV-class UV detail that the LoRA was trained on. */
   strength?: number
+  /**
+   * When true, apply the procedural Honved weathering pass (dust, grime,
+   * chips, exhaust staining, sun fade, period desaturation) after the
+   * mask composite. Triggers P2 applyWeathering on the composited canvas.
+   */
+  honvedWeathering?: boolean
   /** Override the diffusion sampler step count. */
   steps?: number
   /** Pin the seed for reproducibility. */
@@ -191,14 +201,14 @@ async function buildMaskCanvas(
  *  where mask is read from the red channel of the mask image (the masks are
  *  greyscale so R==G==B; we use R for cheap access).
  *
- *  Returns an HTMLImageElement so the result can be plugged directly into the
- *  same code paths that consume `generateCamoWithDiffusion` output. */
+ *  Returns both the canvas (for caller to optionally apply weathering passes)
+ *  and an HTMLImageElement for callers that only need the image. */
 async function composite(
   vanillaCanvas: HTMLCanvasElement,
   generated: HTMLImageElement,
   maskCanvas: HTMLCanvasElement,
   size: number,
-): Promise<HTMLImageElement> {
+): Promise<{ canvas: HTMLCanvasElement; image: HTMLImageElement }> {
   const out = document.createElement('canvas')
   out.width = size
   out.height = size
@@ -242,7 +252,8 @@ async function composite(
   // Convert canvas → HTMLImageElement so callers can treat the result the
   // same way they treat generateCamoWithDiffusion output.
   const finalUrl = out.toDataURL('image/png')
-  return await decodeBase64Png(finalUrl.slice('data:image/png;base64,'.length), 'image/png')
+  const image = await decodeBase64Png(finalUrl.slice('data:image/png;base64,'.length), 'image/png')
+  return { canvas: out, image }
 }
 
 /** Build the equipment-aware refinement prompt. The "body panels only" and
@@ -325,7 +336,24 @@ export async function generateValidCoh2Texture(
   const generatedImg = await decodeBase64Png(reply.imageBase64, reply.mimeType)
 
   // 4. Per-pixel composite: result = mask × generated + (1 − mask) × vanilla
-  const finalImg = await composite(vanillaCanvas, generatedImg, maskCanvas, size)
+  const { canvas: compositeCanvas, image: compositeImg } = await composite(
+    vanillaCanvas, generatedImg, maskCanvas, size,
+  )
+
+  // 5. P2 — Honved weathering pass (after composite, before GPU upload).
+  //    Applied when the caller requests it via honvedWeathering: true.
+  //    Runs on the composited canvas in-place; re-encodes to HTMLImageElement.
+  let finalImg: HTMLImageElement = compositeImg
+  if (input.honvedWeathering) {
+    const wctx = compositeCanvas.getContext('2d')
+    if (wctx) {
+      applyWeathering(wctx, size, size, input.seed ?? 42)
+      const url = compositeCanvas.toDataURL('image/png')
+      finalImg = await decodeBase64Png(
+        url.slice('data:image/png;base64,'.length), 'image/png',
+      )
+    }
+  }
 
   return {
     image: finalImg,

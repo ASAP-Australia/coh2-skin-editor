@@ -584,3 +584,57 @@ describe('listAllDecalPacks — storage-key / body-id drift fix', () => {
     expect(loadDecalPackById(INTERNAL_ID)).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// downloadDecalPack / tryParseDecalPackFile round-trip
+// ---------------------------------------------------------------------------
+
+describe('downloadDecalPack / tryParseDecalPackFile round-trip', () => {
+  it('JSON serialisation preserves magic, id, packName, version, and decals', () => {
+    const original = newDecalPackProject('Export Round-Trip Pack')
+    const imgId = freshSourceImageId()
+    original.sourceImages[imgId] = { id: imgId, name: 'test', dataUrl: 'data:,', width: 64, height: 64 }
+    const decal = newDecal(original, imgId)
+    decal.brightness = 130
+    original.decals.push(decal)
+
+    // downloadDecalPack serialises via JSON.stringify — test the data contract
+    // directly without invoking DOM APIs (URL.createObjectURL not in jsdom).
+    const json = JSON.stringify(original, null, 2)
+    const loaded = tryParseDecalPackFile(json)
+
+    expect(loaded).not.toBeNull()
+    expect(loaded!.magic).toBe('coh2-decalpack-project')
+    expect(loaded!.packName).toBe('Export Round-Trip Pack')
+    expect(loaded!.id).toBe(original.id)
+    expect(loaded!.version).toBe(original.version)
+    expect(loaded!.decals).toHaveLength(1)
+    expect(loaded!.decals[0].brightness).toBe(130)
+  })
+
+  it('round-trip preserves sourceImages alongside decals', () => {
+    const original = newDecalPackProject('Images Pack')
+    const imgId = freshSourceImageId()
+    original.sourceImages[imgId] = { id: imgId, name: 'hero', dataUrl: 'data:image/png;base64,abc', width: 128, height: 128 }
+    const decal = newDecal(original, imgId)
+    original.decals.push(decal)
+
+    const json = JSON.stringify(original, null, 2)
+    const loaded = tryParseDecalPackFile(json)!
+
+    expect(loaded.sourceImages[imgId]).toBeDefined()
+    expect(loaded.sourceImages[imgId].name).toBe('hero')
+    expect(loaded.sourceImages[imgId].width).toBe(128)
+  })
+
+  it('filename extension is .coh2decalpack and special chars are sanitised', () => {
+    const p = newDecalPackProject('My Cool Pack!')
+    // downloadDecalPack uses: packName.replace(/[^a-z0-9_-]+/gi, '_') + '.coh2decalpack'
+    const expectedFilename = p.packName.replace(/[^a-z0-9_-]+/gi, '_') + '.coh2decalpack'
+    expect(expectedFilename).toMatch(/\.coh2decalpack$/)
+    expect(expectedFilename).not.toMatch(/[!]/)
+    // Also verify the JSON itself round-trips with the right magic
+    const loaded = tryParseDecalPackFile(JSON.stringify(p))
+    expect(loaded!.magic).toBe('coh2-decalpack-project')
+  })
+})

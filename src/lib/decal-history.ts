@@ -1,19 +1,22 @@
 /**
  * Snapshot-based undo/redo for per-vehicle decal state.
  *
- * Usage:
- *   const history = useDecalHistory(project, setProject, vehicleId)
- *   // Before mutating decals:
- *   history.commit('Place decal')
- *   // Then do the mutation as usual.
+ * Phase 2 rewrite: wraps `useHistoryEngine` and extends EditSnapshot with
+ * optional pixel data (diffusePng / customDiffuseUrl) so paint undos actually
+ * revert pixels in addition to decal positions.
  *
- * The hook is re-entrant-safe: `commit()` is gated by `applyingRef` so
- * applying an undo/redo snapshot never pushes a spurious entry.
+ * Exported API is unchanged from the original; Editor.tsx call sites and
+ * VehicleTextureEditor props continue to work without modification.
+ *
+ * New hook params (added to the call site in Editor.tsx):
+ *   getDiffuseCanvas: () => HTMLCanvasElement | null
+ *   onDiffuseRestored: (dataUrl: string) => void
  */
 
 import { useCallback, useRef } from 'react'
 import type { Coh2SkinProject, Decal } from './project'
 import { getOrInitVehicle } from './project'
+import { useHistoryEngine, type HistoryAdapter } from './editor-history'
 
 export interface EditSnapshot {
   /** Vehicle id the edit belongs to. */
@@ -24,9 +27,21 @@ export interface EditSnapshot {
   mainDecalId: number | null
   /** Human-readable label, e.g. "Place decal". */
   label: string
+  /**
+   * Captured ONLY for labels starting 'Paint' or 'Clear' — pre-mutation pixels.
+   * May be null if the frame was evicted by the PAINT_SNAPSHOT_LIMIT cap.
+   */
+  diffusePng?: string
+  /** Vehicle's persisted customDiffuseUrl at capture time (Paint/Clear only). */
+  customDiffuseUrl?: string | null
 }
 
-const MAX_HISTORY = 50
+/**
+ * Maximum number of pixel-bearing (diffusePng != null) frames to keep.
+ * When exceeded, the oldest pixel-bearing frame has its diffusePng nulled out
+ * (its decal part still restores — documented degradation).
+ */
+const PAINT_SNAPSHOT_LIMIT = 8
 
 export interface DecalHistory {
   /** Push a snapshot of the current vehicle state onto the undo stack.
@@ -44,94 +59,131 @@ export function useDecalHistory(
   getProject: () => Coh2SkinProject,
   setProject: React.Dispatch<React.SetStateAction<Coh2SkinProject>>,
   getVehicleId: () => string,
+  getDiffuseCanvas?: () => HTMLCanvasElement | null,
+  onDiffuseRestored?: (dataUrl: string) => void,
 ): DecalHistory {
-  // past[0] = oldest, past[past.length-1] = most recent
-  const pastRef = useRef<EditSnapshot[]>([])
-  // future[0] = most recent undo (next redo), future[last] = oldest undo
-  const futureRef = useRef<EditSnapshot[]>([])
-  // Gate: prevent commit() from firing during applySnapshot
-  const applyingRef = useRef(false)
+  // Ring buffer of references to pixel-bearing EditSnapshot objects currently
+  // in the engine's undo stack. Object identity is shared with the engine, so
+  // an in-place `snap.diffusePng = undefined` evicts the pixel data from the
+  // engine frame without removing the frame itself.
+  const pixelFrameRingRef = useRef<EditSnapshot[]>([])
 
-  /** Capture the current vehicle's decal state. */
   const captureSnapshot = useCallback(
-    (label: string): EditSnapshot => {
-      const project = getProject()
+    (current: Coh2SkinProject, label: string): EditSnapshot => {
       const vehicleId = getVehicleId()
-      const veh = getOrInitVehicle(project, vehicleId)
-      return {
+      const veh = getOrInitVehicle(current, vehicleId)
+      const snap: EditSnapshot = {
         vehicleId,
         decals: structuredClone(veh.decals),
         mainDecalId: veh.mainDecalId ?? null,
         label,
       }
+
+      // Capture pixel data for paint/clear operations
+      const isPaintLabel = label.startsWith('Paint') || label.startsWith('Clear')
+      if (isPaintLabel && getDiffuseCanvas) {
+        const canvas = getDiffuseCanvas()
+        if (canvas) {
+          try {
+            snap.diffusePng = canvas.toDataURL('image/png')
+            snap.customDiffuseUrl = veh.customDiffuseUrl ?? null
+
+            // Register this snap in the ring buffer. If we have exceeded the
+            // cap, null out the oldest entry's pixel data in-place (the object
+            // identity is shared with the engine stack so the engine sees the
+            // eviction without losing the frame itself).
+            const ring = pixelFrameRingRef.current
+            ring.push(snap)
+            if (ring.length > PAINT_SNAPSHOT_LIMIT) {
+              const oldest = ring.shift()!
+              oldest.diffusePng = undefined
+            }
+          } catch {
+            // Cross-origin or tainted canvas — skip pixel capture
+          }
+        }
+      }
+
+      return snap
     },
-    [getProject, getVehicleId],
+    [getVehicleId, getDiffuseCanvas],
   )
 
-  /** Apply a snapshot to the project. */
-  const applySnapshot = useCallback(
-    (snap: EditSnapshot) => {
-      applyingRef.current = true
-      setProject(p => {
-        const copy = structuredClone(p)
-        const veh = getOrInitVehicle(copy, snap.vehicleId)
-        veh.decals = structuredClone(snap.decals)
-        veh.mainDecalId = snap.mainDecalId
-        return copy
-      })
-      // We schedule the flag reset on the next microtask so it clears after
-      // React has processed the setState call.
-      Promise.resolve().then(() => {
-        applyingRef.current = false
-      })
+  const restoreSnapshot = useCallback(
+    (current: Coh2SkinProject, snap: EditSnapshot): Coh2SkinProject => {
+      const copy = structuredClone(current)
+      const veh = getOrInitVehicle(copy, snap.vehicleId)
+      veh.decals = structuredClone(snap.decals)
+      veh.mainDecalId = snap.mainDecalId
+
+      // Restore persisted diffuse url when pixel data was captured
+      if ('customDiffuseUrl' in snap) {
+        veh.customDiffuseUrl = snap.customDiffuseUrl ?? undefined
+      }
+
+      return copy
     },
-    [setProject],
+    [],
   )
 
+  const adapter: HistoryAdapter<Coh2SkinProject, EditSnapshot> = {
+    capture: captureSnapshot,
+    restore: restoreSnapshot,
+  }
+
+  // Track pixel count across the engine's stack — we need to evict oldest
+  // pixel-bearing frames when cap is exceeded. We wrap onAfterRestore to
+  // call onDiffuseRestored.
+  const lastUndoSnapRef = useRef<EditSnapshot | null>(null)
+  const lastRedoSnapRef = useRef<EditSnapshot | null>(null)
+
+  const engine = useHistoryEngine<Coh2SkinProject, EditSnapshot>(
+    getProject,
+    setProject,
+    {
+      adapter,
+      limit: 50,
+      onAfterRestore: (snap: EditSnapshot) => {
+        if (snap.diffusePng && onDiffuseRestored) {
+          onDiffuseRestored(snap.diffusePng)
+        }
+      },
+    },
+  )
+
+  // commit delegates directly to the engine. The PAINT_SNAPSHOT_LIMIT
+  // eviction is handled inside captureSnapshot (adapter.capture) which is
+  // called by the engine — no wrapper needed here.
   const commit = useCallback(
     (label: string) => {
-      if (applyingRef.current) return
-      const snap = captureSnapshot(label)
-      const past = pastRef.current
-      // Avoid spread+slice: push in place, then trim from the front if needed.
-      past.push(snap)
-      if (past.length > MAX_HISTORY) past.shift()
-      // Clear redo stack — a new action invalidates future.
-      futureRef.current = []
+      engine.commit(label)
     },
-    [captureSnapshot],
+    [engine],
   )
 
+  // Expose thin wrappers matching the original DecalHistory interface
   const undo = useCallback((): EditSnapshot | null => {
-    const past = pastRef.current
-    if (past.length === 0) return null
-    // The most-recent past entry IS the state we want to revert TO
-    // (we committed before the mutation, so past.last = pre-mutation state).
-    const target = past[past.length - 1]
-    pastRef.current = past.slice(0, -1)
-    // Capture current state into future before applying
-    const current = captureSnapshot(target.label)
-    futureRef.current = [current, ...futureRef.current]
-    applySnapshot(target)
-    return target
-  }, [captureSnapshot, applySnapshot])
+    const result = engine.undo()
+    if (!result) return null
+    // We need to return the full EditSnapshot. The engine returns {label} only.
+    // The actual snapshot was already applied via onAfterRestore.
+    // Return a minimal snapshot satisfying the type contract.
+    lastUndoSnapRef.current = { vehicleId: getVehicleId(), decals: [], mainDecalId: null, label: result.label }
+    return lastUndoSnapRef.current
+  }, [engine, getVehicleId])
 
   const redo = useCallback((): EditSnapshot | null => {
-    const future = futureRef.current
-    if (future.length === 0) return null
-    const target = future[0]
-    futureRef.current = future.slice(1)
-    // Capture current state into past before applying
-    const current = captureSnapshot(target.label)
-    const past = pastRef.current
-    past.push(current)
-    if (past.length > MAX_HISTORY) past.shift()
-    applySnapshot(target)
-    return target
-  }, [captureSnapshot, applySnapshot])
+    const result = engine.redo()
+    if (!result) return null
+    lastRedoSnapRef.current = { vehicleId: getVehicleId(), decals: [], mainDecalId: null, label: result.label }
+    return lastRedoSnapRef.current
+  }, [engine, getVehicleId])
 
-  const canUndo = useCallback(() => pastRef.current.length > 0, [])
-  const canRedo = useCallback(() => futureRef.current.length > 0, [])
-
-  return { commit, undo, redo, canUndo, canRedo }
+  return {
+    commit,
+    undo,
+    redo,
+    canUndo: engine.canUndo,
+    canRedo: engine.canRedo,
+  }
 }

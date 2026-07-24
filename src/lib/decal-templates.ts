@@ -82,6 +82,29 @@ const britishRoundel = `
   <circle cx="50" cy="50" r="14" fill="#b41b1f" />
 </svg>`.trim()
 
+// P3 — Hungarian national marking: white Greek cross on black square.
+// The Kereszt (Hungarian Cross) used by Royal Hungarian Army (Honvédség)
+// on Panzer III/IV-class vehicles, 1942–1944. Hull sides + engine deck only.
+// NOT the German Balkenkreuz — this is a centred Greek (equilateral) cross
+// with equal arm widths, inside a solid black square, white filled cross.
+const hungarianKeresztSmall = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect x="0" y="0" width="100" height="100" fill="#0d0d0d" />
+  <polygon points="35,10 65,10 65,35 90,35 90,65 65,65 65,90 35,90 35,65 10,65 10,35 35,35"
+           fill="#f0ece0" />
+</svg>`.trim()
+
+// P3 — White stencil tactical number for Honved vehicles.
+// Rendered as an SVG with a configurable 3-digit number; default 321.
+// Position: turret sides in-game. White text, black outline.
+const hunvedTacNumber = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
+  <text x="50" y="48" text-anchor="middle"
+        font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="52"
+        fill="#f0ece0" stroke="#0d0d0d" stroke-width="5" paint-order="stroke fill"
+        letter-spacing="2">321</text>
+</svg>`.trim()
+
 const skull = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <g fill="#f5f3e8" stroke="#1a1a1a" stroke-width="2">
@@ -124,6 +147,19 @@ const star5Yellow = `
 export const DECAL_TEMPLATES: DecalTemplate[] = [
   { id: 'tmpl_balkenkreuz', faction: 'german', displayName: 'Balkenkreuz', svg: balkenkreuz },
   { id: 'tmpl_iron_cross', faction: 'german', displayName: 'Iron Cross', svg: ironCross },
+  // P3 — Honved national markings (scoped to german faction — hull sides + engine deck placement)
+  {
+    id: 'tmpl_honved_kereszt',
+    faction: 'german',
+    displayName: 'Hungarian Kereszt (Honved)',
+    svg: hungarianKeresztSmall,
+  },
+  {
+    id: 'tmpl_honved_tac_number',
+    faction: 'german',
+    displayName: 'Honved Tactical Number',
+    svg: hunvedTacNumber,
+  },
   {
     id: 'tmpl_lightning_bolts',
     faction: 'west_german',

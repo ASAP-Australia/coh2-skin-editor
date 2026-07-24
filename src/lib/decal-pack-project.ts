@@ -242,15 +242,34 @@ export interface AtlasPart {
   locked?: boolean
 }
 
-/** Canonical 6-part definitions for the 1024×1024 decal atlas. */
-export const ATLAS_PART_DEFS: { name: string; region: AtlasPartRegion; locked?: boolean }[] = [
-  { name: 'Weathering Strips', region: { x: 0,   y: 0,   w: 340, h: 1024 }, locked: true },
-  { name: 'Main Hull Badge',   region: { x: 340, y: 0,   w: 684, h: 512  } },
-  { name: 'Turret Mini-Badges',region: { x: 820, y: 0,   w: 204, h: 512  } },
-  { name: 'Unit Banner',       region: { x: 400, y: 400, w: 624, h: 300  } },
-  { name: 'Commander Crest',   region: { x: 600, y: 600, w: 424, h: 200  } },
-  { name: 'Reverse Hull Text', region: { x: 200, y: 800, w: 824, h: 224  } },
+/** Canonical 6-part definitions for the 1024×1024 decal atlas.
+ *
+ *  IMPORTANT: `name` is the STABLE internal id for each part. It is asserted by
+ *  tests (`atlas-parts.test.ts`) and seeded onto every `AtlasPart.name` at
+ *  project creation, so it MUST NOT change. It is *not* meant for casual users —
+ *  the strings ("Weathering Strips", "Reverse Hull Text", …) expose the raw
+ *  UV-atlas mental model.
+ *
+ *  `label` is the friendly, plain-language string shown to the USER (R3). It may
+ *  be freely refined without breaking tests or the SGA build. When absent, code
+ *  should fall back to `name` — use `atlasPartLabel(index)` to resolve it. */
+export const ATLAS_PART_DEFS: { name: string; label: string; description?: string; region: AtlasPartRegion; locked?: boolean }[] = [
+  { name: 'Weathering Strips', label: 'Wear & scratches',    description: 'Edge weathering strips — auto-managed; not normally edited.', region: { x: 0,   y: 0,   w: 340, h: 1024 }, locked: true },
+  { name: 'Main Hull Badge',   label: 'Main badge',          description: 'The primary badge on the vehicle hull — start here.',        region: { x: 340, y: 0,   w: 684, h: 512  } },
+  { name: 'Turret Mini-Badges',label: 'Small turret badges', description: 'Smaller badges that sit on the turret.',                     region: { x: 820, y: 0,   w: 204, h: 512  } },
+  { name: 'Unit Banner',       label: 'Unit banner',         description: 'A wide banner or stripe along the vehicle.',                  region: { x: 400, y: 400, w: 624, h: 300  } },
+  { name: 'Commander Crest',   label: 'Commander crest',     description: 'A small crest or emblem for the commander.',                  region: { x: 600, y: 600, w: 424, h: 200  } },
+  { name: 'Reverse Hull Text', label: 'Rear text',           description: 'Text or markings on the back of the hull.',                   region: { x: 200, y: 800, w: 824, h: 224  } },
 ]
+
+/** Resolve the friendly, user-facing label for an atlas part by index (R3).
+ *  Falls back to the stable internal `name` when the index is out of range or
+ *  no `label` is defined. Never returns undefined for a valid index. */
+export function atlasPartLabel(index: number): string {
+  const def = ATLAS_PART_DEFS[index]
+  if (!def) return ''
+  return def.label ?? def.name
+}
 
 export interface Coh2DecalPackProject {
   /** Magic for file sniffing on load. */
@@ -259,6 +278,9 @@ export interface Coh2DecalPackProject {
    *  PublishToWorkshopDialog. Absent / undefined = not yet published.
    *  ≤5×10⁹ = real Workshop ID; ≥1×10¹⁵ = fake locally-generated ID. */
   workshopId?: string
+  /** Last-used Workshop visibility (0=Public, 1=FriendsOnly, 2=Private, 3=Unlisted).
+   *  Persisted so reopening the publish popover pre-selects the same option. */
+  workshopVisibility?: 0 | 1 | 2 | 3
   /** Schema version.
    *  - v1: original; no per-decal stroke or tint.
    *  - v2: introduced optional `stroke` and `tint` on each Decal. Old projects
@@ -329,6 +351,92 @@ const ACTIVE_KEY = 'coh2-decalpack-active-project'
 const PROJECT_KEY_PREFIX = 'coh2.decalpack.'
 const RECENT_KEY = 'coh2.recentDecalPacks'
 const RECENT_MAX = 12
+const INDEX_KEY = 'coh2.decalPackIndex.v1'
+
+// ---------------------------------------------------------------------------
+// Metadata index
+// ---------------------------------------------------------------------------
+
+export interface DecalPackIndexEntry {
+  name: string
+  lastEditedAt: number
+  workshopId: string | null
+}
+
+function readDecalPackIndex(): Record<string, DecalPackIndexEntry> {
+  try {
+    const raw = localStorage.getItem(INDEX_KEY)
+    if (!raw) return {}
+    return JSON.parse(raw) as Record<string, DecalPackIndexEntry>
+  } catch {
+    return {}
+  }
+}
+
+function writeDecalPackIndex(index: Record<string, DecalPackIndexEntry>): void {
+  try {
+    localStorage.setItem(INDEX_KEY, JSON.stringify(index))
+  } catch {
+    /* quota — non-fatal */
+  }
+}
+
+export function upsertDecalPackIndexEntry(id: string, entry: DecalPackIndexEntry): void {
+  const index = readDecalPackIndex()
+  index[id] = entry
+  writeDecalPackIndex(index)
+}
+
+export function removeDecalPackIndexEntry(id: string): void {
+  const index = readDecalPackIndex()
+  delete index[id]
+  writeDecalPackIndex(index)
+}
+
+/** Return the index entry for `id`, backfilling from the blob if missing. */
+export function getDecalPackMeta(id: string): DecalPackIndexEntry | null {
+  const index = readDecalPackIndex()
+  if (index[id]) return index[id]
+  const p = loadDecalPackById(id)
+  if (!p) return null
+  const cached = readRecent().find(r => r.id === id)
+  const lastEditedAt = cached?.lastEditedAt
+    ? (() => {
+        const t = Date.parse(cached.lastEditedAt)
+        return Number.isFinite(t) ? t : 0
+      })()
+    : (() => {
+        const t = Date.parse(p.modifiedAt ?? '')
+        return Number.isFinite(t) ? t : 0
+      })()
+  const entry: DecalPackIndexEntry = {
+    name: p.packName || cached?.packName || 'Untitled pack',
+    lastEditedAt,
+    workshopId: p.workshopId ?? null,
+  }
+  upsertDecalPackIndexEntry(id, entry)
+  return entry
+}
+
+/** Scan the index for a local decal pack whose workshopId matches.
+ *  Returns the local storage id, or null if not found. */
+export function findDecalPackIdByWorkshopId(workshopId: string): string | null {
+  const index = readDecalPackIndex()
+  for (const [id, entry] of Object.entries(index)) {
+    if (entry.workshopId === workshopId) return id
+  }
+  // Fallback: scan per-id blobs for index misses (e.g. pre-upgrade storage).
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (!key || !key.startsWith(PROJECT_KEY_PREFIX)) continue
+    const id = key.slice(PROJECT_KEY_PREFIX.length)
+    if (index[id]) continue // already checked above
+    const p = loadDecalPackById(id)
+    if (!p) continue
+    if (p.workshopId === workshopId) return id
+  }
+  return null
+}
 
 export function newDecalPackProject(packName = 'My Decal Pack'): Coh2DecalPackProject {
   return {
@@ -462,6 +570,11 @@ export function saveDecalPackToLocal(p: Coh2DecalPackProject): void {
     localStorage.setItem(projectStorageKey(p.id), JSON.stringify(p))
     localStorage.setItem(ACTIVE_KEY, p.id)
     touchRecent(p)
+    upsertDecalPackIndexEntry(p.id, {
+      name: p.packName,
+      lastEditedAt: Date.now(),
+      workshopId: p.workshopId ?? null,
+    })
   } catch {
     // localStorage may throw QuotaExceededError on large image libraries.
     // The caller will catch via the UI's autosave handler — failure here
@@ -642,28 +755,53 @@ export function listAllDecalPacks(): RecentDecalPack[] {
   const entries: RecentDecalPack[] = []
   try {
     const cached = new Map<string, RecentDecalPack>(readRecent().map(r => [r.id, r]))
+    const index = readDecalPackIndex()
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
       if (!key || !key.startsWith(PROJECT_KEY_PREFIX)) continue
       const id = key.slice(PROJECT_KEY_PREFIX.length)
-      const project = loadDecalPackById(id)
-      if (!project) continue // broken — drop it
       const fromRegistry = cached.get(id)
-      // Use the storage-key `id` (the suffix of the localStorage key), NOT
-      // `project.id` from the JSON body. On legacy, hand-edited, or renamed
-      // snapshots the body id can drift from the storage key. The routing
-      // path (handlePickDecalPack → loadDecalPackById) keys on the storage
-      // suffix, so the row id here must match it — otherwise clicking a
-      // drifted row loads from a different (or missing) slot and silently
-      // no-ops with a null return.
-      entries.push({
-        id,
-        packName: project.packName || fromRegistry?.packName || 'Untitled pack',
-        decalCount: decalPackLayerCount(project),
-        lastEditedAt: fromRegistry?.lastEditedAt ?? project.modifiedAt ?? '',
-        thumbnail: fromRegistry?.thumbnail ?? null,
-      })
+      const indexEntry = index[id]
+      if (indexEntry) {
+        // Fast path: index hit, no blob parse.
+        // Convert ms timestamp to ISO string to match the decal-pack schema.
+        const lastEditedAt =
+          fromRegistry?.lastEditedAt ??
+          (indexEntry.lastEditedAt
+            ? new Date(indexEntry.lastEditedAt).toISOString()
+            : '')
+        entries.push({
+          id,
+          packName: indexEntry.name || fromRegistry?.packName || 'Untitled pack',
+          decalCount: fromRegistry ? (fromRegistry as { decalCount?: number }).decalCount ?? 0 : 0,
+          lastEditedAt,
+          thumbnail: fromRegistry?.thumbnail ?? null,
+        })
+      } else {
+        // Slow path: parse blob, backfill index.
+        const project = loadDecalPackById(id)
+        if (!project) continue
+        const fromReg = cached.get(id)
+        const lastEditedAt = fromReg?.lastEditedAt ?? project.modifiedAt ?? ''
+        const lastEditedAtMs = (() => {
+          const t = Date.parse(lastEditedAt)
+          return Number.isFinite(t) ? t : 0
+        })()
+        index[id] = {
+          name: project.packName || fromReg?.packName || 'Untitled pack',
+          lastEditedAt: lastEditedAtMs,
+          workshopId: project.workshopId ?? null,
+        }
+        entries.push({
+          id,
+          packName: index[id].name,
+          decalCount: decalPackLayerCount(project),
+          lastEditedAt,
+          thumbnail: fromReg?.thumbnail ?? null,
+        })
+      }
     }
+    writeDecalPackIndex(index)
   } catch {
     /* swallow — non-critical */
   }
@@ -685,6 +823,12 @@ export function clearDecalPackWorkshopId(id: string): void {
     if (parsed?.magic !== 'coh2-decalpack-project') return
     delete parsed.workshopId
     localStorage.setItem(projectStorageKey(id), JSON.stringify(parsed))
+    // Keep the index in sync.
+    const existing = readDecalPackIndex()
+    if (existing[id]) {
+      existing[id] = { ...existing[id], workshopId: null }
+      writeDecalPackIndex(existing)
+    }
   } catch {
     /* swallow — non-critical */
   }
@@ -705,6 +849,7 @@ export function removeRecentDecalPack(id: string): void {
   } catch {
     /* swallow — non-critical */
   }
+  removeDecalPackIndexEntry(id)
 }
 
 // ───────────────────────────────────────────────────────────────────────────

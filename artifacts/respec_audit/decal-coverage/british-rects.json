@@ -1,0 +1,109 @@
+{
+  "_meta": {
+    "generated": "2026-06-19",
+    "task": "Empirically determine British .sbs → 2048² atlas pixel conversion",
+    "verdict": "DEFINITIVE NEGATIVE — no uniform .sbs formula exists",
+    "formula_negative_reason": "The .sbs per-vehicle Transformation2D offset values encode decal positions in each vehicle's own UV space, but the per-vehicle scale factor (SD units → atlas pixels) varies by vehicle: sexton≈233, sherman_firefly≈35, cromwell impossible (GT position geometrically unreachable by any available .sbs decal). No single formula {cx=(0.5+u/scale)*2048, cy=(0.5±v/scale)*2048} works across vehicles.",
+    "formula_details": {
+      "sexton": "scale=233, flip_v=false, decal=british_crest_02 → (1247,1081) within 6px of scan GT (1245,1087)",
+      "sherman_firefly": "scale=35, flip_v=false, decal=british_crest_03 → (206,490) within 29px of wikinger GT (185,510)",
+      "cromwell": "NO MATCH — cromwell GT (1740,1490) requires u_norm=+0.350, but british_decal_heavy_01 at scale=25 produces V out of atlas range. Geometrically impossible."
+    },
+    "method": "Decoded RGT textures from ArtBritish.sga and Wikinger community SGA (1418203330.sga) using fixed CoH2 RGT parser (28-byte chunk header with 8-byte GUID). Scanned 13 stock skin variants per vehicle for bright connected components (lum>100). Cross-checked .sbs transform offsets against scan-derived centers.",
+    "rgt_parser_fix": "CoH2 RGT uses 28-byte chunk header (20 std + 8-byte GUID), NOT the 20-byte header assumed by scan.py. Fix: payload_off = off + 28 + name_len. Without this fix all British vehicles returned 'No mip data found'.",
+    "wikinger_sga": "1418203330.sga contains: cromwell, sherman_firefly, comet, sexton, churchill summer/winter variants"
+  },
+  "rects": {
+    "cromwell": {
+      "vehicleId": "cromwell",
+      "source": "wikinger_gt",
+      "confidence": 1.00,
+      "rect": { "x": 1610, "y": 1360, "w": 260, "h": 260 },
+      "center": { "cx": 1740, "cy": 1490 },
+      "note": "Wikinger skin (4a167bb423654fd6be7a0d8c6b7f9f25) shows prominent white Allied 5-pointed star at this location. High confidence, ±30px. Pre-existing authored GT rect — unchanged.",
+      "sbs_match": false,
+      "sbs_note": "No cromwell .sbs decal maps to this position at any scale. GT position unreachable."
+    },
+    "sherman_firefly": {
+      "vehicleId": "sherman_firefly",
+      "source": "wikinger_gt",
+      "confidence": 1.00,
+      "rect": { "x": 45, "y": 380, "w": 280, "h": 260 },
+      "center": { "cx": 185, "cy": 510 },
+      "note": "Wikinger skin shows white Allied star at upper-left atlas region. High confidence, ±30px. Pre-existing authored GT rect — unchanged.",
+      "sbs_match": true,
+      "sbs_note": "british_crest_03 at per-vehicle scale=35, flip_v=false → (206,490), 29px from GT center. Per-vehicle scale (35) differs from sexton (233) confirming no uniform formula."
+    },
+    "sexton": {
+      "vehicleId": "sexton",
+      "source": "stock_scan",
+      "confidence": 0.80,
+      "rect": { "x": 1115, "y": 957, "w": 260, "h": 260 },
+      "center": { "cx": 1245, "cy": 1087 },
+      "note": "8/13 stock skin variants (british_0001..0004, 0007, 0011 summer) show bright circular marking (white roundel with cross) at atlas (1245,1087), bbox 37x33. Markings in skins 0009/0010/0012/0013 are large custom paint areas that overshadow this location. .sbs british_crest_02 at scale=233, no-flip independently maps to (1247,1081) — 6px from scan center — providing cross-validation.",
+      "sbs_match": true,
+      "sbs_note": "british_crest_02 at per-vehicle scale=233, flip_v=false → (1247,1081) within 6px. Scale=233 is sexton-specific."
+    },
+    "comet": {
+      "vehicleId": "comet",
+      "source": "fallback",
+      "confidence": 0.20,
+      "rect": { "x": 827, "y": 870, "w": 270, "h": 260 },
+      "center": { "cx": 962, "cy": 1000 },
+      "note": "Stock skin scan: 11/13 skins found markings but with very high variance (centers scattered from (174,220) to (2006,1434), median (1650,996)). Wikinger skin shows yellow tactical number box at (634,1723). No consistent hull-side UV region identifiable from bright-pixel scanning. Faction fallback used.",
+      "sbs_match": false,
+      "sbs_note": "Comet .sbs transforms not tested against scan GT (no reliable GT). Scale factor unknown."
+    },
+    "churchill": {
+      "vehicleId": "churchill",
+      "source": "scan_low",
+      "confidence": 0.40,
+      "rect": { "x": 827, "y": 870, "w": 270, "h": 260 },
+      "center": { "cx": 962, "cy": 1000 },
+      "note": "Stock skin scan: skins 0001-0004 consistently show markings near (1619-1627, 1892) at lower-right area. However median across all 9 found skins is (1065,1892) with high variance. Wikinger skin shows heraldic shield at (636,1470). Churchill UV atlas is also used by tanksurface.sbs (shared decal layer). Low confidence — faction fallback retained.",
+      "sbs_match": false,
+      "sbs_note": "Churchill .sbs IS the tanksurface (same graph). Decal positions are in Churchill UV space (confirmed)."
+    },
+    "comet_scan_low": {
+      "_note": "ALTERNATIVE for comet if operator wants to use Wikinger-derived position rather than fallback",
+      "vehicleId": "comet",
+      "source": "wikinger_scan_low",
+      "confidence": 0.30,
+      "rect": { "x": 504, "y": 1623, "w": 260, "h": 260 },
+      "center": { "cx": 634, "cy": 1723 },
+      "note": "Wikinger skin comet shows bright yellow tactical number box at (634,1723). This IS in the hull-side UV region (lower-left area of atlas) but represents a TACTICAL NUMBER, not an Allied star. Low confidence as hull-side decal placement anchor — only usable if decal should be placed at this specific tactical number location."
+    },
+    "aec_armoured_car": {
+      "vehicleId": "aec_armoured_car",
+      "source": "fallback",
+      "confidence": 0.20,
+      "rect": { "x": 827, "y": 870, "w": 270, "h": 260 },
+      "center": { "cx": 962, "cy": 1000 },
+      "note": "Not in Wikinger SGA. No stock scan performed. Faction fallback."
+    },
+    "valentine": {
+      "vehicleId": "valentine",
+      "source": "fallback",
+      "confidence": 0.20,
+      "rect": { "x": 827, "y": 870, "w": 270, "h": 260 },
+      "center": { "cx": 962, "cy": 1000 },
+      "note": "Not in Wikinger SGA. No stock scan performed. Faction fallback."
+    },
+    "centaur": {
+      "vehicleId": "centaur",
+      "source": "fallback",
+      "confidence": 0.20,
+      "rect": { "x": 827, "y": 870, "w": 270, "h": 260 },
+      "center": { "cx": 962, "cy": 1000 },
+      "note": "Not in Wikinger SGA. No stock scan performed. Faction fallback."
+    },
+    "bren_carrier": {
+      "vehicleId": "bren_carrier",
+      "source": "fallback",
+      "confidence": 0.20,
+      "rect": { "x": 827, "y": 870, "w": 270, "h": 260 },
+      "center": { "cx": 962, "cy": 1000 },
+      "note": "Not in Wikinger SGA. No stock scan performed. Faction fallback."
+    }
+  }
+}

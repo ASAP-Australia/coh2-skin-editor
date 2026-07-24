@@ -10,6 +10,9 @@ import { VEHICLES, FACTIONS, defaultVehicleForFaction, type Faction } from '@/li
 // Lazy-loaded so Three.js doesn't hit the initial JS parse budget. The
 // headless warm Viewport is only mounted during the 'preloading' phase.
 const Viewport = lazy(() => import('./Viewport'))
+// Guards the headless warm Viewport on no/broken-WebGL machines: skips
+// renderer construction and swallows late throws so it can't white-screen.
+import ViewportGuard from '@/components/ViewportGuard'
 
 /**
  * Isolated progress counter for the 'preloading' phase.
@@ -81,12 +84,24 @@ export default function ConnectScreen({ onConnected }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [steamWarning, setSteamWarning] = useState<string | null>(null)
   const [detectedPath, setDetectedPath] = useState<string | null>(null)
-  // Vehicle byte-preload progress, shown beside the spinner during the
-  // 'preloading' phase ("Loading vehicles… N/total").
-  // counterRef holds the imperative handle to VehicleLoadCounter.
-  // Progress updates go through this handle so only the counter re-renders,
-  // not ConnectScreen (which would re-render BorderBeam and re-inject CSS).
+  // Vehicle byte-preload progress — drives the green fill bar imperatively.
+  // counterRef holds the imperative handle to VehicleLoadCounter (still kept
+  // for the hidden DOM node; see below). Progress updates for the fill bar
+  // go through progressFillRef so neither ConnectScreen nor BorderBeam
+  // re-render on every tick — only the fill span's inline width changes.
   const counterRef = useRef<VehicleCounterHandle | null>(null)
+  // Ref to the green progress fill <span> inside the button. Updated
+  // imperatively on each preload tick so no state/re-render is needed.
+  const progressFillRef = useRef<HTMLSpanElement | null>(null)
+
+  // Push a progress fraction (0..1) to the fill bar without triggering
+  // a React re-render. Called alongside counterRef.current?.update().
+  const updateFill = (fraction: number) => {
+    const el = progressFillRef.current
+    if (!el) return
+    el.style.width = `${Math.round(Math.min(1, fraction) * 100)}%`
+    el.style.animation = 'none'
+  }
   // Snapshot of detectedPath at the moment the user clicks connect — frozen so
   // async detection can't mutate bullet #3 text mid-click. Kept in state (not
   // a ref) so it's safe to read during render.
@@ -197,8 +212,9 @@ export default function ConnectScreen({ onConnected }: Props) {
       // React will re-render and the <Viewport warmupOnly> will mount, creating
       // a renderer+camera and wiring viewportPreloadRef via the preloadRef prop.
       setWarmupHandle(handle!)
-      // Initialise counter to 0 via the imperative handle (no ConnectScreen re-render).
+      // Initialise counter and fill bar to 0 (no ConnectScreen re-render).
       counterRef.current?.update(0, VEHICLES.length)
+      updateFill(0)
       const total = VEHICLES.length
       const fractionByFaction = new Map<Faction, number>()
       // Throttle counter updates: only push when the rounded done-count actually
@@ -219,6 +235,8 @@ export default function ConnectScreen({ onConnected }: Props) {
             if (rounded !== lastDone) {
               lastDone = rounded
               counterRef.current?.update(rounded, total)
+              // Push 0→50% fill for the bytes phase.
+              updateFill((rounded / total) * 0.5)
             }
           }),
         ),
@@ -254,18 +272,22 @@ export default function ConnectScreen({ onConnected }: Props) {
         // WARM_TOTAL_TIMEOUT_MS safety ceiling still applies to this single build.
         const warmStart = Date.now()
         counterRef.current?.update(0, total)
+        // CPU-warm phase: push fill from 50→100%.
+        updateFill(0.5)
         const defaultVehicleId = defaultVehicleForFaction('german', new Set<string>())
         const firstSpec = VEHICLES.find(v => v.id === defaultVehicleId) ?? VEHICLES[0]
         if (firstSpec && Date.now() - warmStart < WARM_TOTAL_TIMEOUT_MS) {
           await buildFn(firstSpec, 'summer', true, true).catch(() => {/* non-fatal */})
         }
         counterRef.current?.update(total, total)
+        updateFill(1)
       }
 
       // Unmount warm Viewport — clears the GL context before the editor mounts.
       setWarmupHandle(null)
 
       counterRef.current?.update(total, total)
+      updateFill(1)
 
       setPhase('success')
       // Reduced from 900 ms — the success tick animation is visually
@@ -305,18 +327,20 @@ export default function ConnectScreen({ onConnected }: Props) {
         overflow: 'hidden', zIndex: -1,
       }}>
         <Suspense fallback={null}>
-          <Viewport
-            root={warmupHandle}
-            vehicle={null}
-            selectedPart={null}
-            explodeAll={false}
-            season="summer"
-            envArchive={null}
-            envName=""
-            controlsEnabled={false}
-            warmupOnly={true}
-            preloadRef={viewportPreloadRef}
-          />
+          <ViewportGuard label="Connect warmer" silent>
+            <Viewport
+              root={warmupHandle}
+              vehicle={null}
+              selectedPart={null}
+              explodeAll={false}
+              season="summer"
+              envArchive={null}
+              envName=""
+              controlsEnabled={false}
+              warmupOnly={true}
+              preloadRef={viewportPreloadRef}
+            />
+          </ViewportGuard>
         </Suspense>
       </div>
     )}
@@ -375,43 +399,87 @@ export default function ConnectScreen({ onConnected }: Props) {
 
       {/* Single primary action — auto-detects when in Electron, else
           opens the FS picker. Button morphs its content per phase:
-          idle → label, picking/scanning/linking-steam → spinner only (no text),
-          success → inline green tick, warning → inline yellow warning icon. */}
-      <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={16} borderWidth={1} className="bb-pressable">
+          idle → label (beam active), loading phases → spinner only + green
+          progress fill left→right (beam hidden), success → green tick,
+          warning → amber warning icon.
+
+          Green progress fill: a linear-gradient background-image fills
+          the button left-to-right. During indeterminate phases
+          (picking/scanning/linking-steam) an infinite CSS keyframe
+          animation sweeps across; during 'preloading' the fill is driven
+          from 0→100 % via a CSS custom property animated via counterRef.
+          After 'success' the fill remains at 100 % until unmount. */}
+      <BorderBeam colorVariant="ocean" duration={5} strength={0.85} borderRadius={16} borderWidth={1} className="bb-pressable" active={phase === 'idle'}>
         <button
           disabled={!supported || busy}
           onClick={connect}
           className="bb-connect relative w-full text-white font-semibold h-12 text-[14px] tracking-tight
-                     disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/[0.10]
+                     disabled:opacity-40 disabled:cursor-not-allowed
                      focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/60 focus-visible:outline-none"
           style={{
             borderRadius: 16,
             cursor: busy ? 'progress' : 'pointer',
-            background: 'rgba(255, 255, 255, 0.06)',
+            // Base glass background — the green fill overlays this via
+            // a pseudo-element or second background-image layer.
+            background: busy
+              ? undefined
+              : 'rgba(255, 255, 255, 0.06)',
             backdropFilter: 'blur(20px) saturate(160%)',
             WebkitBackdropFilter: 'blur(20px) saturate(160%)',
             boxShadow: '0 1px 0 rgb(255 255 255 / 0.14) inset',
+            overflow: 'hidden',
           }}
         >
+          {/* Green progress fill — absolutely positioned behind the
+              button content, fills left→right while busy.
+              Uses a two-stop linear-gradient clipped by background-size.
+              The green colour matches InlineSuccessTick: oklch(0.78 0.18 150)
+              ≈ rgb(60, 178, 100) — a tasteful success-green.
+              During picking/scanning/linking-steam: indeterminate sweep
+              via CSS animation (bb-connect-indeterminate keyframe).
+              During preloading: --bb-fill-pct drives the width (updated
+              imperatively via the progressFillRef on the div).
+              During success: frozen at 100 % width.
+              Not shown during idle or warning. */}
+          {busy && (
+            <span
+              aria-hidden
+              data-connect-fill
+              style={{
+                position: 'absolute',
+                top: 0, left: 0, bottom: 0,
+                borderRadius: 16,
+                background: 'linear-gradient(to right, oklch(0.62 0.16 150 / 0.85), oklch(0.70 0.18 150 / 0.80))',
+                // Width driven by phase:
+                // - picking/scanning/linking-steam: animated sweep via keyframe
+                // - preloading/success: driven by CSS var set imperatively
+                width: phase === 'success' ? '100%' : undefined,
+                animation: (phase === 'picking' || phase === 'scanning' || phase === 'linking-steam')
+                  ? 'bb-connect-indeterminate 1.6s ease-in-out infinite'
+                  : undefined,
+                // preloading width set via inline style on the span element
+                // via a ref (progressFillRef) — avoids re-rendering ConnectScreen.
+                // For success we override to 100% above.
+              }}
+              ref={phase === 'preloading' ? progressFillRef : undefined}
+            />
+          )}
           {/* Fixed-size centered container — each state is absolutely
               positioned and cross-fades via opacity only (no translateY).
               The button's h-12 height is always preserved; the inner content
-              never changes height so there is no positional jump. */}
+              never changes height so there is no positional jump.
+
+              Loading phases (picking/scanning/linking-steam/preloading) all
+              show only the spinner — no text — per UX spec. */}
           <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 280, height: 24 }}>
             <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 160ms ease', opacity: phase === 'idle' ? 1 : 0, pointerEvents: 'none' }}>
               Connect CoH2 install
             </span>
-            <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 160ms ease', opacity: (phase === 'picking' || phase === 'scanning' || phase === 'linking-steam') ? 1 : 0, pointerEvents: 'none' }}>
+            {/* Spinner — shown for ALL active loading phases (picking,
+                scanning, linking-steam, preloading). No text alongside it;
+                the green progress fill communicates progress visually. */}
+            <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 160ms ease', opacity: (phase === 'picking' || phase === 'scanning' || phase === 'linking-steam' || phase === 'preloading') ? 1 : 0, pointerEvents: 'none' }}>
               <InlineSpinner />
-            </span>
-            {/* 'preloading' — spinner on the left, live vehicle-byte progress
-                text on the right, so the user sees the fleet warming up.
-                VehicleLoadCounter is updated imperatively via counterRef so
-                only the text node re-renders on each progress tick — BorderBeam
-                and the rest of ConnectScreen are never re-rendered. */}
-            <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, transition: 'opacity 160ms ease', opacity: phase === 'preloading' ? 1 : 0, pointerEvents: 'none' }}>
-              <InlineSpinner />
-              <VehicleLoadCounter total={VEHICLES.length} handleRef={counterRef} />
             </span>
             <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 160ms ease', opacity: phase === 'success' ? 1 : 0, pointerEvents: 'none' }}>
               <InlineSuccessTick />
@@ -423,13 +491,30 @@ export default function ConnectScreen({ onConnected }: Props) {
         </button>
       </BorderBeam>
 
-      {/* bb-pressable / bb-cta / @keyframes bb-spinner-rotate are defined
-          globally in index.css. bb-connect keeps its own transition here. */}
+      {/* bb-pressable / @keyframes bb-spinner-rotate are defined
+          globally in index.css. bb-connect keeps its own transition here.
+          bb-connect-indeterminate sweeps a green fill left→right repeatedly
+          for the indeterminate loading phases (picking/scanning/linking-steam).
+          The keyframe animates `width` from 0→75% then back — giving a
+          "breathing" progress feel without a false sense of completion. */}
       <style>{`
         .bb-connect {
           transition: background-color 160ms ease-out;
         }
+        @keyframes bb-connect-indeterminate {
+          0%   { width: 0%;   opacity: 0.9; }
+          60%  { width: 75%;  opacity: 0.85; }
+          100% { width: 75%;  opacity: 0.85; }
+        }
       `}</style>
+      {/* VehicleLoadCounter is kept in the DOM during preloading so its
+          imperative handle stays live — but it's visually hidden (the progress
+          is communicated via the green fill bar, not text). */}
+      {phase === 'preloading' && (
+        <span style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', overflow: 'hidden', width: 0, height: 0 }} aria-hidden>
+          <VehicleLoadCounter total={VEHICLES.length} handleRef={counterRef} />
+        </span>
+      )}
     </div>
     </>
   )

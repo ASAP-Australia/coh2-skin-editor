@@ -18,38 +18,63 @@ export default function FactionRow({ activeFaction, onChange }: Props) {
     <div
       style={{
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
-        gap: 6,
-        padding: '4px 8px',
-        background: 'rgba(16,18,24,0.80)',
-        backdropFilter: 'blur(16px)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 10,
+        gap: 4,
       }}
     >
-      {/* "All" tab = shared */}
+      {/* Hint label — changes based on whether shared or a specific faction is selected */}
+      <span
+        style={{
+          fontSize: 9,
+          fontWeight: 500,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          color: activeFaction === null ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.35)',
+          userSelect: 'none',
+          pointerEvents: 'none',
+        }}
+      >
+        {activeFaction === null ? 'Editing: Shared (all factions)' : 'Editing faction override'}
+      </span>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '4px 8px',
+          background: 'rgba(16,18,24,0.80)',
+          backdropFilter: 'blur(16px)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 10,
+        }}
+      >
+      {/* "Shared" tab = all factions */}
       <button
-        title="Shared (all factions)"
+        title="Shared layers — apply to all factions"
         aria-pressed={activeFaction === null}
         onClick={() => onChange(null)}
         style={{
-          width: 32,
           height: 32,
-          borderRadius: '50%',
+          padding: '0 9px',
+          borderRadius: 8,
           border: activeFaction === null
-            ? '2px solid rgba(255,255,255,0.8)'
+            ? '2px solid rgba(255,255,255,0.75)'
             : '2px solid rgba(255,255,255,0.15)',
-          background: 'rgba(255,255,255,0.08)',
+          background: activeFaction === null ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.06)',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: 11,
-          color: '#fff',
+          fontSize: 10,
+          color: activeFaction === null ? '#fff' : 'rgba(255,255,255,0.55)',
           fontWeight: 600,
+          letterSpacing: '0.04em',
+          transition: 'border-color 0.15s, background 0.15s, color 0.15s',
+          whiteSpace: 'nowrap',
         }}
       >
-        ALL
+        Shared
       </button>
 
       {DISPLAY_ORDER.map(faction => {
@@ -87,6 +112,7 @@ export default function FactionRow({ activeFaction, onChange }: Props) {
           </button>
         )
       })}
+      </div>
     </div>
   )
 }

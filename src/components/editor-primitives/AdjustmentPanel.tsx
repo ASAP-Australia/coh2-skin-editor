@@ -20,9 +20,18 @@
  *     the caller doesn't have to remember to put one above it. Pass
  *     `heading={null}` to suppress (e.g. when nested inside an existing
  *     accordion).
+ *
+ * Progressive disclosure:
+ *   • Only the three most-used sliders (Brightness / Contrast / Saturation)
+ *     are visible by default. The remaining six (Hue, Blur, Sepia,
+ *     Grayscale, Invert, Noise) live behind a collapsed "More adjustments"
+ *     disclosure so the panel isn't a wall of nine controls. The disclosure
+ *     auto-opens when any of those advanced sliders is off its identity
+ *     value, so an active-but-hidden adjustment is never stranded.
  */
 
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import {
   type ImageLayerFilters,
   IMAGE_LAYER_FILTER_DEFAULTS,
@@ -58,6 +67,20 @@ export default function AdjustmentPanel({
   // it separately: if noise > 0 the panel is not at identity.
   const hasActiveFilters =
     imageFilterCss(filters) !== 'none' || (!!filters?.noise && filters.noise > 0)
+
+  // Progressive disclosure: is any of the six advanced sliders off identity?
+  // If so we force the "More adjustments" section open so a hidden-but-active
+  // adjustment is never stranded out of view.
+  const advancedActive =
+    (f.hueRotate ?? IMAGE_LAYER_FILTER_DEFAULTS.hueRotate) !== IMAGE_LAYER_FILTER_DEFAULTS.hueRotate ||
+    (f.blur ?? IMAGE_LAYER_FILTER_DEFAULTS.blur) !== IMAGE_LAYER_FILTER_DEFAULTS.blur ||
+    (f.sepia ?? IMAGE_LAYER_FILTER_DEFAULTS.sepia) !== IMAGE_LAYER_FILTER_DEFAULTS.sepia ||
+    (f.grayscale ?? IMAGE_LAYER_FILTER_DEFAULTS.grayscale) !== IMAGE_LAYER_FILTER_DEFAULTS.grayscale ||
+    (f.invert ?? IMAGE_LAYER_FILTER_DEFAULTS.invert) !== IMAGE_LAYER_FILTER_DEFAULTS.invert ||
+    (!!f.noise && f.noise > 0)
+
+  const [moreOpen, setMoreOpen] = useState(false)
+  const showMore = moreOpen || advancedActive
 
   // useCallback per slider would be overkill — these are file-local fns.
   const set = useCallback((patch: Partial<ImageLayerFilters>) => onChange(patch), [onChange])
@@ -95,6 +118,31 @@ export default function AdjustmentPanel({
         format={v => `${Math.round(v * 100)}%`}
         onChange={v => set({ saturate: v })}
       />
+      <PanelButton
+        onClick={() => setMoreOpen(o => !o)}
+        // Auto-open (advancedActive) locks the toggle open — a hidden active
+        // slider must stay reachable, so disable collapsing while it holds.
+        disabled={advancedActive}
+        size="compact"
+        style={{ width: '100%', marginTop: 4 }}
+        aria-expanded={showMore}
+        title={
+          advancedActive
+            ? 'More adjustments (kept open — advanced slider in use)'
+            : showMore
+              ? 'Hide advanced adjustments'
+              : 'Show advanced adjustments'
+        }
+      >
+        {showMore ? (
+          <ChevronDown size={12} aria-hidden />
+        ) : (
+          <ChevronRight size={12} aria-hidden />
+        )}{' '}
+        <span>More adjustments</span>
+      </PanelButton>
+      {showMore && (
+        <>
       <SliderRow
         label="Hue"
         min={-180}
@@ -155,6 +203,8 @@ export default function AdjustmentPanel({
         format={v => `${Math.round(v * 100)}%`}
         onChange={v => set({ noise: v === 0 ? undefined : v })}
       />
+        </>
+      )}
       <PanelButton
         onClick={onReset}
         disabled={!hasActiveFilters}

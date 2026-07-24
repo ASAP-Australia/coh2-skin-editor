@@ -47,7 +47,22 @@ describe('templatesForFaction', () => {
 })
 
 describe('DECAL_TEMPLATES catalog', () => {
-  it('has exactly 10 entries', () => {
-    expect(DECAL_TEMPLATES).toHaveLength(10)
+  it('has the expected number of entries (10 base + 2 Honved markings)', () => {
+    // P3: Two Honved templates added — tmpl_honved_kereszt + tmpl_honved_tac_number
+    expect(DECAL_TEMPLATES).toHaveLength(12)
+  })
+
+  it('includes the Hungarian Kereszt for the Honved pack', () => {
+    const kereszt = DECAL_TEMPLATES.find(t => t.id === 'tmpl_honved_kereszt')
+    expect(kereszt).toBeDefined()
+    expect(kereszt?.faction).toBe('german')
+    expect(kereszt?.svg).toContain('<rect') // black square
+    expect(kereszt?.svg).toContain('<polygon') // white cross
+  })
+
+  it('includes the Honved tactical number template', () => {
+    const tacNum = DECAL_TEMPLATES.find(t => t.id === 'tmpl_honved_tac_number')
+    expect(tacNum).toBeDefined()
+    expect(tacNum?.faction).toBe('german')
   })
 })

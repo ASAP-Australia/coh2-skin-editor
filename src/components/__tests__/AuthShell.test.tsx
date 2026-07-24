@@ -350,7 +350,7 @@ describe('AuthShell — CssGradientBackground fallback always paints', () => {
       phase: 'connect',
       children: createElement('div', null, 'body'),
     })
-    // CssGradientBackground emits a fixed inset-0 -z-10 div with
+    // CssGradientBackground emits an absolute inset-0 -z-10 div with
     // backgroundColor #212121. We just check that the colour pin is in
     // the DOM somewhere — that's the "no black flash" guarantee.
     const fixedBg = Array.from(container!.querySelectorAll('div')).find(

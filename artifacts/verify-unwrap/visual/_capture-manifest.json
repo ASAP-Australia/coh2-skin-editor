@@ -1,0 +1,1114 @@
+{
+  "capturedAt": "2026-07-20T08:14:43.101Z",
+  "width": 1024,
+  "height": 768,
+  "results": [
+    {
+      "vehicleId": "tiger",
+      "faction": "german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1012
+    },
+    {
+      "vehicleId": "elefant",
+      "faction": "german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2405
+    },
+    {
+      "vehicleId": "elefant",
+      "faction": "german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "brummbar",
+      "faction": "german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2307
+    },
+    {
+      "vehicleId": "brummbar",
+      "faction": "german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "stug_iii",
+      "faction": "german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2593
+    },
+    {
+      "vehicleId": "stug_iii",
+      "faction": "german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "ostwind_flak_panzer",
+      "faction": "german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2268
+    },
+    {
+      "vehicleId": "ostwind_flak_panzer",
+      "faction": "german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1010
+    },
+    {
+      "vehicleId": "panzerwerfer",
+      "faction": "german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2741
+    },
+    {
+      "vehicleId": "panzerwerfer",
+      "faction": "german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "halftrack",
+      "faction": "german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2706
+    },
+    {
+      "vehicleId": "halftrack",
+      "faction": "german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1008
+    },
+    {
+      "vehicleId": "sdkfz_250",
+      "faction": "german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2701
+    },
+    {
+      "vehicleId": "sdkfz_250",
+      "faction": "german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1004
+    },
+    {
+      "vehicleId": "sdkfz_222",
+      "faction": "german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2248
+    },
+    {
+      "vehicleId": "sdkfz_222",
+      "faction": "german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1010
+    },
+    {
+      "vehicleId": "opel_blitz",
+      "faction": "german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2159
+    },
+    {
+      "vehicleId": "opel_blitz",
+      "faction": "german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "king_tiger_sdkfz_182",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 1545
+    },
+    {
+      "vehicleId": "king_tiger_sdkfz_182",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1009
+    },
+    {
+      "vehicleId": "jagdtiger",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2700
+    },
+    {
+      "vehicleId": "jagdtiger",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1007
+    },
+    {
+      "vehicleId": "sturmtiger",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2262
+    },
+    {
+      "vehicleId": "sturmtiger",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1006
+    },
+    {
+      "vehicleId": "panther_ausf_g",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2206
+    },
+    {
+      "vehicleId": "panther_ausf_g",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1007
+    },
+    {
+      "vehicleId": "jagdpanzer_iv_sdkfz_162",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2239
+    },
+    {
+      "vehicleId": "jagdpanzer_iv_sdkfz_162",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "panzer_iv_sdkfz_ausf_i",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2208
+    },
+    {
+      "vehicleId": "panzer_iv_sdkfz_ausf_i",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1006
+    },
+    {
+      "vehicleId": "hetzer",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2208
+    },
+    {
+      "vehicleId": "hetzer",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1009
+    },
+    {
+      "vehicleId": "puma_sdkfz_234",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2293
+    },
+    {
+      "vehicleId": "puma_sdkfz_234",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1009
+    },
+    {
+      "vehicleId": "panzer_ii_luchs_sdkfz_123",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2267
+    },
+    {
+      "vehicleId": "panzer_ii_luchs_sdkfz_123",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1016
+    },
+    {
+      "vehicleId": "kubelwagen",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2283
+    },
+    {
+      "vehicleId": "kubelwagen",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1009
+    },
+    {
+      "vehicleId": "halftrack_sdkfz_251",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2284
+    },
+    {
+      "vehicleId": "halftrack_sdkfz_251",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1011
+    },
+    {
+      "vehicleId": "halftrack_sdkfz_251_flak",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2170
+    },
+    {
+      "vehicleId": "halftrack_sdkfz_251_flak",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "halftrack_sdkfz_251_infrared",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2239
+    },
+    {
+      "vehicleId": "halftrack_sdkfz_251_infrared",
+      "faction": "west_german",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1004
+    },
+    {
+      "vehicleId": "is2m_heavy_tank",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 1542
+    },
+    {
+      "vehicleId": "is2m_heavy_tank",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1006
+    },
+    {
+      "vehicleId": "isu152",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2661
+    },
+    {
+      "vehicleId": "isu152",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "kv1_heavy_tank",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2358
+    },
+    {
+      "vehicleId": "kv1_heavy_tank",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1006
+    },
+    {
+      "vehicleId": "kv2_heavy_tank",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2166
+    },
+    {
+      "vehicleId": "kv2_heavy_tank",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1004
+    },
+    {
+      "vehicleId": "t34_76",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2140
+    },
+    {
+      "vehicleId": "t34_76",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1008
+    },
+    {
+      "vehicleId": "t_34_85",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2182
+    },
+    {
+      "vehicleId": "t_34_85",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "t70m_light_tank",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2220
+    },
+    {
+      "vehicleId": "t70m_light_tank",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "su85",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2142
+    },
+    {
+      "vehicleId": "su85",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1006
+    },
+    {
+      "vehicleId": "su-76m",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2149
+    },
+    {
+      "vehicleId": "su-76m",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1004
+    },
+    {
+      "vehicleId": "m3a1_scout_car",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2171
+    },
+    {
+      "vehicleId": "m3a1_scout_car",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1012
+    },
+    {
+      "vehicleId": "halftrack",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2133
+    },
+    {
+      "vehicleId": "halftrack",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "us6_truck",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 1570
+    },
+    {
+      "vehicleId": "us6_truck",
+      "faction": "soviet",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1003
+    },
+    {
+      "vehicleId": "m26_pershing",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 1586
+    },
+    {
+      "vehicleId": "m26_pershing",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1013
+    },
+    {
+      "vehicleId": "m4a3e8_sherman_easy_8",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 9173
+    },
+    {
+      "vehicleId": "m4a3e8_sherman_easy_8",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1018
+    },
+    {
+      "vehicleId": "m4a3_sherman_76mm",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2315
+    },
+    {
+      "vehicleId": "m4a3_sherman_76mm",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1006
+    },
+    {
+      "vehicleId": "m4a1_sherman_calliope",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2286
+    },
+    {
+      "vehicleId": "m4a1_sherman_calliope",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1009
+    },
+    {
+      "vehicleId": "m10_tank_destroyer",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2215
+    },
+    {
+      "vehicleId": "m10_tank_destroyer",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1009
+    },
+    {
+      "vehicleId": "m36_tank_destroyer",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2318
+    },
+    {
+      "vehicleId": "m36_tank_destroyer",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1023
+    },
+    {
+      "vehicleId": "m5a1_stuart",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 9140
+    },
+    {
+      "vehicleId": "m5a1_stuart",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1009
+    },
+    {
+      "vehicleId": "m8_greyhound",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2224
+    },
+    {
+      "vehicleId": "m8_greyhound",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1004
+    },
+    {
+      "vehicleId": "m7b1_priest",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2211
+    },
+    {
+      "vehicleId": "m7b1_priest",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1008
+    },
+    {
+      "vehicleId": "m3_halftrack",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2383
+    },
+    {
+      "vehicleId": "m3_halftrack",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "m15a1_aa_halftrack",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2219
+    },
+    {
+      "vehicleId": "m15a1_aa_halftrack",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1006
+    },
+    {
+      "vehicleId": "m8a1_hmc",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2599
+    },
+    {
+      "vehicleId": "m8a1_hmc",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1012
+    },
+    {
+      "vehicleId": "m20_utility_car",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2291
+    },
+    {
+      "vehicleId": "m20_utility_car",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "m21_mortar_halftrack",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2675
+    },
+    {
+      "vehicleId": "m21_mortar_halftrack",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1011
+    },
+    {
+      "vehicleId": "dodge_wc51",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2136
+    },
+    {
+      "vehicleId": "dodge_wc51",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "dodge_wc54_ambulance",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2215
+    },
+    {
+      "vehicleId": "dodge_wc54_ambulance",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1015
+    },
+    {
+      "vehicleId": "sherman_m4a3",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 12893
+    },
+    {
+      "vehicleId": "sherman_m4a3",
+      "faction": "aef",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1006
+    },
+    {
+      "vehicleId": "churchill",
+      "faction": "british",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 14499
+    },
+    {
+      "vehicleId": "churchill",
+      "faction": "british",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "comet",
+      "faction": "british",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2209
+    },
+    {
+      "vehicleId": "comet",
+      "faction": "british",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1007
+    },
+    {
+      "vehicleId": "cromwell",
+      "faction": "british",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2526
+    },
+    {
+      "vehicleId": "cromwell",
+      "faction": "british",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "centaur",
+      "faction": "british",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2243
+    },
+    {
+      "vehicleId": "centaur",
+      "faction": "british",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1004
+    },
+    {
+      "vehicleId": "sherman_firefly",
+      "faction": "british",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2171
+    },
+    {
+      "vehicleId": "sherman_firefly",
+      "faction": "british",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1004
+    },
+    {
+      "vehicleId": "valentine",
+      "faction": "british",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2277
+    },
+    {
+      "vehicleId": "valentine",
+      "faction": "british",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1006
+    },
+    {
+      "vehicleId": "sexton",
+      "faction": "british",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2212
+    },
+    {
+      "vehicleId": "sexton",
+      "faction": "british",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1006
+    },
+    {
+      "vehicleId": "aec_armoured_car",
+      "faction": "british",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2253
+    },
+    {
+      "vehicleId": "aec_armoured_car",
+      "faction": "british",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1006
+    },
+    {
+      "vehicleId": "bren_carrier",
+      "faction": "british",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 2573
+    },
+    {
+      "vehicleId": "bren_carrier",
+      "faction": "british",
+      "season": "summer",
+      "mode": "cal",
+      "error": null,
+      "written": true,
+      "elapsed": 1005
+    },
+    {
+      "vehicleId": "tiger",
+      "faction": "german",
+      "season": "summer",
+      "mode": "base",
+      "error": "timeout — model did not load within 90s",
+      "written": true,
+      "elapsed": 89198
+    },
+    {
+      "vehicleId": "tiger",
+      "faction": "german",
+      "season": "summer",
+      "mode": "base",
+      "error": null,
+      "written": true,
+      "elapsed": 37565
+    }
+  ]
+}

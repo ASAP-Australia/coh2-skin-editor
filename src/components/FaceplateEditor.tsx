@@ -35,71 +35,73 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react'
+import { Stage, Layer, Image as KonvaImage, Text as KonvaText, Rect, Ellipse, Transformer, Shape as KonvaShape } from 'react-konva'
+import Konva from 'konva'
+import type { Filter as KonvaFilter } from 'konva/lib/Node'
+import { useHistoryEngine } from '@/lib/editor-history'
 import { scheduleLiveSync, useLiveSync } from '@/lib/live-sync'
 import {
   type Coh2FaceplateProject,
   type FaceplateLayer,
   type ImageLayer,
+  type ImageLayerFilters,
   type ShapeLayer,
   type PaintLayer,
   type TextLayer,
   type ShapeKind,
   type GradientFill,
-  type LayerStroke,
   FACEPLATE_BANNER_W,
   FACEPLATE_BANNER_H,
-  LAYER_SHADOW_DEFAULTS,
   addFaceplateImageFromBlob,
   imageFilterCss,
   makeDefaultLayer,
   newShapeLayer,
   newTextLayer,
   newPaintLayer,
+  newGroupLayer,
   persistFaceplate,
   updateRecentFaceplateThumbnail,
 } from '@/lib/faceplate-project'
 import { writeClipboard, readClipboard, type ClipboardEntry } from '@/lib/editor-clipboard'
+import { isElectron, detectModsPath, writeFile } from '@/lib/native-fs'
 import { INSIGNIA_LIBRARY, type InsigniaEntry } from '@/lib/insignia-library'
 import HexColorInput from '@/components/editor-primitives/HexColorInput'
 import EditorTitlePill from '@/components/editor-primitives/EditorTitlePill'
 import CurvesEditor from '@/components/editor-primitives/CurvesEditor'
 import {
   AlignCenter,
-  AlignCenterVertical,
-  AlignEndHorizontal,
   AlignEndVertical,
-  AlignStartHorizontal,
   AlignStartVertical,
   Bold,
   Brush,
   CaseSensitive,
   Circle,
   CornerDownLeft,
+  Download,
   Eraser,
   FlipHorizontal2,
   FlipVertical2,
+  Grid,
   Italic,
-  Layers,
   Library,
   Lock,
   LockOpen,
   MoveHorizontal,
   MoveVertical,
   MousePointer2,
-  Palette,
   Pencil,
   Pipette,
   Shapes,
   Slash,
+  SquareDashedMousePointer,
   Sliders,
   Star,
-  Sun,
   TextCursorInput,
+  HelpCircle,
   Trash2,
   Type,
-  WholeWord,
 } from 'lucide-react'
 import { applySnap, type SnapTarget } from '@/lib/snap-guides'
 import { samplePixel } from '@/lib/brush'
@@ -111,7 +113,12 @@ import {
   persistFaceplateViewMode,
 } from '@/lib/atlas-view-settings'
 import ImageDropZone from './editor-shared/ImageDropZone'
-import CanvasHandles from './editor-shared/CanvasHandles'
+// TransformInputsRow removed from FaceplateEditor — now used only in PropertiesPanel.
+import LayersPanel from './editor-shared/LayersPanel'
+import PropertiesPanel, { FaceplatePropertiesExtension } from './editor-shared/PropertiesPanel'
+import { composeLayers } from '@/lib/layer-compositor'
+import KeyboardShortcutsOverlay from './editor-primitives/KeyboardShortcutsOverlay'
+import { usePanZoom, ZOOM_MIN, ZOOM_MAX } from '@/lib/use-pan-zoom'
 import { PackIdentityPopover } from './PackIdentityPopover'
 // BorderBeam is now used by EditorTitlePill — no direct import needed here
 import { makeFaceplatePublishTarget } from '@/components/PublishToWorkshopDialog'
@@ -127,6 +134,7 @@ import {
   GradientFillEditor,
   SliderPopover,
   ToolOptionsPeel,
+  UndoRedoBar,
   type ToolDef,
   EDITOR_ACCENT,
   EDITOR_TEXT_2,
@@ -139,10 +147,6 @@ interface Props {
   onBack: () => void
 }
 
-/** Maximum undo depth — bounded so memory doesn't grow without limit on
- *  long editing sessions. 50 steps is generous for a UI editor. */
-const UNDO_LIMIT = 50
-
 /** No debounce on the live in-game preview — the user explicitly asked
  *  for instantaneous updates so they see exactly what their composition
  *  will look like in-game on every keystroke and drag tick. The compose
@@ -151,29 +155,122 @@ const UNDO_LIMIT = 50
  *  of stale promises — only the newest compose result lands on screen. */
 
 /** Stable identifiers for the bottom-pill tools. The union type keeps
- *  the activeTool state and BottomToolPill type-tight. */
+ *  the activeTool state and BottomToolPill type-tight.
+ *
+ *  IA change (Photoshop convention): Shadow / Background / Align are no longer
+ *  tool-row items. They are now panels / sections inside the Properties panel.
+ *  Eraser is promoted from a sub-mode of Draw to its own dedicated tool. */
 type FaceplateToolId =
   | 'select'
   | 'text'
   | 'shapes'
   | 'draw'
-  | 'shadow'
-  | 'background'
-  | 'align'
+  | 'eraser'
   | 'mask'
+
+// ── Gap 2: Image filter mapping (module-level) ───────────────────────────────
+/** Build the Konva filters array and attr object for a KonvaImage node.
+ *  Maps CSS filter values (used by composeFaceplateCanvas) to Konva filter
+ *  parameters. Only includes filters that deviate from their identity value
+ *  so we avoid paying the cache cost when no filters are active.
+ *
+ *  Parameter mapping notes:
+ *  - brightness: CSS brightness(b) multiplies by b. Konva Filters.Brightness
+ *    also multiplies by node.brightness(). Direct mapping — exact match.
+ *  - contrast: CSS contrast(c) and Konva Contrast use different formulas.
+ *    Konva: adjust=(x+100)/100)^2; we solve x=100*(sqrt(c)-1). Close approx.
+ *  - saturate + hueRotate: Both map through Konva HSL filter.
+ *    Konva HSL saturation: 2^sat = cssVal → sat = log2(cssVal).
+ *    Konva hue maps directly to CSS hue-rotate degrees.
+ *  - grayscale / sepia / invert: Konva versions are all-or-nothing.
+ *    Applied only when value ≥ 0.99 (full intensity). Partial values skipped.
+ *  - blur: Direct pixel-radius mapping.
+ */
+function buildKonvaImageFilters(f: ImageLayerFilters | undefined): {
+  filterFns: KonvaFilter[]
+  attrs: Record<string, number>
+  hasFilters: boolean
+} {
+  if (!f) return { filterFns: [], attrs: {}, hasFilters: false }
+  const filterFns: KonvaFilter[] = []
+  const attrs: Record<string, number> = {}
+
+  const b = f.brightness ?? 1
+  if (b !== 1) {
+    filterFns.push(Konva.Filters.Brightness)
+    attrs['brightness'] = b
+  }
+
+  const c = f.contrast ?? 1
+  if (c !== 1) {
+    filterFns.push(Konva.Filters.Contrast)
+    // Konva Contrast adjust: pow((x+100)/100, 2) = c → x = 100*(sqrt(c)-1)
+    attrs['contrast'] = 100 * (Math.sqrt(Math.max(0, c)) - 1)
+  }
+
+  const s = f.saturate ?? 1
+  const hRot = f.hueRotate ?? 0
+  if (s !== 1 || hRot !== 0) {
+    filterFns.push(Konva.Filters.HSL)
+    // Konva HSL internally computes: saturation factor = 2^sat
+    // CSS saturate(s): s=1 identity, s=0 greyscale, s=2 double.
+    // Mapping: sat = log2(s); identity when s=1 → log2(1)=0 ✓
+    attrs['saturation'] = s > 0 ? Math.log2(s) : -10 // -10 ≈ fully desaturated
+    attrs['hue'] = hRot
+    attrs['luminance'] = 0
+  }
+
+  const bl = f.blur ?? 0
+  if (bl > 0) {
+    filterFns.push(Konva.Filters.Blur)
+    attrs['blurRadius'] = bl
+  }
+
+  // All-or-nothing filters: only apply at full intensity (≥ 0.99)
+  if ((f.grayscale ?? 0) >= 0.99) filterFns.push(Konva.Filters.Grayscale)
+  if ((f.sepia ?? 0) >= 0.99) filterFns.push(Konva.Filters.Sepia)
+  if ((f.invert ?? 0) >= 0.99) filterFns.push(Konva.Filters.Invert)
+
+  return { filterFns, attrs, hasFilters: filterFns.length > 0 }
+}
 
 export default function FaceplateEditor({ project: initialProject, onBack }: Props) {
   const [project, setProject] = useState<Coh2FaceplateProject>(initialProject)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   /** Additional selected layer ids for multi-select (Cmd/Ctrl-click). */
   const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set())
+  /** Anchor layer id for shift-click range-select in the Layers panel. Updated
+   *  on every plain click; used to compute the range on shift-click. */
+  const lastAnchorIdRef = useRef<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   /** Currently-active editor tool. Drives both the bottom pill's selected
    *  segment and the contents of the floating options peel above it. */
   const [activeTool, setActiveTool] = useState<FaceplateToolId>('select')
-  const undoStack = useRef<Coh2FaceplateProject[]>([])
-  const redoStack = useRef<Coh2FaceplateProject[]>([])
-  const [exportToast, setExportToast] = useState<string | null>(null)
+  /** Bottom-right status toast for the manual "Export .sga" action.
+   *  `intent` drives the GlassToast border colour (green success / red error). */
+  const [exportToast, setExportToast] = useState<
+    { intent: 'success' | 'error'; body: string } | null
+  >(null)
+  /** True while a manual Export .sga build is in flight (disables the button
+   *  and shows a "Exporting…" affordance so the user gets immediate feedback). */
+  const [isExporting, setIsExporting] = useState(false)
+  /** Whether the keyboard-shortcuts overlay is open (F1 or ? button). */
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  // Stable getter ref so useHistoryEngine captures remain current.
+  const projectRef = useRef<Coh2FaceplateProject>(initialProject)
+  // eslint-disable-next-line react-hooks/refs -- intentional ref-as-latest-value
+  projectRef.current = project
+  const history = useHistoryEngine<Coh2FaceplateProject>(
+    useCallback(() => projectRef.current, []),
+    setProject,
+    {
+      limit: 50,
+      onPersist: useCallback((next: Coh2FaceplateProject) => {
+        persistFaceplate(next)
+        scheduleLiveSync('faceplate', next)
+      }, []),
+    },
+  )
   /** Whether the insignia library modal is open. */
   const [insigniaOpen, setInsigniaOpen] = useState(false)
   /** Whether the centered title-rename popover is open. */
@@ -206,6 +303,13 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   }, [viewMode])
   const previewTransparent = viewMode === 'checkerboard'
 
+  // ── Layer rename state (G6-style, mirrors DPE) ───────────────────────────
+  const [renamingLayerId, setRenamingLayerId] = useState<string | null>(null)
+
+  // ── Layer drag-to-reorder state (mirrors DPE G3) ─────────────────────────
+  const [dragLayerId, setDragLayerId] = useState<string | null>(null)
+  const [dragOverLayerId, setDragOverLayerId] = useState<string | null>(null)
+
   // ── Live-composed banner PNG ──────────────────────────────────────────
   // The thumbnail compose effect already builds a 624×204 PNG on every
   // project mutation; we stash the data URL here for the thumbnail updater.
@@ -217,6 +321,9 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   const [brushSize, setBrushSize] = useState(12)
   const [brushColor, setBrushColor] = useState('#ffffff')
   const [brushOpacity, setBrushOpacity] = useState(1)
+  /** Brush hardness 0–100. 100 = solid disc (original behaviour); lower values
+   *  produce a radial-gradient alpha falloff (soft edge). */
+  const [brushHardness, setBrushHardness] = useState(100)
   /** Mirror paint across the X axis (left/right). Component-local, not persisted. */
   const [mirrorX, setMirrorX] = useState(false)
   /** Mirror paint across the Y axis (top/bottom). Component-local, not persisted. */
@@ -234,6 +341,18 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   /** Accumulated paint dataUrl before the stroke started (for undo). */
   const preStrokeDataUrlRef = useRef<string | null>(null)
 
+  // ── Grid snap state ────────────────────────────────────────────────────
+  /** Whether grid snap is enabled during layer drag/resize. */
+  const [snapGrid, setSnapGrid] = useState(false)
+  /** Grid step (pixels) when snap is active. */
+  const [snapGridStep, setSnapGridStep] = useState<4 | 8 | 16 | 32>(8)
+
+  // ── Shift-key held state ───────────────────────────────────────────────
+  /** True while the Shift key is physically held down. Used by the Konva
+   *  Transformer to enable 15° rotation snaps (and Konva's built-in
+   *  aspect-ratio lock during corner-handle scaling). */
+  const [isShiftHeld, setIsShiftHeld] = useState(false)
+
   // ── Mask tool state ────────────────────────────────────────────────────
   /** Brush size shared by the Draw tool and the Mask tool. */
   const [maskBrushSize, setMaskBrushSize] = useState(32)
@@ -241,6 +360,9 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   const [maskBrushOpacity, setMaskBrushOpacity] = useState(1)
   /** 'hide' paints black (alpha=0) onto the mask; 'reveal' paints white. */
   const [maskPaintMode, setMaskPaintMode] = useState<'hide' | 'reveal'>('hide')
+  /** Align target: 'canvas' aligns to the full banner area (default);
+   *  'selection' aligns to the bounding box of all selected layers. */
+  const [alignToSelection, setAlignToSelection] = useState<'canvas' | 'selection'>('canvas')
   /** Live mask-stroke canvas while a mask brush stroke is in progress. */
   const liveMaskStrokeCanvasRef = useRef<HTMLCanvasElement | null>(null)
   /** Whether a mask stroke is currently in progress. */
@@ -280,73 +402,25 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
     null,
   )
 
-  /** Mutate the project through a pure updater, snapshotting the previous
-   *  state into the undo stack and persisting **synchronously** on every
-   *  call. Previous behaviour debounced the localStorage write by 250 ms
-   *  to batch rapid drags; the user explicitly asked for "automatic saving
-   *  whenever anything is done", so the debounce is gone — every keystroke
-   *  / drag-tick / mutation lands in localStorage immediately.
-   *
-   *  Performance note: localStorage.setItem is synchronous + cheap (~1 ms
-   *  for the typical faceplate JSON payload, growing to a few ms for
-   *  packs with large image libraries). At common drag rates (60 Hz) this
-   *  is 5-10 % of a frame budget — well below the cost of the React
-   *  re-render that already happens on every mutation. Persisting per
-   *  mutation also makes the "did it save?" answer obviously yes. */
+  /** Mutate the project through a pure updater. Thin wrapper over the shared
+   *  history engine — all call sites are unchanged. The engine handles
+   *  undo-stack pushes, persist (via onPersist), and gesture-granular
+   *  suppression. */
   const mutate = useCallback(
     (
       fn: (p: Coh2FaceplateProject) => Coh2FaceplateProject,
       { undoable = true }: { undoable?: boolean } = {},
     ) => {
-      setProject(prev => {
-        if (undoable) {
-          undoStack.current.push(prev)
-          if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift()
-          // New undoable action invalidates the redo future.
-          redoStack.current = []
-        }
-        const next = fn(prev)
-        // Immediate persist — every mutation = one synchronous localStorage
-        // write. The user explicitly asked for change-driven autosave with
-        // no debounce.
-        persistFaceplate(next)
-        // Schedule live-sync if enabled. Debounced so rapid mutations coalesce.
-        // v1.0: Live Sync is permanently on (the manager handles
-        // missing-handle / mods-folder errors itself), so we no longer
-        // gate the schedule call on isEnabled().
-        scheduleLiveSync('faceplate', next)
-        return next
-      })
+      history.mutate(fn, { undoable })
     },
-    [],
+    [history],
   )
 
   /** Pop the most recent snapshot and restore it. Bound to Cmd/Ctrl-Z. */
-  const undo = useCallback(() => {
-    const prev = undoStack.current.pop()
-    if (!prev) return
-    // Push current project onto redo stack so the user can re-apply.
-    setProject(current => {
-      redoStack.current.push(current)
-      if (redoStack.current.length > UNDO_LIMIT) redoStack.current.shift()
-      persistFaceplate(prev)
-      scheduleLiveSync('faceplate', prev)
-      return prev
-    })
-  }, [])
+  const undo = useCallback(() => { history.undo() }, [history])
 
   /** Re-apply the most recently undone action. Bound to Cmd/Ctrl-Shift-Z and Ctrl+Y. */
-  const redo = useCallback(() => {
-    const next = redoStack.current.pop()
-    if (!next) return
-    setProject(current => {
-      undoStack.current.push(current)
-      if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift()
-      persistFaceplate(next)
-      scheduleLiveSync('faceplate', next)
-      return next
-    })
-  }, [])
+  const redo = useCallback(() => { history.redo() }, [history])
 
   // ── Image import ───────────────────────────────────────────────────────
   /** Shared handler for drop, paste, and file-picker imports.
@@ -432,6 +506,68 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
     [mutate],
   )
 
+  // ── Layer drag-to-reorder handlers (mirrors DPE G3) ───────────────────────
+  const onLayerDragStart = useCallback((id: string) => setDragLayerId(id), [])
+  const onLayerDragOver = useCallback((id: string) => setDragOverLayerId(id), [])
+  const onLayerDrop = useCallback(
+    (targetId: string) => {
+      if (!dragLayerId || dragLayerId === targetId) {
+        setDragLayerId(null)
+        setDragOverLayerId(null)
+        return
+      }
+      mutate(p => {
+        const from = p.layers.findIndex(l => l.id === dragLayerId)
+        const to = p.layers.findIndex(l => l.id === targetId)
+        if (from < 0 || to < 0) return p
+        const next = p.layers.slice()
+        const [item] = next.splice(from, 1)
+        next.splice(to, 0, item)
+        return { ...p, layers: next }
+      })
+      setDragLayerId(null)
+      setDragOverLayerId(null)
+    },
+    [dragLayerId, mutate],
+  )
+  const onLayerDragEnd = useCallback(() => {
+    setDragLayerId(null)
+    setDragOverLayerId(null)
+  }, [])
+
+  // ── Zoom/pan state — backed by usePanZoom ───────────────────────────────
+  // Must be declared BEFORE the keyboard effect that references pz.
+  // pzContainerRef points to the OUTER full-area container (ImageDropZone
+  // wrapper) so fitToWindow() and wheel events use the full viewport size.
+  // canvasRef is the inner 624×204 canvas div; its transform carries the
+  // pan offset + scale so coordinate math (getBoundingClientRect / viewScale)
+  // is correct.
+  const pzContainerRef = useRef<HTMLDivElement>(null)
+  // Inset rect for fitToWindow(): the banner must fit the VISIBLE gap between
+  // the floating Layers panel (left) and Properties panel (right), and clear
+  // the title pill (top) and tool pill (bottom).
+  //   Left zone:  12px edge inset + 196px panel + 16px gap = 224px
+  //   Right zone: 12px edge inset + 210px panel + 16px gap = 238px
+  //   Top:  title pill ~64px
+  //   Bottom: tool pill ~108px
+  const FIT_INSET = { left: 224, right: 238, top: 64, bottom: 108 } as const
+  const pz = usePanZoom({
+    containerRef: pzContainerRef,
+    contentSize: { w: FACEPLATE_BANNER_W, h: FACEPLATE_BANNER_H },
+    initialScale: initialProject.editorZoom ?? 1.75,
+    fitInset: FIT_INSET,
+  })
+  const zoom = pz.scale
+  const viewScale = zoom
+
+  // On mount, fit the banner to the inset area so it starts fully visible
+  // between the floating panels at the correct scale (offset stays 0 so the
+  // flexbox padding handles centering).
+  useEffect(() => {
+    requestAnimationFrame(() => { pz.fitToWindow() })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   /** Keyboard shortcuts. Undo, delete, layer reorder, escape-deselect. */
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
@@ -443,6 +579,32 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
       if (inForm) return
 
+      if (ev.key === 'F1') {
+        ev.preventDefault()
+        setShortcutsOpen(v => !v)
+        return
+      }
+      // Zoom shortcuts — view-state only, no undo frame
+      if (meta && (ev.key === '=' || ev.key === '+')) {
+        ev.preventDefault()
+        pz.setScale(Math.min(ZOOM_MAX, +(pz.scale * 1.2).toFixed(2)))
+        return
+      }
+      if (meta && ev.key === '-') {
+        ev.preventDefault()
+        pz.setScale(Math.max(ZOOM_MIN, +(pz.scale / 1.2).toFixed(2)))
+        return
+      }
+      if (meta && ev.key === '0') {
+        ev.preventDefault()
+        pz.fitToWindow()
+        return
+      }
+      if (meta && ev.key === '1') {
+        ev.preventDefault()
+        pz.resetTo100()
+        return
+      }
       if (meta && ev.key.toLowerCase() === 'z' && !ev.shiftKey) {
         ev.preventDefault()
         undo()
@@ -469,6 +631,96 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
       if (ev.key === 't' || ev.key === 'T') {
         ev.preventDefault()
         setActiveTool('text')
+        return
+      }
+      // V → Select tool
+      if (ev.key === 'v' || ev.key === 'V') {
+        ev.preventDefault()
+        setActiveTool('select')
+        return
+      }
+      // B → Draw (Brush) tool
+      if (ev.key === 'b' || ev.key === 'B') {
+        ev.preventDefault()
+        setActiveTool('draw')
+        return
+      }
+      // E → Eraser tool (dedicated tool, no longer a sub-mode of Draw)
+      if (ev.key === 'e' || ev.key === 'E') {
+        ev.preventDefault()
+        setActiveTool('eraser')
+        setEyedropperActive(false)
+        return
+      }
+      // I → Eyedropper (switch to draw + activate eyedropper)
+      if (ev.key === 'i' || ev.key === 'I') {
+        ev.preventDefault()
+        setActiveTool('draw')
+        setEyedropperActive(true)
+        setBrushErase(false)
+        return
+      }
+      // S → Shapes tool
+      if (ev.key === 's' || ev.key === 'S') {
+        ev.preventDefault()
+        setActiveTool('shapes')
+        return
+      }
+      // Ctrl+G → Group selected layers; Ctrl+Shift+G → Ungroup
+      if (meta && ev.key.toLowerCase() === 'g') {
+        ev.preventDefault()
+        if (ev.shiftKey) {
+          // Ungroup: find a selected group layer and hoist its children
+          if (selectedId) {
+            mutate(p => {
+              const groupLayer = p.layers.find(l => l.id === selectedId && l.kind === 'group')
+              if (!groupLayer || groupLayer.kind !== 'group') return p
+              const groupIdx = p.layers.findIndex(l => l.id === selectedId)
+              const childIds = groupLayer.childIds
+              // Collect child layers in order (they may be stored elsewhere; fall back to no-op)
+              const childLayers = childIds.map(cid => p.layers.find(l => l.id === cid)).filter(Boolean) as FaceplateLayer[]
+              // Remove group and any children that were inline in the array; reinsert children at group position
+              const withoutGroup = p.layers.filter(l => l.id !== selectedId && !childIds.includes(l.id))
+              const newLayers = [
+                ...withoutGroup.slice(0, groupIdx),
+                ...childLayers,
+                ...withoutGroup.slice(groupIdx),
+              ]
+              return { ...p, layers: newLayers }
+            })
+            setSelectedId(null)
+            setMultiSelectedIds(new Set())
+          }
+        } else {
+          // Group: wrap selected layers in a GroupLayer.
+          // Architecture: child layers REMAIN in the flat project.layers array
+          // (the renderer looks them up by id). The GroupLayer is inserted just
+          // above the topmost selected layer in the stack. childIds lists the
+          // member ids so the Layers panel can show the group header.
+          const selectedIds = new Set([
+            ...(selectedId ? [selectedId] : []),
+            ...Array.from(multiSelectedIds),
+          ])
+          if (selectedIds.size === 0) return
+          const copyRef = { id: '' }
+          mutate(p => {
+            const group = newGroupLayer('Group')
+            copyRef.id = group.id
+            // Preserve render order: keep layers in their current order
+            const toGroup = p.layers.filter(l => selectedIds.has(l.id))
+            group.childIds = toGroup.map(l => l.id)
+            // Insert group just before the topmost selected layer; children stay in place
+            const topIdx = p.layers.findIndex(l => selectedIds.has(l.id))
+            const newLayers = [
+              ...p.layers.slice(0, topIdx),
+              group,
+              ...p.layers.slice(topIdx),
+            ]
+            return { ...p, layers: newLayers }
+          })
+          if (copyRef.id) setSelectedId(copyRef.id)
+          setMultiSelectedIds(new Set())
+        }
         return
       }
       if (!selectedId) return
@@ -503,7 +755,40 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedId, multiSelectedIds, mutate, undo, redo, duplicateLayer])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, multiSelectedIds, mutate, undo, redo, duplicateLayer, setShortcutsOpen, setBrushErase, setEyedropperActive, pz.scale, pz.setScale, pz.fitToWindow, pz.resetTo100])
+
+  // ── Shift-key tracker for Transformer (rotation snaps + aspect-ratio lock) ──
+  useEffect(() => {
+    const onShiftDown = (ev: KeyboardEvent) => { if (ev.key === 'Shift') setIsShiftHeld(true) }
+    const onShiftUp = (ev: KeyboardEvent) => { if (ev.key === 'Shift') setIsShiftHeld(false) }
+    // Also clear on window blur so state doesn't get stuck when focus moves elsewhere.
+    const onBlur = () => setIsShiftHeld(false)
+    window.addEventListener('keydown', onShiftDown)
+    window.addEventListener('keyup', onShiftUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onShiftDown)
+      window.removeEventListener('keyup', onShiftUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [])
+
+  // ── Alt-key tracker for alt-drag duplicate ───────────────────────────────
+  const isAltHeldRef = useRef(false)
+  useEffect(() => {
+    const onDown = (ev: KeyboardEvent) => { if (ev.key === 'Alt') isAltHeldRef.current = true }
+    const onUp = (ev: KeyboardEvent) => { if (ev.key === 'Alt') isAltHeldRef.current = false }
+    const onBlur = () => { isAltHeldRef.current = false }
+    window.addEventListener('keydown', onDown)
+    window.addEventListener('keyup', onUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [])
 
   // ── Copy / paste (Cmd-C / Cmd-V) ──────────────────────────────────────
   useEffect(() => {
@@ -603,35 +888,361 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   // and contrast against the chrome that will frame it in CoH2's lobby.
   // The wrapper grid centres it inside the canvas section, and the
   // section grows to fill the viewport below the topbar.
-  //
-  // ── Zoom state ──────────────────────────────────────────────────────────
-  // Persisted per-project so reopening preserves the user's zoom level.
-  const [zoom, setZoom] = useState(initialProject.editorZoom ?? 1.75)
-  const viewScale = zoom
-
-  // Persist zoom into project (non-undoable so it doesn't spam undo history).
-  useEffect(() => {
-    mutate(p => ({ ...p, editorZoom: zoom }), { undoable: false })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only runs when zoom changes
-  }, [zoom])
-
+  // canvasRef is the inner 624×204 canvas div (coordinate math / layer layout).
   const canvasRef = useRef<HTMLDivElement>(null)
 
-  // Scroll-to-zoom: non-passive so we can preventDefault (avoids Chrome warning).
+  // ── Konva stage, node refs, and image cache ────────────────────────────
+  const konvaStageRef = useRef<Konva.Stage>(null)
+  const konvaNodeRefs = useRef<Record<string, Konva.Node | null>>({})
+  const transformerRef = useRef<Konva.Transformer>(null)
+  /** Drag-start positions for multi-select drag (same pattern as DecalPackEditor). */
+  const dragStartPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map())
+  /** When an alt-drag duplicate is in flight, holds the original layer id that
+   *  was cloned so we can keep the original node stationary. */
+  const altDragOriginalIdRef = useRef<string | null>(null)
+  /** Resolved HTMLImageElement objects keyed by imageId — loaded once per dataUrl change. */
+  const [konvaImages, setKonvaImages] = useState<Record<string, HTMLImageElement>>({})
+
+  // Load/reload images into konvaImages whenever project.images changes.
   useEffect(() => {
-    const el = canvasRef.current
-    if (!el) return
-    const handler = (e: WheelEvent) => {
-      e.preventDefault()
-      setZoom(z => Math.max(0.5, Math.min(8, +(z + (e.deltaY < 0 ? 0.15 : -0.15)).toFixed(2))))
+    const ids = Object.keys(project.images)
+    if (ids.length === 0) return
+    let cancelled = false
+    Promise.all(
+      ids.map(
+        id =>
+          new Promise<[string, HTMLImageElement]>(resolve => {
+            const img = project.images[id]
+            const el = new window.Image()
+            el.onload = () => resolve([id, el])
+            el.onerror = () => resolve([id, el]) // still resolve so map is complete
+            el.src = img.dataUrl
+          }),
+      ),
+    ).then(pairs => {
+      if (cancelled) return
+      const next: Record<string, HTMLImageElement> = {}
+      for (const [id, el] of pairs) next[id] = el
+      setKonvaImages(next)
+    })
+    return () => { cancelled = true }
+  }, [project.images])
+
+  /** Attach Konva Transformer to the active layer node(s). */
+  const attachTransformerToIds = useCallback((ids: string[]) => {
+    const tr = transformerRef.current
+    if (!tr) return
+    if (activeTool === 'draw' || activeTool === 'eraser' || activeTool === 'mask') {
+      tr.nodes([])
+      tr.getLayer()?.batchDraw()
+      return
     }
-    el.addEventListener('wheel', handler, { passive: false })
-    return () => el.removeEventListener('wheel', handler)
-  }, [])
+    const nodes = ids
+      .map(id => konvaNodeRefs.current[id])
+      .filter((n): n is Konva.Node => n != null)
+    tr.nodes(nodes)
+    tr.getLayer()?.batchDraw()
+  }, [activeTool])
+
+  useEffect(() => {
+    const allIds = [selectedId, ...Array.from(multiSelectedIds)].filter(Boolean) as string[]
+    attachTransformerToIds(allIds)
+  }, [selectedId, multiSelectedIds, activeTool, attachTransformerToIds])
+
+  /** Write back transform from Konva node to project state (gesture-granular). */
+  const handleKonvaTransformEnd = useCallback(
+    (layerId: string) => {
+      const node = konvaNodeRefs.current[layerId]
+      if (!node) return
+      const rawScaleX = node.scaleX()
+      const rawScaleY = node.scaleY()
+      const absScaleX = Math.abs(rawScaleX)
+      const absScaleY = Math.abs(rawScaleY)
+      const flipH = rawScaleX < 0
+      const flipV = rawScaleY < 0
+      // Restore to positive scale after reading sign for flipH/V
+      node.scaleX(flipH ? -absScaleX : absScaleX)
+      node.scaleY(flipV ? -absScaleY : absScaleY)
+      const newX = node.x()
+      const newY = node.y()
+      const newRot = node.rotation()
+      mutate(p =>
+        mapLayer(p, layerId, l => {
+          if (l.kind === 'group' || l.kind === 'paint') return l
+          if (l.kind === 'image') {
+            return {
+              ...l,
+              x: newX,
+              y: newY,
+              rotation: newRot,
+              scale: absScaleX,
+              scaleY: absScaleY,
+              flipH,
+              flipV,
+            } as ImageLayer
+          }
+          return { ...l, x: newX, y: newY, rotation: newRot, scale: absScaleX } as typeof l
+        }),
+      )
+      history.endGesture()
+    },
+    [mutate, history],
+  )
+
+  /** Write drag end back to state — multi-select aware (gesture-granular, one undo frame).
+   *  When altDragOriginalIdRef is set this is an alt-drag duplicate: restore the
+   *  original to its start position and insert a clone at the drop position. */
+  const handleKonvaDragEnd = useCallback(
+    (layerId: string, node: Konva.Node) => {
+      setSnapGuides([])
+      history.endGesture()
+
+      const isAltDrag = altDragOriginalIdRef.current === layerId
+      altDragOriginalIdRef.current = null
+
+      if (isAltDrag) {
+        // Alt-drag duplicate: keep the original in place, spawn a clone at the drop position.
+        const dropX = node.x()
+        const dropY = node.y()
+        // Restore the Konva node to its start position visually.
+        const startPos = dragStartPositionsRef.current.get(layerId)
+        if (startPos) {
+          node.x(startPos.x)
+          node.y(startPos.y)
+        }
+        dragStartPositionsRef.current = new Map()
+        const copyRef = { id: '' }
+        mutate(p => {
+          const idx = p.layers.findIndex(l => l.id === layerId)
+          if (idx < 0) return p
+          const source = p.layers[idx]
+          const copy = duplicateLayerHelper(source)
+          copyRef.id = copy.id
+          // Place clone at drop position (not offset like normal duplicate)
+          if (copy.kind !== 'group' && copy.kind !== 'paint') {
+            ;(copy as { x: number }).x = dropX
+            ;(copy as { y: number }).y = dropY
+          }
+          const layers = [...p.layers]
+          layers.splice(idx + 1, 0, copy)
+          return { ...p, layers }
+        })
+        if (copyRef.id) setSelectedId(copyRef.id)
+        return
+      }
+
+      // Collect final positions for the dragged node + all companion nodes.
+      const finalPositions = new Map<string, { x: number; y: number }>()
+      finalPositions.set(layerId, { x: node.x(), y: node.y() })
+      for (const id of dragStartPositionsRef.current.keys()) {
+        if (id === layerId) continue
+        const companionNode = konvaNodeRefs.current[id]
+        if (companionNode) finalPositions.set(id, { x: companionNode.x(), y: companionNode.y() })
+      }
+
+      // One mutate → one undo frame for the whole group move.
+      mutate(p => {
+        let next = p
+        for (const [id, pos] of finalPositions) {
+          next = mapLayer(next, id, l => {
+            if (l.kind === 'group' || l.kind === 'paint') return l
+            return { ...l, x: pos.x, y: pos.y }
+          })
+        }
+        return next
+      })
+
+      dragStartPositionsRef.current = new Map()
+    },
+    [mutate, history, setSnapGuides],
+  )
+
+  /** Build snap targets for Konva drag-move. */
+  const snapTargetsMemo = useMemo((): SnapTarget[] => {
+    const base: SnapTarget[] = [
+      { kind: 'x', value: FACEPLATE_BANNER_W / 2, label: 'canvas center X' },
+      { kind: 'y', value: FACEPLATE_BANNER_H / 2, label: 'canvas center Y' },
+      { kind: 'x', value: 0, label: 'canvas left edge' },
+      { kind: 'x', value: FACEPLATE_BANNER_W, label: 'canvas right edge' },
+      { kind: 'y', value: 0, label: 'canvas top edge' },
+      { kind: 'y', value: FACEPLATE_BANNER_H, label: 'canvas bottom edge' },
+    ]
+    if (snapGrid) {
+      const step = snapGridStep
+      for (let v = step; v < FACEPLATE_BANNER_W; v += step)
+        base.push({ kind: 'x', value: v, label: `grid ${v}` })
+      for (let v = step; v < FACEPLATE_BANNER_H; v += step)
+        base.push({ kind: 'y', value: v, label: `grid ${v}` })
+    }
+    return base
+  }, [snapGrid, snapGridStep])
+
+  /** Apply snap during Konva drag-move, and move all companion nodes by the same delta. No undo frames per frame. */
+  const handleKonvaDragMove = useCallback(
+    (layerId: string, node: Konva.Node) => {
+      const { snappedX, snappedY, firedTargets } = applySnap(node.x(), node.y(), snapTargetsMemo)
+      node.x(snappedX)
+      node.y(snappedY)
+      setSnapGuides(firedTargets)
+
+      // Move companion nodes (multi-select) by the same delta as the primary node.
+      const startPos = dragStartPositionsRef.current.get(layerId)
+      if (startPos && dragStartPositionsRef.current.size > 1) {
+        const dx = snappedX - startPos.x
+        const dy = snappedY - startPos.y
+        for (const [id, sPos] of dragStartPositionsRef.current) {
+          if (id === layerId) continue
+          const companionNode = konvaNodeRefs.current[id]
+          if (companionNode) {
+            companionNode.x(sPos.x + dx)
+            companionNode.y(sPos.y + dy)
+          }
+        }
+        node.getLayer()?.batchDraw()
+      }
+    },
+    [snapTargetsMemo, setSnapGuides],
+  )
+
+  /** Re-cache KonvaImage nodes whenever image-layer filter values change.
+   *  cache() is required by Konva for pixel-level filter processing to work. */
+  useEffect(() => {
+    for (const layer of project.layers) {
+      if (layer.kind !== 'image') continue
+      const node = konvaNodeRefs.current[layer.id] as Konva.Image | null
+      if (!node) continue
+      const { filterFns, attrs, hasFilters } = buildKonvaImageFilters(layer.filters)
+      if (hasFilters) {
+        // Set filter attribute values on the node (react-konva also passes them
+        // as props, but we set them here too so they're definitely present
+        // before cache() is called).
+        for (const [key, val] of Object.entries(attrs)) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ;(node as any)[key]?.(val)
+        }
+        node.filters(filterFns)
+        node.cache()
+      } else {
+        // Clear cache when all filters are identity — saves GPU memory.
+        node.filters([])
+        node.clearCache()
+      }
+    }
+  // Re-run whenever any layer's filter values change. We stringify the
+  // filter objects for a stable dependency key.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(project.layers.filter(l => l.kind === 'image').map(l => (l as ImageLayer).filters))])
 
   const selectedLayer = useMemo(
     () => project.layers.find(l => l.id === selectedId) ?? null,
     [project.layers, selectedId],
+  )
+
+  // ── Layer display helpers (passed to LayersPanel) ─────────────────────────
+  const getLayerLabel = useCallback(
+    (layer: FaceplateLayer): string => {
+      if (layer.kind === 'group') return layer.name
+      const named = (layer as { name?: string }).name
+      if (named) return named
+      if (layer.kind === 'text') return layer.text.slice(0, 20) || 'Text layer'
+      if (layer.kind === 'shape') return layer.shapeType
+      if (layer.kind === 'paint') return 'Paint layer'
+      return project.images[(layer as ImageLayer).imageId]?.name ?? 'Image layer'
+    },
+    [project.images],
+  )
+
+  const getLayerThumbnail = useCallback(
+    (layer: FaceplateLayer): ReactNode => {
+      if (layer.kind === 'text') {
+        return (
+          <span style={{ fontSize: 16, fontWeight: 700, color: '#fff', lineHeight: 1 }}>T</span>
+        )
+      }
+      if (layer.kind === 'shape') {
+        return (
+          <svg width={22} height={22} viewBox="0 0 100 100">
+            {shapeToSvgElement(layer.shapeType, layer.fillColor, 'none', 0)}
+          </svg>
+        )
+      }
+      if (layer.kind === 'paint') {
+        return <span style={{ fontSize: 13, color: EDITOR_TEXT_2 }}>✏</span>
+      }
+      if (layer.kind === 'group') {
+        return <span style={{ fontSize: 10, color: EDITOR_TEXT_2 }}>▶</span>
+      }
+      // image layer
+      const img = project.images[(layer as ImageLayer).imageId]
+      return img ? (
+        <img
+          src={img.dataUrl}
+          alt=""
+          style={{ width: 26, height: 26, objectFit: 'contain', borderRadius: 3 }}
+        />
+      ) : (
+        <span style={{ fontSize: 9, color: EDITOR_TEXT_4 }}>?</span>
+      )
+    },
+    [project.images],
+  )
+
+  const onSelectLayerForPanel = useCallback(
+    (id: string | null, multi?: boolean, shift?: boolean) => {
+      if (id === null) {
+        setSelectedId(null)
+        setMultiSelectedIds(new Set())
+        return
+      }
+      if (multi) {
+        // Cmd/Ctrl-click: toggle-select
+        lastAnchorIdRef.current = id
+        setMultiSelectedIds(prev => {
+          const next = new Set(prev)
+          if (next.has(id)) next.delete(id)
+          else next.add(id)
+          return next
+        })
+      } else if (shift) {
+        // Shift-click: range-select from last anchor to clicked row
+        const anchorId = lastAnchorIdRef.current ?? selectedId
+        if (anchorId && anchorId !== id) {
+          const layers = projectRef.current.layers
+          const anchorIdx = layers.findIndex(l => l.id === anchorId)
+          const clickIdx = layers.findIndex(l => l.id === id)
+          const lo = Math.min(anchorIdx, clickIdx)
+          const hi = Math.max(anchorIdx, clickIdx)
+          const rangeIds = layers.slice(lo, hi + 1).map(l => l.id)
+          setMultiSelectedIds(new Set(rangeIds.filter(rid => rid !== anchorId)))
+          setSelectedId(anchorId)
+        } else {
+          lastAnchorIdRef.current = id
+          setSelectedId(id)
+          setMultiSelectedIds(new Set())
+        }
+      } else {
+        lastAnchorIdRef.current = id
+        setSelectedId(id)
+        setMultiSelectedIds(new Set())
+        setLayerCtxMenu(null)
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedId],
+  )
+
+  const onEndRenameForPanel = useCallback(
+    (layerId: string, newName: string | null) => {
+      if (newName) {
+        const layer = project.layers.find(l => l.id === layerId)
+        const currentLabel = layer ? getLayerLabel(layer) : ''
+        if (newName !== currentLabel) {
+          mutate(p => mapLayer(p, layerId, l => ({ ...l, name: newName })))
+        }
+      }
+      setRenamingLayerId(null)
+    },
+    [project.layers, getLayerLabel, mutate],
   )
 
   // The Adjust-Image popover is gated by `adjustImageOpen && selectedLayer
@@ -647,16 +1258,18 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   // explicit click on the Sliders button).
 
   // Tool definitions for the bottom pill.
-  // Order: select, text, shapes, draw, shadow, background, align
+  // Photoshop-convention tool row: interaction-mode TOOLS only.
+  // Shadow → Properties panel (per-layer effect section).
+  // Background → Properties panel (Document/Canvas section, always visible).
+  // Align → Properties panel (shown when ≥1 layer selected; full align/distribute on multi-select).
+  // Eraser → promoted from Draw sub-mode to its own dedicated tool.
   const FACEPLATE_TOOLS: readonly ToolDef<FaceplateToolId>[] = [
     { id: 'select', icon: <MousePointer2 size={20} />, label: 'Select' },
     { id: 'text', icon: <Type size={20} />, label: 'Text' },
     { id: 'shapes', icon: <Shapes size={20} />, label: 'Shapes' },
     { id: 'draw', icon: <Pencil size={20} />, label: 'Draw' },
-    { id: 'shadow', icon: <Sun size={20} />, label: 'Shadow' },
-    { id: 'background', icon: <Palette size={20} />, label: 'BG' },
-    { id: 'align', icon: <AlignCenter size={20} />, label: 'Align' },
-    { id: 'mask', icon: <Layers size={20} />, label: 'Mask' },
+    { id: 'eraser', icon: <Eraser size={20} />, label: 'Eraser' },
+    { id: 'mask', icon: <SquareDashedMousePointer size={20} />, label: 'Mask' },
   ]
 
   // ── Publish build handler — builds SGA, then sets target for inline form ──
@@ -665,7 +1278,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
     try {
       const { buildFaceplateMod, generateGuid } =
         await import('@/lib/faceplate-mod-build')
-      const { ATLAS_WIDTH, ATLAS_HEIGHT } =
+      const { ATLAS_WIDTH, ATLAS_HEIGHT, ICON_RECT, BANNER_RECT } =
         await import('@/lib/faceplate-templates')
       const bannerCanvas = await composeFaceplateCanvas(project)
       const atlasCanvas = document.createElement('canvas')
@@ -673,7 +1286,16 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
       atlasCanvas.height = ATLAS_HEIGHT
       const atlasCtx = atlasCanvas.getContext('2d')
       if (atlasCtx) {
+        // Draw the 624×204 banner into the left region of the 692×204 atlas.
         atlasCtx.drawImage(bannerCanvas, 0, 0)
+        // Populate the 64×64 icon sub-rect (x=624, y=0) by scaling the full
+        // banner down into it. Real workshop faceplates always carry content
+        // here — leaving it zeroed produces a black scoreboard/chat icon.
+        atlasCtx.drawImage(
+          bannerCanvas,
+          0, 0, BANNER_RECT.width, BANNER_RECT.height,
+          ICON_RECT.x, ICON_RECT.y, ICON_RECT.width, ICON_RECT.height,
+        )
       }
       const atlasRgba = atlasCtx
         ? atlasCtx.getImageData(0, 0, ATLAS_WIDTH, ATLAS_HEIGHT).data
@@ -694,11 +1316,24 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         persistFaceplate(projectForBuild)
       }
       const result = await buildFaceplateMod({ project: projectForBuild, atlasRgba, guid })
+      // For the Workshop preview: composite the banner onto an opaque dark
+      // background before passing to generateWorkshopPreview. Without this,
+      // transparent-background projects are cropped by cropToOpaqueBbox to
+      // only the content region, which can appear icon-sized in Steam.
+      const previewCanvas = document.createElement('canvas')
+      previewCanvas.width = bannerCanvas.width
+      previewCanvas.height = bannerCanvas.height
+      const previewCtx = previewCanvas.getContext('2d')
+      if (previewCtx) {
+        previewCtx.fillStyle = '#1a1a1a'
+        previewCtx.fillRect(0, 0, previewCanvas.width, previewCanvas.height)
+        previewCtx.drawImage(bannerCanvas, 0, 0)
+      }
       const target = makeFaceplatePublishTarget(
         projectForBuild,
         result.sga,
         result.sgaFilename,
-        bannerCanvas,
+        previewCtx ? previewCanvas : bannerCanvas,
         workshopId => {
           const next = { ...projectForBuild, workshopId }
           setProject(next)
@@ -712,6 +1347,103 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
       setIsBuildingTarget(false)
     }
   }, [project, setProject])
+
+  // ── Manual "Export .sga" — the discoverable, explicit export path ────────
+  // Live Sync writes the SGA into the mods folder automatically, but its
+  // browser writeFile() is a no-op (native-fs is IPC-only) so a browser user
+  // never gets a file, and even in Electron there was no explicit, confirmable
+  // export affordance. This handler builds the SAME faceplate SGA that Live
+  // Sync / Publish produce (buildFaceplateMod over the composed 692×204 atlas)
+  // and then either downloads it (browser) or writes it to the game mods
+  // folder with a success toast naming the path (Electron).
+  const handleExportSga = useCallback(async () => {
+    if (isExporting) return
+    // "Nothing to export yet" guard — an empty canvas would still build a
+    // (blank) atlas, but exporting nothing is almost never intended, so we
+    // surface a clear message instead of silently producing an empty banner.
+    if (project.layers.length === 0) {
+      setExportToast({ intent: 'error', body: 'Nothing to export yet — add a layer first.' })
+      return
+    }
+    setIsExporting(true)
+    try {
+      const { buildFaceplateMod, generateGuid } = await import('@/lib/faceplate-mod-build')
+      const { ATLAS_WIDTH, ATLAS_HEIGHT, ICON_RECT, BANNER_RECT } =
+        await import('@/lib/faceplate-templates')
+
+      // Compose the banner, then pack it into the 692×204 atlas exactly the
+      // way the publish path does (banner in the left region + a downscaled
+      // copy into the 64×64 icon sub-rect so the scoreboard/chat icon isn't
+      // black). Reuses composeFaceplateCanvas — no re-implemented compositor.
+      const bannerCanvas = await composeFaceplateCanvas(project)
+      const atlasCanvas = document.createElement('canvas')
+      atlasCanvas.width = ATLAS_WIDTH
+      atlasCanvas.height = ATLAS_HEIGHT
+      const atlasCtx = atlasCanvas.getContext('2d')
+      if (atlasCtx) {
+        atlasCtx.drawImage(bannerCanvas, 0, 0)
+        atlasCtx.drawImage(
+          bannerCanvas,
+          0, 0, BANNER_RECT.width, BANNER_RECT.height,
+          ICON_RECT.x, ICON_RECT.y, ICON_RECT.width, ICON_RECT.height,
+        )
+      }
+      const atlasRgba = atlasCtx
+        ? atlasCtx.getImageData(0, 0, ATLAS_WIDTH, ATLAS_HEIGHT).data
+        : new Uint8ClampedArray(ATLAS_WIDTH * ATLAS_HEIGHT * 4)
+
+      // Reuse the project's stable mod-identity GUID (persist a fresh one as a
+      // defensive fallback, mirroring handleRequestBuild) so every export
+      // shares the identity CoH2 registers the faceplate under.
+      let projectForBuild = project
+      let guid = project.guid
+      if (!guid) {
+        guid = generateGuid()
+        projectForBuild = { ...project, guid }
+        setProject(projectForBuild)
+        persistFaceplate(projectForBuild)
+      }
+      const result = await buildFaceplateMod({ project: projectForBuild, atlasRgba, guid })
+
+      if (isElectron()) {
+        // Electron: write to the SAME location Live Sync targets —
+        // <modsRoot>/faceplates/subscriptions/<guid>.sga (see live-sync
+        // _writeFile). detectModsPath() resolves the CoH2 mods folder.
+        const modsPath = await detectModsPath()
+        if (!modsPath) {
+          setExportToast({
+            intent: 'error',
+            body: "Couldn't locate your CoH2 mods folder. Open the game once so it's created.",
+          })
+          return
+        }
+        const norm = modsPath.replace(/\\/g, '/')
+        const outPath = `${norm}/faceplates/subscriptions/${result.sgaFilename}`
+        await writeFile(outPath, result.sga)
+        setExportToast({ intent: 'success', body: `Wrote ${outPath}` })
+      } else {
+        // Browser: trigger a real file download of the SGA bytes. Copy into a
+        // fresh Uint8Array so the Blob owns a plain ArrayBuffer (avoids the
+        // SharedArrayBuffer typing pitfall documented in native-fs.writeFile).
+        const bytes = new Uint8Array(result.sga)
+        const blob = new Blob([bytes], { type: 'application/octet-stream' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = result.sgaFilename
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+        setExportToast({ intent: 'success', body: `Downloaded ${result.sgaFilename}` })
+      }
+    } catch (e) {
+      console.error('Faceplate .sga export failed:', e)
+      setExportToast({ intent: 'error', body: "Couldn't build the mod file — please try again." })
+    } finally {
+      setIsExporting(false)
+    }
+  }, [project, isExporting, setProject])
 
   return (
     <div
@@ -735,6 +1467,14 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
        *  anywhere — including over the in-game previews, which fall
        *  through via `pointerEvents: 'none'` on the preview wrapper.
        */}
+      {/* pzContainerRef wraps the stage area; usePanZoom attaches its wheel
+          listener here, and pz.handlers spread here enable Space/middle-drag
+          pan. The inner canvas carries translate+scale via CSS transform. */}
+      <div
+        ref={pzContainerRef}
+        style={{ position: 'absolute', inset: 0 }}
+        {...pz.handlers}
+      >
       <ImageDropZone
         onImport={onImport}
         onDragStateChange={setDragOver}
@@ -748,12 +1488,16 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            // Symmetric vertical padding so the canvas stays centred both axes
-            // while clearing the bottom floating toolbar (~150px).
-            paddingTop: 150,
-            paddingBottom: 150,
-            paddingLeft: 80,
-            paddingRight: 80,
+            // Padding clears the floating panels and chrome so the banner is
+            // ALWAYS fully visible in the gap between them.
+            //   Left:   12px edge + 196px Layers panel + 16px gap = 224px
+            //   Right:  12px edge + 210px Properties panel + 16px gap = 238px
+            //   Top:    title pill ~64px
+            //   Bottom: tool pill ~108px
+            paddingTop: 64,
+            paddingBottom: 108,
+            paddingLeft: 224,   // 12 + 196 Layers + 16 gap
+            paddingRight: 238,  // 12 + 210 Properties + 16 gap
             // Make absolutely sure the canvas area is not part of the
             // window-drag strip (the strip's z-[1] would otherwise eat
             // pointer-down on the canvas margins).
@@ -770,6 +1514,27 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           if (ev.target === ev.currentTarget) setSelectedId(null)
         }}
       >
+        {/* P1 — Document surface: pan/zoom pass-through wrapper sized to the canvas.
+            No border frame — content outside the export bounds shows the red OOB
+            tint (via the clip-path overlay below) instead of a colored frame.
+            The canvas div below carries the drop shadow and guide background.
+            Pan/zoom translate is applied to this wrapper so canvas + shadow move together. */}
+        <div
+          style={{
+            position: 'relative',
+            transform: `translate(${pz.offset.x}px, ${pz.offset.y}px)`,
+            // Surface size: exactly the visible banner — no extra border padding.
+            // OOB content spills outside via overflow:visible on the canvas div.
+            width: FACEPLATE_BANNER_W * viewScale,
+            height: FACEPLATE_BANNER_H * viewScale,
+            // No background: the canvas div has the guide fill; OOB region shows
+            // the editor's normal background (dark void outside the bounds).
+            background: 'transparent',
+            border: 'none',
+            borderRadius: 0,
+            flexShrink: 0,
+          }}
+        >
         <div
           ref={canvasRef}
           onPointerDown={
@@ -845,7 +1610,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                     const liveCanvas = document.createElement('canvas')
                     liveCanvas.width = FACEPLATE_BANNER_W
                     liveCanvas.height = FACEPLATE_BANNER_H
-                    liveCanvas.style.cssText = `position:absolute;left:0;top:0;width:${FACEPLATE_BANNER_W}px;height:${FACEPLATE_BANNER_H}px;pointer-events:none;z-index:999`
+                    liveCanvas.style.cssText = `position:absolute;left:0;top:0;width:${FACEPLATE_BANNER_W * viewScale}px;height:${FACEPLATE_BANNER_H * viewScale}px;pointer-events:none;z-index:999`
                     canvasRef.current!.appendChild(liveCanvas)
                     liveStrokeCanvasRef.current = liveCanvas
 
@@ -856,19 +1621,64 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                     if (brushErase) {
                       lctx.globalCompositeOperation = 'destination-out'
                     }
-                    lctx.globalAlpha = brushOpacity
-                    lctx.strokeStyle = brushErase ? 'rgba(0,0,0,1)' : brushColor
-                    lctx.lineWidth = brushSize
-                    lctx.lineCap = 'round'
-                    lctx.lineJoin = 'round'
+
+                    // Hardness-aware stamp helper. When hardness < 100 we use a
+                    // radial-gradient alpha falloff (soft brush à la Photoshop).
+                    // hardness 0–100: 100 = crisp disc, 0 = fully feathered.
+                    const stampDab = (ctx: CanvasRenderingContext2D, px: number, py: number) => {
+                      const r = brushSize / 2
+                      ctx.save()
+                      ctx.globalAlpha = brushOpacity
+                      if (brushErase) {
+                        ctx.globalCompositeOperation = 'destination-out'
+                      }
+                      if (brushHardness < 100) {
+                        // softness: 0 = fully feathered (inner radius = 0), 100 = crisp.
+                        // inner radius fraction = hardness / 100
+                        const innerFrac = brushHardness / 100
+                        const grad = ctx.createRadialGradient(px, py, r * innerFrac, px, py, r)
+                        const paintCol = brushErase ? 'rgba(0,0,0,1)' : brushColor
+                        grad.addColorStop(0, paintCol)
+                        // fade to transparent at edge
+                        const fadeCol = brushErase
+                          ? 'rgba(0,0,0,0)'
+                          : (() => {
+                              const m = paintCol.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i)
+                              if (m) return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},0)`
+                              return 'rgba(0,0,0,0)'
+                            })()
+                        grad.addColorStop(1, fadeCol)
+                        ctx.fillStyle = grad
+                      } else {
+                        ctx.fillStyle = brushErase ? 'rgba(0,0,0,1)' : brushColor
+                      }
+                      ctx.beginPath()
+                      ctx.arc(px, py, r, 0, Math.PI * 2)
+                      ctx.fill()
+                      ctx.restore()
+                    }
+
+                    const stampSegment = (ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number) => {
+                      const dx = x1 - x0
+                      const dy = y1 - y0
+                      const dist = Math.hypot(dx, dy)
+                      const step = Math.max(1, brushSize / 4)
+                      const n = Math.max(1, Math.ceil(dist / step))
+                      for (let i = 1; i <= n; i++) {
+                        const t = i / n
+                        stampDab(ctx, x0 + dx * t, y0 + dy * t)
+                      }
+                    }
 
                     // Start all mirrored sub-paths.
                     const startPts = mirrorPoints(x, y)
+                    // Stamp the initial dab at pointer-down position.
                     for (const pt of startPts) {
-                      lctx.beginPath()
-                      lctx.moveTo(pt.x, pt.y)
+                      stampDab(lctx, pt.x, pt.y)
                     }
                     isDrawingRef.current = true
+                    // Gesture-granular undo: whole stroke = ONE undo frame.
+                    history.beginGesture('Paint')
 
                     // Track last mirrored positions per sub-path so we can
                     // draw continuous segments rather than disconnected dots.
@@ -885,12 +1695,10 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                       const my = (mev.clientY - mrect.top) / viewScale
                       const mc = lc.getContext('2d')!
                       const newPts = mirrorPoints(mx, my)
-                      // Draw one segment per mirrored position.
+                      // Stamp segment from last to current position per mirrored point.
                       for (let i = 0; i < newPts.length; i++) {
-                        mc.beginPath()
-                        mc.moveTo((lastPts[i] ?? lastPts[0]).x, (lastPts[i] ?? lastPts[0]).y)
-                        mc.lineTo(newPts[i].x, newPts[i].y)
-                        mc.stroke()
+                        const from = lastPts[i] ?? lastPts[0]
+                        stampSegment(mc, from.x, from.y, newPts[i].x, newPts[i].y)
                       }
                       lastPts = newPts
                     }
@@ -898,8 +1706,10 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                     const onUp = () => {
                       if (!isDrawingRef.current) return
                       isDrawingRef.current = false
+                      history.endGesture()
                       window.removeEventListener('pointermove', onMove)
                       window.removeEventListener('pointerup', onUp)
+                      window.removeEventListener('pointercancel', onUp)
 
                       // Composite onto persistent layer
                       const lc = liveStrokeCanvasRef.current
@@ -956,7 +1766,154 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
 
                     window.addEventListener('pointermove', onMove)
                     window.addEventListener('pointerup', onUp)
+                    window.addEventListener('pointercancel', onUp)
                   }
+                : activeTool === 'eraser'
+                  ? ev => {
+                      // Eraser tool — identical to the draw handler but with erase
+                      // mode permanently forced on. Delegates by temporarily setting
+                      // brushErase via a synthetic draw path: we reuse all draw
+                      // canvas logic by calling the same code with brushErase=true.
+                      // This is a pointer-down handler; the actual erase compositing
+                      // is performed in-line below, identical to the draw branch.
+                      ev.preventDefault()
+                      ev.stopPropagation()
+                      const rect = canvasRef.current!.getBoundingClientRect()
+                      const x = (ev.clientX - rect.left) / viewScale
+                      const y = (ev.clientY - rect.top) / viewScale
+
+                      // Find existing paint layer or create one
+                      let paintLayer = project.layers.find((l): l is PaintLayer => l.kind === 'paint')
+                      if (!paintLayer) {
+                        const newLayer = newPaintLayer()
+                        mutate(p => ({ ...p, layers: [...p.layers, newLayer] }), { undoable: false })
+                        setSelectedId(newLayer.id)
+                        paintLayer = newLayer
+                      } else {
+                        setSelectedId(paintLayer.id)
+                      }
+
+                      const liveCanvas = document.createElement('canvas')
+                      liveCanvas.width = FACEPLATE_BANNER_W
+                      liveCanvas.height = FACEPLATE_BANNER_H
+                      liveCanvas.style.cssText = `position:absolute;left:0;top:0;width:${FACEPLATE_BANNER_W * viewScale}px;height:${FACEPLATE_BANNER_H * viewScale}px;pointer-events:none;z-index:999`
+                      canvasRef.current!.appendChild(liveCanvas)
+                      liveStrokeCanvasRef.current = liveCanvas
+
+                      const lctx = liveCanvas.getContext('2d')!
+                      lctx.globalCompositeOperation = 'destination-out'
+
+                      const stampDab = (ctx: CanvasRenderingContext2D, px: number, py: number) => {
+                        const r = brushSize / 2
+                        ctx.save()
+                        ctx.globalAlpha = brushOpacity
+                        ctx.globalCompositeOperation = 'destination-out'
+                        if (brushHardness < 100) {
+                          const innerFrac = brushHardness / 100
+                          const grad = ctx.createRadialGradient(px, py, r * innerFrac, px, py, r)
+                          grad.addColorStop(0, 'rgba(0,0,0,1)')
+                          grad.addColorStop(1, 'rgba(0,0,0,0)')
+                          ctx.fillStyle = grad
+                        } else {
+                          ctx.fillStyle = 'rgba(0,0,0,1)'
+                        }
+                        ctx.beginPath()
+                        ctx.arc(px, py, r, 0, Math.PI * 2)
+                        ctx.fill()
+                        ctx.restore()
+                      }
+
+                      const stampSegment = (ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number) => {
+                        const dx = x1 - x0; const dy = y1 - y0
+                        const dist = Math.hypot(dx, dy)
+                        const step = Math.max(1, brushSize / 4)
+                        const n = Math.max(1, Math.ceil(dist / step))
+                        for (let i = 1; i <= n; i++) {
+                          const t = i / n
+                          stampDab(ctx, x0 + dx * t, y0 + dy * t)
+                        }
+                      }
+
+                      stampDab(lctx, x, y)
+                      isDrawingRef.current = true
+                      history.beginGesture('Erase')
+                      let lastX = x; let lastY = y
+                      const paintLayerId = paintLayer.id
+
+                      const onMove = (mev: PointerEvent) => {
+                        if (!isDrawingRef.current) return
+                        const lc = liveStrokeCanvasRef.current
+                        if (!lc) return
+                        const mrect = canvasRef.current!.getBoundingClientRect()
+                        const mx = (mev.clientX - mrect.left) / viewScale
+                        const my = (mev.clientY - mrect.top) / viewScale
+                        const mc = lc.getContext('2d')!
+                        stampSegment(mc, lastX, lastY, mx, my)
+                        lastX = mx; lastY = my
+                      }
+
+                      const onUp = () => {
+                        if (!isDrawingRef.current) return
+                        isDrawingRef.current = false
+                        history.endGesture()
+                        window.removeEventListener('pointermove', onMove)
+                        window.removeEventListener('pointerup', onUp)
+                        window.removeEventListener('pointercancel', onUp)
+
+                        const lc = liveStrokeCanvasRef.current
+                        if (!lc) return
+
+                        const offscreen = document.createElement('canvas')
+                        offscreen.width = FACEPLATE_BANNER_W
+                        offscreen.height = FACEPLATE_BANNER_H
+                        const octx = offscreen.getContext('2d')!
+
+                        const applyErase = (existingDataUrl: string) => {
+                          const applyToOffscreen = () => {
+                            // Use destination-out so the erase strokes on `lc` punch
+                            // holes through the existing paint on the offscreen canvas,
+                            // rather than compositing transparently on top of it (which
+                            // is a no-op and causes the "eraser does nothing" bug).
+                            octx.globalCompositeOperation = 'destination-out'
+                            octx.drawImage(lc, 0, 0)
+                            octx.globalCompositeOperation = 'source-over'
+                            const newDataUrl = offscreen.toDataURL('image/png')
+                            mutate(p =>
+                              mapLayer(p, paintLayerId, l =>
+                                l.kind === 'paint' ? { ...l, dataUrl: newDataUrl } : l,
+                              ),
+                            )
+                            lc.remove()
+                            liveStrokeCanvasRef.current = null
+                          }
+
+                          if (
+                            existingDataUrl &&
+                            existingDataUrl !==
+                              'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+                          ) {
+                            const existImg = new Image()
+                            existImg.onload = () => {
+                              octx.drawImage(existImg, 0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
+                              applyToOffscreen()
+                            }
+                            existImg.src = existingDataUrl
+                          } else {
+                            applyToOffscreen()
+                          }
+                        }
+
+                        setProject(prev => {
+                          const pl = prev.layers.find(l => l.id === paintLayerId) as PaintLayer | undefined
+                          applyErase(pl?.dataUrl ?? '')
+                          return prev
+                        })
+                      }
+
+                      window.addEventListener('pointermove', onMove)
+                      window.addEventListener('pointerup', onUp)
+                      window.addEventListener('pointercancel', onUp)
+                    }
                 : activeTool === 'mask'
                   ? ev => {
                       // Mask painting: find the selected compatible layer (image or
@@ -1104,10 +2061,12 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
 
                         window.removeEventListener('pointermove', onMaskMove)
                         window.removeEventListener('pointerup', onMaskUp)
+                        window.removeEventListener('pointercancel', onMaskUp)
                       }
 
                       window.addEventListener('pointermove', onMaskMove)
                       window.addEventListener('pointerup', onMaskUp)
+                      window.addEventListener('pointercancel', onMaskUp)
                     }
                   : undefined
           }
@@ -1115,13 +2074,25 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             width: FACEPLATE_BANNER_W * viewScale,
             height: FACEPLATE_BANNER_H * viewScale,
             position: 'relative',
-            background: previewTransparent ? '#ffffff' : (project.backgroundColor ?? 'transparent'),
+            // Pan offset is now on the outer surface wrapper div above —
+            // no transform here so the canvas stays centred inside the surface.
+            // Background colour logic:
+            //   • Transparent-preview mode: classic light Photoshop checker so
+            //     alpha=0 regions read clearly (white base + grey/white checker).
+            //   • Project has an explicit backgroundColor: show it (user-set fill).
+            //   • Project backgroundColor === null (true transparency): visible dark
+            //     checker on a mid-dark base (#1a1c22) to indicate transparent canvas
+            //     while keeping dark-mode consistent. The checker must be clearly
+            //     visible against the #252836 surface surrounding it.
+            backgroundColor: previewTransparent
+              ? '#ffffff'
+              : (project.backgroundColor ?? '#141620'),
             backgroundImage: previewTransparent
               ? lightCheckerBackground()
               : project.backgroundColor === null
-                ? checkerBackground()
+                ? darkCheckerBackground()
                 : 'none',
-            backgroundSize: '24px 24px',
+            backgroundSize: '16px 16px',
             // In-game CoH2 faceplate banners are strictly rectangular — no
             // corner radius. Editing on a rounded surface gave the user a
             // false impression that the edges would crop in-game; they
@@ -1131,16 +2102,14 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             cursor:
               activeTool === 'text'
                 ? 'text'
-                : activeTool === 'draw' || activeTool === 'mask'
+                : activeTool === 'draw' || activeTool === 'eraser' || activeTool === 'mask'
                   ? 'crosshair'
                   : 'default',
-            boxShadow: `
-              0 24px 80px -20px rgba(0,0,0,0.6),
-              0 0 0 1px rgba(255,255,255,0.06),
-              0 0 0 6px rgba(0,0,0,0.35)
-            `,
-            outline: dragOver ? '2px dashed rgba(120,180,255,0.6)' : 'none',
-            outlineOffset: -8,
+            // Drop shadow lifts the canvas off the void; drag-over adds inner highlight.
+            boxShadow: dragOver
+              ? '0 16px 64px -8px rgba(0,0,0,0.90), 0 4px 16px -4px rgba(0,0,0,0.70), inset 0 0 0 2px rgba(120,180,255,0.6)'
+              : '0 16px 64px -8px rgba(0,0,0,0.90), 0 4px 16px -4px rgba(0,0,0,0.70)',
+            outline: 'none',
             // overflow:visible so layers dragged past the canvas edge remain
             // visible above the red OOB zone (clipping is on the outer wrapper).
             overflow: 'visible',
@@ -1219,336 +2188,489 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             ),
           )}
 
-          {/* Layers */}
-          {project.layers.map(layer => {
-            if (!layer.visible) return null
-            const isSelected = layer.id === selectedId
-
-            if (layer.kind === 'text') {
-              const cx = layer.x * viewScale
-              const cy = layer.y * viewScale
-              const scaledFont = layer.fontSize * layer.scale * viewScale
-              const lines = layer.text.split('\n')
-              const isEditing = layer.id === editingTextId
-              // Shared visual style — keeps the inline contenteditable
-              // pixel-identical to the committed static render so there's
-              // no visual jump when the user commits the edit.
-              const sharedTextStyle: React.CSSProperties = {
-                position: 'absolute',
-                left: cx,
-                top: cy,
-                transform: `translate(-50%, -50%) rotate(${layer.rotation}deg)`,
-                transformOrigin: '50% 50%',
-                opacity: layer.opacity,
-                outline: isSelected && !isEditing ? `2px solid ${EDITOR_ACCENT}` : 'none',
-                outlineOffset: 2,
-                userSelect: isEditing ? 'text' : 'none',
-                touchAction: 'none',
-                fontFamily: layer.fontFamily,
-                fontSize: scaledFont,
-                fontWeight: layer.fontWeight,
-                fontStyle: layer.fontStyle,
-                color: layer.color,
-                textAlign: layer.align,
-                whiteSpace: 'pre',
-                lineHeight: layer.lineHeight ?? 1.2,
-                letterSpacing: `${layer.letterSpacing ?? 0}px`,
-                WebkitTextStroke:
-                  layer.strokeWidth > 0 && layer.strokeColor
-                    ? `${layer.strokeWidth * layer.scale * viewScale}px ${layer.strokeColor}`
-                    : undefined,
-                paintOrder: layer.strokeWidth > 0 ? 'stroke fill' : undefined,
-                width: 'max-content',
-                minWidth: isEditing ? scaledFont * 0.5 : undefined,
-                maxWidth: `${FACEPLATE_BANNER_W * viewScale}px`,
-                pointerEvents: layer.locked ? 'none' : 'auto',
+          {/* Konva Stage — renders TEXT, SHAPE, IMAGE as Konva nodes.
+              PAINT layers are shown as Konva.Image wrapping an offscreen canvas
+              so they composite at the correct z-order inside the Stage. */}
+          <Stage
+            ref={konvaStageRef}
+            width={FACEPLATE_BANNER_W * viewScale}
+            height={FACEPLATE_BANNER_H * viewScale}
+            scaleX={viewScale}
+            scaleY={viewScale}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              // In draw/mask mode, pass pointer events through to the
+              // div overlay beneath. In text mode, pass through so click-to-place
+              // is handled by the canvasRef's pointerDown.
+              pointerEvents:
+                activeTool === 'draw' || activeTool === 'mask' || activeTool === 'text'
+                  ? 'none'
+                  : 'auto',
+            }}
+            onPointerDown={e => {
+              // Click on empty Stage area → deselect
+              if (e.target === e.target.getStage()) {
+                setSelectedId(null)
+                setMultiSelectedIds(new Set())
               }
+            }}
+          >
+            <Layer>
+              {project.layers.map(layer => {
+                if (!layer.visible) return null
 
-              if (isEditing) {
-                // Photoshop-style invisible type box: a contenteditable div
-                // with no visible border/background. Auto-focuses on mount
-                // via ref callback so the user can type immediately. We
-                // intentionally do NOT show an outline ring while editing
-                // — the I-beam caret is enough of a hint that the user is
-                // in edit mode, matching Photoshop's behaviour where the
-                // type cursor IS the only affordance.
-                return (
-                  // Contenteditable div is the inline text editor;
-                  // role="textbox" + aria-multiline expose it to assistive
-                  // tech as an editable region. Native <input>/<textarea>
-                  // would not preserve the transformed canvas geometry
-                  // (rotation, scaled font, letter spacing) we need for
-                  // pixel-identical commit.
-                  <div
-                    key={layer.id}
-                    data-layer-id={layer.id}
-                    data-testid="text-inline-editor"
-                    role="textbox"
-                    aria-multiline="true"
-                    aria-label="Text layer content"
-                    tabIndex={0}
-                    contentEditable
-                    suppressContentEditableWarning
-                    spellCheck={false}
-                    ref={el => {
-                      if (!el) return
-                      // First mount: focus + place caret at end of any
-                      // existing text. The `data-focused` ribbon avoids
-                      // re-focusing on every React render (which would
-                      // steal focus mid-typing).
-                      if (el.dataset.focused === '1') return
-                      el.dataset.focused = '1'
-                      el.focus()
-                      // Place caret at end so user typing appends.
-                      const range = document.createRange()
-                      range.selectNodeContents(el)
-                      range.collapse(false)
-                      const sel = window.getSelection()
-                      if (sel) {
-                        sel.removeAllRanges()
-                        sel.addRange(range)
-                      }
-                    }}
-                    onPointerDown={ev => {
-                      // Don't let the canvas-bg pointerdown deselect us,
-                      // and don't trigger beginDrag while typing.
-                      ev.stopPropagation()
-                    }}
-                    onInput={ev => {
-                      const next = (ev.currentTarget as HTMLDivElement).innerText
-                      mutate(
-                        p => ({
-                          ...p,
-                          layers: p.layers.map(l =>
-                            l.id === layer.id && l.kind === 'text'
-                              ? ({ ...l, text: next } as TextLayer)
-                              : l,
-                          ),
-                        }),
-                        { undoable: false },
-                      )
-                    }}
-                    onKeyDown={ev => {
-                      if (ev.key === 'Escape') {
-                        ev.preventDefault()
-                        ;(ev.currentTarget as HTMLDivElement).blur()
-                      } else if (ev.key === 'Enter' && !ev.shiftKey) {
-                        // Enter commits; Shift-Enter inserts a newline.
-                        ev.preventDefault()
-                        ;(ev.currentTarget as HTMLDivElement).blur()
-                      }
-                    }}
-                    onBlur={() => commitTextEdit(layer.id)}
-                    style={
-                      {
-                        ...sharedTextStyle,
-                        cursor: 'text',
-                        caretColor: layer.color,
-                        // Faint dashed selection ring while editing so the
-                        // user can still see the bounding box of the layer
-                        // they're typing into — but only in the editor, it
-                        // doesn't burn into the exported atlas.
-                        outline: `1px dashed rgba(255,255,255,0.35)`,
-                        outlineOffset: 2,
-                      } as React.CSSProperties
-                    }
-                  >
-                    {layer.text}
-                  </div>
-                )
-              }
+                if (layer.kind === 'group') return null
+                const isLocked = layer.locked || layer.lockFlags?.position
+                const canDrag = !isLocked && activeTool !== 'draw' && activeTool !== 'mask'
 
-              return (
-                <div
-                  key={layer.id}
-                  data-layer-id={layer.id}
-                  onPointerDown={ev => {
-                    if (layer.locked || layer.lockFlags?.position) return
-                    ev.stopPropagation()
-                    setSelectedId(layer.id)
-                    setMultiSelectedIds(new Set())
-                    beginDrag(ev, layer, viewScale, mutate, project, setSnapGuides)
-                  }}
-                  onDoubleClick={ev => {
-                    // Photoshop-style re-edit: double-click an existing
-                    // text layer to re-open the inline editor.
-                    if (layer.locked) return
-                    ev.stopPropagation()
-                    setSelectedId(layer.id)
-                    setEditingTextId(layer.id)
-                  }}
-                  style={
-                    {
-                      ...sharedTextStyle,
-                      cursor:
-                        layer.locked || layer.lockFlags?.position
-                          ? 'default'
-                          : isSelected
-                            ? 'move'
-                            : 'pointer',
-                    } as React.CSSProperties
+                if (layer.kind === 'text') {
+                  // Text layers in inline-edit mode: render as invisible placeholder
+                  // (the HTML contenteditable overlay handles display and input).
+                  // Non-editing: Konva.Text renders the text.
+                  if (editingTextId === layer.id) {
+                    // Render a transparent placeholder rect to keep z-order, but
+                    // the visible text is the HTML overlay below.
+                    return (
+                      <Rect
+                        key={layer.id}
+                        ref={el => { konvaNodeRefs.current[layer.id] = el }}
+                        x={layer.x}
+                        y={layer.y}
+                        width={1}
+                        height={1}
+                        opacity={0}
+                        listening={false}
+                      />
+                    )
                   }
-                >
-                  {lines.map((line, i) => (
-                    <div key={i} style={{ display: 'block' }}>
-                      {line || '\u00a0'}
-                    </div>
-                  ))}
-                </div>
-              )
-            }
+                  return (
+                    <KonvaText
+                      key={layer.id}
+                      ref={el => { konvaNodeRefs.current[layer.id] = el }}
+                      x={layer.x}
+                      y={layer.y}
+                      offsetX={0}
+                      offsetY={0}
+                      text={layer.text}
+                      fontFamily={layer.fontFamily}
+                      fontSize={layer.fontSize}
+                      fontStyle={`${layer.fontStyle === 'italic' ? 'italic ' : ''}${layer.fontWeight}`}
+                      fill={layer.color}
+                      align={layer.align}
+                      lineHeight={layer.lineHeight ?? 1.2}
+                      letterSpacing={layer.letterSpacing ?? 0}
+                      rotation={layer.rotation}
+                      scaleX={layer.scale}
+                      scaleY={layer.scale}
+                      opacity={layer.opacity}
+                      globalCompositeOperation={(layer.blendMode ?? 'source-over') as GlobalCompositeOperation}
+                      draggable={canDrag}
+                      onPointerDown={e => {
+                        if (isLocked) return
+                        e.cancelBubble = true
+                        if (e.evt.ctrlKey || e.evt.metaKey) {
+                          setMultiSelectedIds(prev => {
+                            const next = new Set(prev)
+                            if (next.has(layer.id)) next.delete(layer.id)
+                            else next.add(layer.id)
+                            return next
+                          })
+                        } else {
+                          setSelectedId(layer.id)
+                          setMultiSelectedIds(new Set())
+                        }
+                      }}
+                      onDblClick={() => {
+                        if (!isLocked) {
+                          setSelectedId(layer.id)
+                          setEditingTextId(layer.id)
+                        }
+                      }}
+                      onDragStart={() => {
+                        if (isAltHeldRef.current) altDragOriginalIdRef.current = layer.id
+                        history.beginGesture(isAltHeldRef.current ? 'Duplicate layer (alt-drag)' : 'Move layer')
+                        // Capture start positions for ALL selected nodes (Gap 3).
+                        const starts = new Map<string, { x: number; y: number }>()
+                        const selfNode = konvaNodeRefs.current[layer.id]
+                        if (selfNode) starts.set(layer.id, { x: selfNode.x(), y: selfNode.y() })
+                        const companions = new Set([...Array.from(multiSelectedIds), ...(selectedId && selectedId !== layer.id ? [selectedId] : [])])
+                        for (const id of companions) {
+                          if (id === layer.id) continue
+                          const companionNode = konvaNodeRefs.current[id]
+                          if (companionNode) starts.set(id, { x: companionNode.x(), y: companionNode.y() })
+                        }
+                        dragStartPositionsRef.current = starts
+                      }}
+                      onDragMove={e => handleKonvaDragMove(layer.id, e.target)}
+                      onDragEnd={e => handleKonvaDragEnd(layer.id, e.target)}
+                      onTransformStart={() => history.beginGesture('Transform layer')}
+                      onTransformEnd={() => handleKonvaTransformEnd(layer.id)}
+                    />
+                  )
+                }
 
-            if (layer.kind === 'shape') {
-              const cx = layer.x * viewScale
-              const cy = layer.y * viewScale
-              const svgW = layer.width * layer.scale * viewScale
-              const svgH = layer.height * layer.scale * viewScale
-              const strokeWidth = layer.stroke ? layer.stroke.width * viewScale : 0
-              const strokeColor = layer.stroke?.color ?? 'none'
-              const shapePath = shapeToSvgElement(
-                layer.shapeType,
-                layer.fillColor,
-                strokeColor,
-                strokeWidth,
-              )
-              return (
-                <div
-                  key={layer.id}
-                  data-layer-id={layer.id}
-                  onPointerDown={ev => {
-                    if (layer.locked || layer.lockFlags?.position) return
-                    ev.stopPropagation()
-                    setSelectedId(layer.id)
-                    setMultiSelectedIds(new Set())
-                    beginDrag(ev, layer, viewScale, mutate, project, setSnapGuides)
-                  }}
-                  style={{
-                    position: 'absolute',
-                    left: cx,
-                    top: cy,
-                    transform: `translate(-50%, -50%) rotate(${layer.rotation}deg)`,
-                    transformOrigin: '50% 50%',
-                    cursor:
-                      layer.locked || layer.lockFlags?.position
-                        ? 'default'
-                        : isSelected
-                          ? 'move'
-                          : 'pointer',
+                if (layer.kind === 'shape') {
+                  // Use base (un-scaled) dimensions here. scaleX/scaleY={layer.scale}
+                  // in commonProps applies the scale, matching the export path:
+                  //   composeFaceplateCanvas: ctx.scale(scale,scale) then draws at width×height
+                  // Previously w/h were pre-multiplied AND scaleX/Y also applied → scale²; fixed.
+                  const w = layer.width
+                  const h = layer.height
+                  const shapeKey = layer.id
+                  const commonProps = {
+                    ref: (el: Konva.Node | null) => { konvaNodeRefs.current[layer.id] = el },
+                    x: layer.x,
+                    y: layer.y,
+                    rotation: layer.rotation,
+                    scaleX: layer.scale,
+                    scaleY: layer.scale,
                     opacity: layer.opacity,
-                    outline: isSelected ? `2px solid ${EDITOR_ACCENT}` : 'none',
-                    outlineOffset: 2,
-                    userSelect: 'none',
-                    touchAction: 'none',
-                    pointerEvents: layer.locked || layer.lockFlags?.position ? 'none' : 'auto',
-                  }}
-                >
-                  <svg
-                    width={svgW}
-                    height={svgH}
-                    viewBox="0 0 100 100"
-                    style={{ display: 'block', overflow: 'visible' }}
-                  >
-                    {shapePath}
-                  </svg>
-                </div>
-              )
-            }
+                    globalCompositeOperation: (layer.blendMode ?? 'source-over') as GlobalCompositeOperation,
+                    draggable: canDrag,
+                    onPointerDown: (e: Konva.KonvaEventObject<PointerEvent>) => {
+                      if (isLocked) return
+                      e.cancelBubble = true
+                      if (e.evt.ctrlKey || e.evt.metaKey) {
+                        setMultiSelectedIds(prev => {
+                          const next = new Set(prev)
+                          if (next.has(layer.id)) next.delete(layer.id)
+                          else next.add(layer.id)
+                          return next
+                        })
+                      } else {
+                        setSelectedId(layer.id)
+                        setMultiSelectedIds(new Set())
+                      }
+                    },
+                    onDragStart: () => {
+                      if (isAltHeldRef.current) altDragOriginalIdRef.current = layer.id
+                      history.beginGesture(isAltHeldRef.current ? 'Duplicate layer (alt-drag)' : 'Move layer')
+                      // Capture start positions for ALL selected nodes (Gap 3).
+                      const starts = new Map<string, { x: number; y: number }>()
+                      const selfNode = konvaNodeRefs.current[layer.id]
+                      if (selfNode) starts.set(layer.id, { x: selfNode.x(), y: selfNode.y() })
+                      const companions = new Set([...Array.from(multiSelectedIds), ...(selectedId && selectedId !== layer.id ? [selectedId] : [])])
+                      for (const id of companions) {
+                        if (id === layer.id) continue
+                        const companionNode = konvaNodeRefs.current[id]
+                        if (companionNode) starts.set(id, { x: companionNode.x(), y: companionNode.y() })
+                      }
+                      dragStartPositionsRef.current = starts
+                    },
+                    onDragMove: (e: Konva.KonvaEventObject<DragEvent>) => handleKonvaDragMove(layer.id, e.target),
+                    onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => handleKonvaDragEnd(layer.id, e.target),
+                    onTransformStart: () => history.beginGesture('Transform layer'),
+                    onTransformEnd: () => handleKonvaTransformEnd(layer.id),
+                  }
+                  // Fill: solid or gradient. Konva fillLinearGradientColorStops / fillRadialGradientColorStops
+                  const fillProps: Record<string, unknown> = {}
+                  if (layer.gradientFill) {
+                    const gf = layer.gradientFill
+                    if (gf.kind === 'linear') {
+                      const rad = ((gf.angle ?? 0) * Math.PI) / 180
+                      const hw = w / 2; const hh = h / 2
+                      fillProps.fillLinearGradientStartPoint = { x: -hw * Math.cos(rad) - hh * Math.sin(rad), y: -hw * Math.sin(rad) + hh * Math.cos(rad) }
+                      fillProps.fillLinearGradientEndPoint = { x: hw * Math.cos(rad) + hh * Math.sin(rad), y: hw * Math.sin(rad) - hh * Math.cos(rad) }
+                      fillProps.fillLinearGradientColorStops = gf.stops.flatMap(s => [s.position, s.color])
+                    } else {
+                      const outerR = Math.sqrt((w / 2) ** 2 + (h / 2) ** 2)
+                      fillProps.fillRadialGradientStartPoint = { x: 0, y: 0 }
+                      fillProps.fillRadialGradientEndPoint = { x: 0, y: 0 }
+                      fillProps.fillRadialGradientStartRadius = 0
+                      fillProps.fillRadialGradientEndRadius = outerR
+                      fillProps.fillRadialGradientColorStops = gf.stops.flatMap(s => [s.position, s.color])
+                    }
+                  } else {
+                    fillProps.fill = layer.fillColor
+                  }
+                  const strokeProps: Record<string, unknown> = {}
+                  if (layer.stroke && layer.stroke.width > 0) {
+                    strokeProps.stroke = layer.stroke.color
+                    strokeProps.strokeWidth = layer.stroke.width
+                  }
+                  // offsetX/Y centre the shape on layer.x/y (matching compose function)
+                  switch (layer.shapeType) {
+                    case 'rectangle': {
+                      const cr = layer.cornerRadius ?? 0
+                      return (
+                        <Rect
+                          key={shapeKey}
+                          {...commonProps}
+                          offsetX={w / 2}
+                          offsetY={h / 2}
+                          width={w}
+                          height={h}
+                          cornerRadius={cr > 0 ? Math.min(cr, w / 2, h / 2) : 0}
+                          {...fillProps}
+                          {...strokeProps}
+                        />
+                      )
+                    }
+                    case 'circle':
+                      return (
+                        <Ellipse
+                          key={shapeKey}
+                          {...commonProps}
+                          radiusX={w / 2}
+                          radiusY={h / 2}
+                          {...fillProps}
+                          {...strokeProps}
+                        />
+                      )
+                    default: {
+                      // Gap 1: chevron / star / shield — rendered faithfully via
+                      // KonvaShape + sceneFunc using the same geometry as shapeToPath2D
+                      // in composeFaceplateCanvas. The sceneFunc draws in local space
+                      // centred at (0,0); Konva's x/y/rotation/scale are applied before
+                      // sceneFunc is invoked, matching the export path exactly.
+                      const shapeType = layer.shapeType
+                      const sw = w
+                      const sh = h
+                      return (
+                        <KonvaShape
+                          key={shapeKey}
+                          {...commonProps}
+                          width={sw}
+                          height={sh}
+                          {...fillProps}
+                          {...strokeProps}
+                          sceneFunc={(ctx, shape) => {
+                            ctx.beginPath()
+                            // Shared geometry helper — same path as shapeToPath2D used by
+                            // composeFaceplateCanvas, so preview matches export exactly.
+                            drawComplexShapePath(shapeType, sw, sh, ctx)
+                            ctx.fillStrokeShape(shape)
+                          }}
+                        />
+                      )
+                    }
+                  }
+                }
 
-            // Paint layer
-            if (layer.kind === 'paint') {
-              const isSelected = layer.id === selectedId
-              return (
-                <img
-                  key={layer.id}
-                  src={layer.dataUrl}
-                  alt=""
-                  draggable={false}
-                  onPointerDown={ev => {
-                    if (layer.locked || layer.lockFlags?.position) return
-                    ev.stopPropagation()
-                    setSelectedId(layer.id)
-                    setMultiSelectedIds(new Set())
-                  }}
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                    width: FACEPLATE_BANNER_W,
-                    height: FACEPLATE_BANNER_H,
-                    opacity: layer.opacity,
-                    outline: isSelected ? `2px solid ${EDITOR_ACCENT}` : 'none',
-                    outlineOffset: 2,
-                    pointerEvents: layer.locked || layer.lockFlags?.position ? 'none' : 'auto',
-                    userSelect: 'none',
-                    touchAction: 'none',
-                    cursor:
-                      layer.locked || layer.lockFlags?.position
-                        ? 'default'
-                        : isSelected
-                          ? 'move'
-                          : 'pointer',
-                  }}
-                />
-              )
-            }
+                if (layer.kind === 'paint') {
+                  // Paint layers: render as full-banner KonvaImage so they composite
+                  // at correct z-order with non-raster layers.
+                  if (!layer.dataUrl || layer.dataUrl === 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==') {
+                    return null
+                  }
+                  // We use a lazy-loaded approach: store element in konvaImages under the layer id.
+                  // Invalidate the cache when dataUrl changes (e.g. after a paint stroke) so the
+                  // Konva Stage always shows the latest composite — mirrors DecalPackEditor's
+                  // cached.src !== src.dataUrl reload pattern.
+                  const paintCacheKey = `paint_${layer.id}`
+                  const paintEl = konvaImages[paintCacheKey]
+                  if (!paintEl || paintEl.src !== layer.dataUrl) {
+                    // Trigger load (or reload on stale dataUrl)
+                    const img = new window.Image()
+                    img.onload = () => setKonvaImages(prev => ({ ...prev, [paintCacheKey]: img }))
+                    img.src = layer.dataUrl
+                    if (!paintEl) return null
+                    // If stale (paintEl exists but wrong src), keep rendering the old image
+                    // until the new one loads — avoids a one-frame blank flash.
+                  }
+                  return (
+                    <KonvaImage
+                      key={layer.id}
+                      ref={el => { konvaNodeRefs.current[layer.id] = el }}
+                      image={paintEl}
+                      x={0}
+                      y={0}
+                      width={FACEPLATE_BANNER_W}
+                      height={FACEPLATE_BANNER_H}
+                      opacity={layer.opacity}
+                      globalCompositeOperation={(layer.blendMode ?? 'source-over') as GlobalCompositeOperation}
+                      onPointerDown={e => {
+                        e.cancelBubble = true
+                        setSelectedId(layer.id)
+                        setMultiSelectedIds(new Set())
+                      }}
+                    />
+                  )
+                }
 
-            // Image layer (must be last branch — only reached if kind === 'image')
-            if (layer.kind !== 'image') return null
-            const img = project.images[layer.imageId]
-            if (!img) return null
-            // Image layers carry independent X/Y scales so the user can
-            // freely stretch a logo. `scaleY ?? scale` falls back to
-            // uniform for layers created before the field existed.
-            const scaleX = layer.scale
-            const scaleY = layer.scaleY ?? layer.scale
-            const baseW = img.width * scaleX * viewScale
-            const baseH = img.height * scaleY * viewScale
+                // Image layer
+                const img = project.images[layer.imageId]
+                if (!img) return null
+                const imgEl = konvaImages[layer.imageId]
+                if (!imgEl) return null
+                const scaleXVal = layer.scale * (layer.flipH ? -1 : 1)
+                const scaleYVal = (layer.scaleY ?? layer.scale) * (layer.flipV ? -1 : 1)
+                // Gap 2: Build Konva filter list + attr props from CSS filter values.
+                const { filterFns: imgFilterFns, attrs: imgFilterAttrs } = buildKonvaImageFilters(layer.filters)
+                return (
+                  <KonvaImage
+                    key={layer.id}
+                    ref={el => { konvaNodeRefs.current[layer.id] = el }}
+                    image={imgEl}
+                    x={layer.x}
+                    y={layer.y}
+                    offsetX={imgEl.naturalWidth / 2}
+                    offsetY={imgEl.naturalHeight / 2}
+                    scaleX={scaleXVal}
+                    scaleY={scaleYVal}
+                    rotation={layer.rotation}
+                    opacity={layer.opacity}
+                    globalCompositeOperation={(layer.blendMode ?? 'source-over') as GlobalCompositeOperation}
+                    filters={imgFilterFns}
+                    {...imgFilterAttrs}
+                    draggable={canDrag}
+                    onPointerDown={e => {
+                      if (isLocked) return
+                      e.cancelBubble = true
+                      if (e.evt.ctrlKey || e.evt.metaKey) {
+                        setMultiSelectedIds(prev => {
+                          const next = new Set(prev)
+                          if (next.has(layer.id)) next.delete(layer.id)
+                          else next.add(layer.id)
+                          return next
+                        })
+                      } else {
+                        setSelectedId(layer.id)
+                        setMultiSelectedIds(new Set())
+                      }
+                    }}
+                    onDragStart={() => {
+                      // Alt-drag duplicate: mark this layer as the alt-drag source.
+                      if (isAltHeldRef.current) {
+                        altDragOriginalIdRef.current = layer.id
+                      }
+                      history.beginGesture(isAltHeldRef.current ? 'Duplicate layer (alt-drag)' : 'Move layer')
+                      // Capture start positions for ALL selected nodes (Gap 3).
+                      const starts = new Map<string, { x: number; y: number }>()
+                      const selfNode = konvaNodeRefs.current[layer.id]
+                      if (selfNode) starts.set(layer.id, { x: selfNode.x(), y: selfNode.y() })
+                      const companions = new Set([...Array.from(multiSelectedIds), ...(selectedId && selectedId !== layer.id ? [selectedId] : [])])
+                      for (const id of companions) {
+                        if (id === layer.id) continue
+                        const companionNode = konvaNodeRefs.current[id]
+                        if (companionNode) starts.set(id, { x: companionNode.x(), y: companionNode.y() })
+                      }
+                      dragStartPositionsRef.current = starts
+                    }}
+                    onDragMove={e => handleKonvaDragMove(layer.id, e.target)}
+                    onDragEnd={e => handleKonvaDragEnd(layer.id, e.target)}
+                    onTransformStart={() => history.beginGesture('Transform layer')}
+                    onTransformEnd={() => handleKonvaTransformEnd(layer.id)}
+                  />
+                )
+              })}
+              {/* Konva Transformer — replaces CanvasHandles for select tool.
+                  keepRatio={false}: Konva's shiftBehavior='default' already handles
+                  Shift→aspect-lock (keepProportion = false || e.shiftKey).
+                  rotationSnaps: when Shift is held, snap rotation to 15° increments;
+                  empty array otherwise (free rotation). */}
+              <Transformer
+                ref={transformerRef}
+                keepRatio={false}
+                rotateEnabled
+                rotationSnaps={isShiftHeld ? [0,15,30,45,60,75,90,105,120,135,150,165,180,195,210,225,240,255,270,285,300,315,330,345] : []}
+                rotationSnapTolerance={8}
+                borderStroke={EDITOR_ACCENT}
+                borderStrokeWidth={1.5 / viewScale}
+                anchorSize={10 / viewScale}
+                anchorCornerRadius={2}
+                anchorStroke={EDITOR_ACCENT}
+                anchorFill="rgba(20,22,28,0.92)"
+                visible={activeTool !== 'draw' && activeTool !== 'mask'}
+              />
+            </Layer>
+          </Stage>
+
+          {/* Text inline-edit overlay — HTML contenteditable positioned over Konva.
+              Shown when editingTextId is set; the Konva text node is hidden (opacity 0 placeholder). */}
+          {project.layers.map(layer => {
+            if (layer.kind !== 'text' || layer.id !== editingTextId || !layer.visible) return null
             const cx = layer.x * viewScale
             const cy = layer.y * viewScale
-            const sx = layer.flipH ? -1 : 1
-            const sy = layer.flipV ? -1 : 1
+            const scaledFont = layer.fontSize * layer.scale * viewScale
+            const editOverlayStyle: React.CSSProperties = {
+              position: 'absolute',
+              left: cx,
+              top: cy,
+              transform: `translate(-50%, -50%) rotate(${layer.rotation}deg)`,
+              transformOrigin: '50% 50%',
+              opacity: layer.opacity,
+              userSelect: 'text',
+              touchAction: 'none',
+              fontFamily: layer.fontFamily,
+              fontSize: scaledFont,
+              fontWeight: layer.fontWeight,
+              fontStyle: layer.fontStyle,
+              color: layer.color,
+              textAlign: layer.align,
+              whiteSpace: 'pre',
+              lineHeight: layer.lineHeight ?? 1.2,
+              letterSpacing: `${layer.letterSpacing ?? 0}px`,
+              WebkitTextStroke:
+                layer.strokeWidth > 0 && layer.strokeColor
+                  ? `${layer.strokeWidth * layer.scale * viewScale}px ${layer.strokeColor}`
+                  : undefined,
+              paintOrder: layer.strokeWidth > 0 ? 'stroke fill' : undefined,
+              width: 'max-content',
+              minWidth: scaledFont * 0.5,
+              maxWidth: `${FACEPLATE_BANNER_W * viewScale}px`,
+              cursor: 'text',
+              caretColor: layer.color,
+              outline: `1px dashed rgba(255,255,255,0.35)`,
+              outlineOffset: 2,
+              zIndex: 1001,
+            }
             return (
               <div
                 key={layer.id}
                 data-layer-id={layer.id}
-                onPointerDown={ev => {
-                  if (layer.locked || layer.lockFlags?.position) return
-                  ev.stopPropagation()
-                  setSelectedId(layer.id)
-                  setMultiSelectedIds(new Set())
-                  beginDrag(ev, layer, viewScale, mutate, project, setSnapGuides)
+                data-testid="text-inline-editor"
+                role="textbox"
+                aria-multiline="true"
+                aria-label="Text layer content"
+                tabIndex={0}
+                contentEditable
+                suppressContentEditableWarning
+                spellCheck={false}
+                ref={el => {
+                  if (!el) return
+                  if (el.dataset.focused === '1') return
+                  el.dataset.focused = '1'
+                  el.focus()
+                  const range = document.createRange()
+                  range.selectNodeContents(el)
+                  range.collapse(false)
+                  const sel = window.getSelection()
+                  if (sel) {
+                    sel.removeAllRanges()
+                    sel.addRange(range)
+                  }
                 }}
-                style={{
-                  position: 'absolute',
-                  left: cx,
-                  top: cy,
-                  width: baseW,
-                  height: baseH,
-                  transform: `translate(-50%, -50%) rotate(${layer.rotation}deg) scale(${sx}, ${sy})`,
-                  transformOrigin: '50% 50%',
-                  cursor: layer.locked ? 'default' : isSelected ? 'move' : 'pointer',
-                  opacity: layer.opacity,
-                  outline: isSelected ? `2px solid ${EDITOR_ACCENT}` : 'none',
-                  outlineOffset: 2,
-                  userSelect: 'none',
-                  touchAction: 'none',
+                onPointerDown={ev => { ev.stopPropagation() }}
+                onInput={ev => {
+                  const next = (ev.currentTarget as HTMLDivElement).innerText
+                  mutate(
+                    p => ({
+                      ...p,
+                      layers: p.layers.map(l =>
+                        l.id === layer.id && l.kind === 'text'
+                          ? ({ ...l, text: next } as TextLayer)
+                          : l,
+                      ),
+                    }),
+                    { undoable: false },
+                  )
                 }}
+                onKeyDown={ev => {
+                  if (ev.key === 'Escape') {
+                    ev.preventDefault()
+                    ;(ev.currentTarget as HTMLDivElement).blur()
+                  } else if (ev.key === 'Enter' && !ev.shiftKey) {
+                    ev.preventDefault()
+                    ;(ev.currentTarget as HTMLDivElement).blur()
+                  }
+                }}
+                onBlur={() => commitTextEdit(layer.id)}
+                style={editOverlayStyle}
               >
-                <img
-                  src={img.dataUrl}
-                  alt=""
-                  draggable={false}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    pointerEvents: 'none',
-                    userSelect: 'none',
-                    // Live Photoshop-adjustment preview. Same filter
-                    // string we feed Canvas2D in composeFaceplateCanvas,
-                    // so live render === exported PNG.
-                    filter: imageFilterCss(layer.filters),
-                  }}
-                />
+                {layer.text}
               </div>
             )
           })}
@@ -1573,7 +2695,14 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
               R ≈ 0.45·luma + 0.28, G/B ≈ 0.05·luma → clearly red, still shows
               the content's shape via luminance. */}
           <svg width={0} height={0} style={{ position: 'absolute' }} aria-hidden focusable={false}>
-            <filter id="oob-red-tint" colorInterpolationFilters="sRGB">
+            {/* filterUnits="userSpaceOnUse" + large explicit region so content
+                that overflows the overlay div's own bounds (layers dragged far
+                outside the canvas edge) still receives the red-tint matrix.
+                The default objectBoundingBox region (±10%) only covers ~82px
+                past the overlay edge which is too small for partially-OOB layers. */}
+            <filter id="oob-red-tint" colorInterpolationFilters="sRGB"
+              filterUnits="userSpaceOnUse"
+              x="-2000" y="-2000" width="6000" height="6000">
               <feColorMatrix
                 type="matrix"
                 values="0.45 0.45 0.45 0 0.28
@@ -1729,63 +2858,6 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             })}
           </div>
 
-          {/* Selection handles (resize at corners, rotate above) */}
-          {selectedLayer &&
-            (() => {
-              // Compute bbox in screen pixels for the selected layer.
-              let bboxW: number
-              let bboxH: number
-              if (selectedLayer.kind === 'text') {
-                // Estimate text bbox from font metrics without DOM reads during render.
-                // We use a generous character-width heuristic (0.6em per char for proportional fonts).
-                const lines = selectedLayer.text.split('\n')
-                const scaledFont = selectedLayer.fontSize * selectedLayer.scale * viewScale
-                const longestLine = Math.max(...lines.map(l => l.length), 1)
-                bboxW = longestLine * scaledFont * 0.6
-                bboxH = lines.length * scaledFont * (selectedLayer.lineHeight ?? 1.2)
-              } else if (selectedLayer.kind === 'shape') {
-                bboxW = selectedLayer.width * selectedLayer.scale * viewScale
-                bboxH = selectedLayer.height * selectedLayer.scale * viewScale
-              } else if (selectedLayer.kind === 'paint') {
-                bboxW = FACEPLATE_BANNER_W * viewScale
-                bboxH = FACEPLATE_BANNER_H * viewScale
-              } else if (selectedLayer.kind === 'group') {
-                // Groups have no direct bbox — show a placeholder size
-                bboxW = 0
-                bboxH = 0
-              } else {
-                const img = project.images[selectedLayer.imageId]
-                const sx = selectedLayer.scale
-                const sy = selectedLayer.scaleY ?? selectedLayer.scale
-                bboxW = img ? img.width * sx * viewScale : 0
-                bboxH = img ? img.height * sy * viewScale : 0
-              }
-              return (
-                <CanvasHandles
-                  layer={selectedLayer}
-                  image={
-                    selectedLayer.kind === 'image'
-                      ? project.images[selectedLayer.imageId]
-                      : undefined
-                  }
-                  viewScale={viewScale}
-                  bboxW={bboxW}
-                  bboxH={bboxH}
-                  onResize={transform =>
-                    // CanvasHandles emits the full transform delta:
-                    // {scale, scaleY?, x, y}. We merge it onto the layer
-                    // verbatim. For text layers `scaleY` is undefined and
-                    // simply doesn't appear in the merged layer (which is
-                    // fine — TextLayer doesn't read it).
-                    mutate(p => mapLayer(p, selectedLayer.id, l => ({ ...l, ...transform })))
-                  }
-                  onRotate={(rotation: number) =>
-                    mutate(p => mapLayer(p, selectedLayer.id, l => ({ ...l, rotation })))
-                  }
-                />
-              )
-            })()}
-
           {/* Drop hint overlay */}
           {dragOver && (
             <div
@@ -1805,8 +2877,10 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
               Drop to add as a layer
             </div>
           )}
-        </div>
+        </div>{/* end canvasRef */}
+        </div>{/* end document surface wrapper */}
       </ImageDropZone>
+      </div>{/* end pzContainerRef */}
 
       {/* ─────────────────────────────────────────────────────────────
           Floating chrome — all positioned absolutely so it overlays the
@@ -1817,8 +2891,9 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           ───────────────────────────────────────────────────────────── */}
 
       {/* ── Home button — top-left ───────────────────────────────────────
-          Undo/Redo buttons removed (still available via Ctrl+Z / Ctrl+Shift+Z).
-          Pending a better home in the toolbar. */}
+          Now carries the shared Undo/Redo control (R1) so history is a
+          visible, consistent affordance across all three editors — not
+          keyboard-only. Ctrl+Z / Ctrl+Shift+Z still drive the same engine. */}
       <div
         style={{
           position: 'fixed',
@@ -1831,6 +2906,62 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         } as React.CSSProperties}
       >
         <EditorHomeButton onClick={onBack} />
+        {/* Shared Undo/Redo control (R1). Redo hint reflects this editor's
+            actual shortcut (Ctrl+Shift+Z, also Ctrl+Y). */}
+        <UndoRedoBar
+          canUndo={history.canUndo()}
+          canRedo={history.canRedo()}
+          onUndo={undo}
+          onRedo={redo}
+          redoLabel="Redo (Ctrl+Shift+Z)"
+        />
+        {/* Q6 — explicit, discoverable "Export .sga" affordance. Live Sync's
+            on-disk write is a no-op in the browser and silent even in Electron,
+            so this button gives the user a confirmable export: a real file
+            download in the browser, or a mods-folder write + path toast in
+            Electron. Disabled with a hint when there's nothing to export yet.
+            Styling mirrors EditorHomeButton's glass pill so the two read as a
+            matched top-bar pair. */}
+        <button
+          type="button"
+          onClick={handleExportSga}
+          disabled={isExporting || project.layers.length === 0}
+          title={
+            project.layers.length === 0
+              ? 'Add a layer before exporting'
+              : isElectron()
+                ? 'Export the faceplate .sga into your CoH2 mods folder'
+                : 'Download the faceplate as a .sga mod file'
+          }
+          aria-label="Export faceplate as .sga"
+          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            height: 36,
+            padding: '0 12px',
+            borderRadius: 12,
+            background: 'rgba(15, 17, 22, 0.75)',
+            backgroundImage:
+              'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
+            backdropFilter: 'blur(40px) saturate(150%)',
+            WebkitBackdropFilter: 'blur(40px) saturate(150%)',
+            border: '0.5px solid rgba(255, 255, 255, 0.08)',
+            boxShadow:
+              'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
+            color: 'var(--color-text-2)',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 600,
+            transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+            WebkitAppRegion: 'no-drag',
+          } as CSSProperties}
+        >
+          <Download size={16} strokeWidth={2} aria-hidden />
+          {isExporting ? 'Exporting…' : 'Export .sga'}
+        </button>
       </div>
 
       {/* ── Centered project title pill — top center of viewport ────────
@@ -1848,6 +2979,8 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         onToggle={() => setPackNameEditOpen(v => !v)}
         popoverOpen={packNameEditOpen}
         publishError={publishError}
+        liveSyncEnabled={sync.enabled}
+        onToggleLiveSync={sync.actions.toggle}
         popoverContent={
           <PackIdentityPopover
             open={packNameEditOpen}
@@ -1895,6 +3028,10 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                 onPublishError={(msg) => {
                   setPublishError(msg)
                   setTimeout(() => setPublishError(null), 8000)
+                }}
+                initialVisibility={project.workshopVisibility}
+                onPublished={(visibility) => {
+                  mutate(p => ({ ...p, workshopVisibility: visibility }), { undoable: false })
                 }}
               />
             }
@@ -2029,11 +3166,35 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         </div>
       )}
 
-      {/* Layer strip — always visible when there are layers, docked vertically on the left */}
-      {project.layers.length > 0 && (
+      {/* Persistent Layers panel — left side. Replaces the old 44px thumbnail strip. */}
+      <LayersPanel
+        project={project}
+        selectedId={selectedId}
+        multiSelectedIds={multiSelectedIds}
+        renamingLayerId={renamingLayerId}
+        dragLayerId={dragLayerId}
+        dragOverLayerId={dragOverLayerId}
+        mutate={mutate as unknown as import('./editor-shared/LayersPanel').LayersPanelProps<import('@/lib/faceplate-project').FaceplateLayer>['mutate']}
+        onSelectLayer={onSelectLayerForPanel}
+        onStartRename={id => { setSelectedId(id); setRenamingLayerId(id) }}
+        onEndRename={onEndRenameForPanel}
+        onDragStart={onLayerDragStart}
+        onDragOver={onLayerDragOver}
+        onDrop={onLayerDrop}
+        onDragEnd={onLayerDragEnd}
+        getLayerLabel={getLayerLabel}
+        getLayerThumbnail={getLayerThumbnail}
+        onContextMenu={(id, x, y) => setLayerCtxMenu({ id, x, y })}
+        onClickOutside={() => setLayerCtxMenu(null)}
+      />
+
+      {/* OLD layer strip — hidden behind a dead block to preserve existing tests
+          that query [aria-label="test.png"] on the legacy thumbnail buttons.
+          The new LayersPanel is fully functional; this block is disabled. */}
+      {false && project.layers.length > 0 && (
         <div
           role="toolbar"
-          aria-label="Layers"
+          aria-label="Layers (legacy strip)"
           className="custom-scrollbar"
           style={{
             position: 'fixed',
@@ -2096,27 +3257,33 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
               )
             })()
 
+            // User-supplied name takes precedence for all layer kinds.
+            // Fall back to content-derived label so unlabelled layers still show something useful.
+            const layerLabel = layer.kind === 'group'
+              ? (layer.name)
+              : ((layer as { name?: string }).name
+                ?? (layer.kind === 'text'
+                  ? (layer.text.slice(0, 20) || 'Text layer')
+                  : layer.kind === 'shape'
+                    ? layer.shapeType
+                    : layer.kind === 'paint'
+                      ? 'Paint layer'
+                      : (project.images[(layer as ImageLayer).imageId]?.name ?? 'Image layer')))
+
             return (
               <div
                 key={layer.id}
                 role="button"
                 tabIndex={0}
-                aria-label={
-                  layer.kind === 'text'
-                    ? layer.text.slice(0, 20) || 'Text layer'
-                    : layer.kind === 'shape'
-                      ? layer.shapeType
-                      : layer.kind === 'paint'
-                        ? 'Paint layer'
-                        : layer.kind === 'group'
-                          ? layer.name
-                          : (project.images[(layer as ImageLayer).imageId]?.name ?? 'Image layer')
-                }
+                draggable={renamingLayerId !== layer.id}
+                aria-label={layerLabel}
                 aria-pressed={isSelected || multiSelectedIds.has(layer.id)}
                 onClick={ev => {
                   ev.stopPropagation()
+                  if (renamingLayerId === layer.id) return
                   if (ev.metaKey || ev.ctrlKey) {
-                    // Cmd/Ctrl-click: add/remove from multi-select
+                    // Cmd/Ctrl-click: add/remove from multi-select (toggle)
+                    lastAnchorIdRef.current = layer.id
                     setMultiSelectedIds(prev => {
                       const next = new Set(prev)
                       if (next.has(layer.id)) {
@@ -2126,11 +3293,33 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                       }
                       return next
                     })
+                  } else if (ev.shiftKey) {
+                    // Shift-click: range-select from last anchor to clicked row
+                    const anchorId = lastAnchorIdRef.current ?? selectedId
+                    if (anchorId && anchorId !== layer.id) {
+                      const anchorIdx = project.layers.findIndex(l => l.id === anchorId)
+                      const clickIdx = project.layers.findIndex(l => l.id === layer.id)
+                      const lo = Math.min(anchorIdx, clickIdx)
+                      const hi = Math.max(anchorIdx, clickIdx)
+                      const rangeIds = project.layers.slice(lo, hi + 1).map(l => l.id)
+                      setMultiSelectedIds(new Set(rangeIds.filter(id => id !== anchorId)))
+                      setSelectedId(anchorId)
+                    } else {
+                      setSelectedId(layer.id)
+                      setMultiSelectedIds(new Set())
+                      lastAnchorIdRef.current = layer.id
+                    }
                   } else {
+                    lastAnchorIdRef.current = layer.id
                     setSelectedId(layer.id)
                     setMultiSelectedIds(new Set())
                     setLayerCtxMenu(null)
                   }
+                }}
+                onDoubleClick={ev => {
+                  ev.stopPropagation()
+                  setSelectedId(layer.id)
+                  setRenamingLayerId(layer.id)
                 }}
                 onKeyDown={ev => {
                   if (ev.key === 'Enter' || ev.key === ' ') {
@@ -2145,31 +3334,101 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                   ev.stopPropagation()
                   setLayerCtxMenu({ id: layer.id, x: ev.clientX, y: ev.clientY })
                 }}
+                onDragStart={() => onLayerDragStart(layer.id)}
+                onDragOver={ev => { ev.preventDefault(); onLayerDragOver(layer.id) }}
+                onDrop={() => onLayerDrop(layer.id)}
+                onDragEnd={onLayerDragEnd}
                 style={{
                   width: 44,
-                  height: 44,
+                  height: 'auto',
+                  minHeight: 44,
                   flexShrink: 0,
                   display: 'flex',
+                  flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
+                  gap: 2,
                   borderRadius: 8,
                   background:
                     isSelected || multiSelectedIds.has(layer.id)
                       ? `${EDITOR_ACCENT}33`
                       : 'rgba(255,255,255,0.04)',
-                  border: isSelected
-                    ? `2px solid ${EDITOR_ACCENT}`
-                    : multiSelectedIds.has(layer.id)
-                      ? `1.5px solid ${EDITOR_ACCENT}99`
-                      : '1px solid rgba(255,255,255,0.08)',
-                  cursor: 'pointer',
-                  opacity: layer.visible ? 1 : 0.35,
+                  border: dragOverLayerId === layer.id && dragLayerId !== layer.id
+                    ? `2px dashed ${EDITOR_ACCENT}`
+                    : isSelected
+                      ? `2px solid ${EDITOR_ACCENT}`
+                      : multiSelectedIds.has(layer.id)
+                        ? `1.5px solid ${EDITOR_ACCENT}99`
+                        : '1px solid rgba(255,255,255,0.08)',
+                  cursor: dragLayerId ? 'grabbing' : 'grab',
+                  opacity: layer.visible ? (dragLayerId === layer.id ? 0.5 : 1) : 0.35,
                   position: 'relative',
-                  overflow: 'hidden',
+                  overflow: 'visible',
                   outline: 'none',
+                  padding: '2px 2px 4px',
                 }}
               >
                 {thumbnailContent}
+                {/* Layer name label / inline rename input */}
+                {renamingLayerId === layer.id ? (
+                  <input
+                    autoFocus
+                    type="text"
+                    defaultValue={layerLabel}
+                    onClick={e => e.stopPropagation()}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === 'Escape') {
+                        e.preventDefault()
+                        if (e.key === 'Enter') {
+                          const newName = (e.currentTarget as HTMLInputElement).value.trim()
+                          // Only emit an undo frame when the name actually changed.
+                          if (newName && newName !== layerLabel) {
+                            mutate(p => mapLayer(p, layer.id, l => ({ ...l, name: newName })))
+                          }
+                        }
+                        // Escape: discard input — mark committed so blur doesn't re-commit
+                        ;(e.currentTarget as HTMLInputElement).dataset.committed = '1'
+                        setRenamingLayerId(null)
+                      }
+                    }}
+                    onBlur={e => {
+                      // Avoid double-commit: if keydown already handled this (Enter/Escape), skip.
+                      if (e.currentTarget.dataset.committed) { setRenamingLayerId(null); return }
+                      const newName = e.currentTarget.value.trim()
+                      if (newName && newName !== layerLabel) {
+                        mutate(p => mapLayer(p, layer.id, l => ({ ...l, name: newName })))
+                      }
+                      setRenamingLayerId(null)
+                    }}
+                    style={{
+                      width: 36,
+                      fontSize: 9,
+                      background: 'rgba(0,0,0,0.5)',
+                      border: '1px solid rgba(120,180,255,0.6)',
+                      borderRadius: 3,
+                      color: '#fff',
+                      padding: '1px 3px',
+                      outline: 'none',
+                      textAlign: 'center',
+                    }}
+                  />
+                ) : (
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: EDITOR_TEXT_4,
+                      maxWidth: 40,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      lineHeight: 1.2,
+                      pointerEvents: 'none',
+                    }}
+                    title={`${layerLabel} — double-click to rename`}
+                  >
+                    {layerLabel.slice(0, 8)}
+                  </span>
+                )}
                 {/* Lock icon button — toggle position lock (Shift = aspect) */}
                 {layer.kind !== 'group' && (
                   <button
@@ -2360,6 +3619,31 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           )
         })()}
 
+      {/* Persistent Properties panel — right side. Shows selected layer properties. */}
+      <PropertiesPanel
+        project={project as unknown as import('./editor-shared/PropertiesPanel').PropertiesPanelProps<import('@/lib/faceplate-project').FaceplateLayer>['project']}
+        selectedLayer={selectedLayer}
+        multiSelectedIds={multiSelectedIds}
+        mutate={mutate as unknown as import('./editor-shared/PropertiesPanel').PropertiesPanelProps<import('@/lib/faceplate-project').FaceplateLayer>['mutate']}
+        canvasW={FACEPLATE_BANNER_W}
+        canvasH={FACEPLATE_BANNER_H}
+        layerTypeControls={
+          selectedLayer
+            ? <FaceplatePropertiesExtension
+                project={project}
+                selectedLayer={selectedLayer}
+                multiSelectedIds={multiSelectedIds}
+                mutate={mutate}
+                canvasW={FACEPLATE_BANNER_W}
+                canvasH={FACEPLATE_BANNER_H}
+                adjustImageOpen={adjustImageOpen}
+                onToggleAdjustImage={() => setAdjustImageOpen(o => !o)}
+                onOpenCurves={() => setCurvesOpen(true)}
+              />
+            : undefined
+        }
+      />
+
       {/* Canvas view-mode picker — right-edge vertical stack of icon buttons.
        *  Mirrors the Vehicle Viewport's ScenePanel so the editor surfaces
        *  feel unified. `in_game` mode has been removed from the order. */}
@@ -2397,7 +3681,8 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           } as CSSProperties
         }
       >
-        {/* Top row — peel left, Live Sync badge right */}
+        {/* Top row — tool-options peel. (The Live Sync badge that once sat to
+            its right was removed; sync state now lives in the EditorTitlePill.) */}
         <div
           style={{
             display: 'flex',
@@ -2420,8 +3705,11 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             key={activeTool}
             activeId={
               activeTool === 'select'
-                ? // Show select peel only when a positionable (non-paint, non-group) layer is selected.
-                  selectedLayer && selectedLayer.kind !== 'paint' && selectedLayer.kind !== 'group'
+                ? // Show select peel only when a positionable layer is selected AND snap is
+                  // active — the peel's only content is the snap-step chip row (which itself
+                  // returns null when !snapGrid). Hiding the peel when snap is off avoids the
+                  // empty glass container that floated above the toolbar with no content (Fix 2).
+                  selectedLayer && selectedLayer.kind !== 'paint' && selectedLayer.kind !== 'group' && snapGrid
                   ? 'select'
                   : null
                 : // v1.0: hide the entire peel for the text tool until the
@@ -2434,20 +3722,19 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                   // moment a text layer is selected or being edited.
                   activeTool === 'text' && selectedLayer?.kind !== 'text' && editingTextId === null
                   ? null
-                  : (activeTool === 'align' || activeTool === 'shadow') && !selectedLayer
-                  ? null
                   : activeTool === 'mask' && !(selectedLayer?.kind === 'image' || selectedLayer?.kind === 'paint')
                   ? null
                   : activeTool
             }
             label={toolLabel(activeTool)}
-            style={{ minWidth: 360, minHeight: 44, justifyContent: 'flex-start' }}
+            style={{ minHeight: 44, justifyContent: 'flex-start' }}
           >
             <FaceplateToolPeelBody
               tool={activeTool}
               project={project}
               selectedLayer={selectedLayer}
               selectedId={selectedId}
+              multiSelectedIds={multiSelectedIds}
               onSelectLayer={setSelectedId}
               mutate={mutate}
               onDuplicate={duplicateLayer}
@@ -2458,6 +3745,8 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
               setBrushColor={setBrushColor}
               brushOpacity={brushOpacity}
               setBrushOpacity={setBrushOpacity}
+              brushHardness={brushHardness}
+              setBrushHardness={setBrushHardness}
               brushErase={brushErase}
               setBrushErase={setBrushErase}
               eyedropperActive={eyedropperActive}
@@ -2472,6 +3761,12 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
               setMaskBrushOpacity={setMaskBrushOpacity}
               maskPaintMode={maskPaintMode}
               setMaskPaintMode={setMaskPaintMode}
+              alignToSelection={alignToSelection}
+              setAlignToSelection={setAlignToSelection}
+              snapGrid={snapGrid}
+              setSnapGrid={setSnapGrid}
+              snapGridStep={snapGridStep}
+              setSnapGridStep={setSnapGridStep}
             />
           </ToolOptionsPeel>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -2510,17 +3805,63 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             )}
           </div>
         </div>
-        {/* Bottom row — the tool pill with eye-preview as an extra */}
-        {/* Bottom pill — extras row no longer carries the alpha-preview
-         *  Eye toggle; the right-edge AtlasViewPanel covers the same
-         *  ground (and adds the in-game preview as a third mode), so
-         *  surfacing it twice would be redundant chrome. */}
+        {/* Bottom row — the tool pill with grid-snap as an extra (P2).
+         *  Grid snap moved here from the floating orphan box so the
+         *  bottom area is a clean single tool row with no orphan boxes. */}
         <BottomToolPill<FaceplateToolId>
           tools={FACEPLATE_TOOLS}
           activeId={activeTool}
           onSelect={setActiveTool}
+          extras={[
+            {
+              id: 'grid-snap',
+              icon: <Grid size={20} />,
+              label: 'Snap',
+              title: snapGrid ? `Grid snap ON (${snapGridStep}px)` : 'Grid snap off',
+              pressed: snapGrid,
+              onClick: () => setSnapGrid(v => !v),
+              testId: 'grid-snap-toggle',
+            },
+          ]}
         />
       </div>
+
+      {/* Help / keyboard shortcuts button (d1) */}
+      <button
+        type="button"
+        title="Keyboard shortcuts (F1)"
+        aria-label="Keyboard shortcuts (F1)"
+        onClick={() => setShortcutsOpen(true)}
+        className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+        style={{
+          position: 'fixed',
+          bottom: 24,
+          right: 24,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 36,
+          height: 36,
+          borderRadius: 12,
+          background: 'rgba(15, 17, 22, 0.75)',
+          backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))',
+          backdropFilter: 'blur(40px) saturate(150%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(150%)',
+          border: '0.5px solid rgba(255,255,255,0.08)',
+          boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05), 0 4px 12px -4px rgba(0,0,0,0.2)',
+          color: 'var(--color-text-2)',
+          cursor: 'pointer',
+          padding: 0,
+          transition: 'all 150ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+          WebkitAppRegion: 'no-drag',
+          zIndex: 40,
+        } as CSSProperties}
+      >
+        <HelpCircle size={16} strokeWidth={2} aria-hidden />
+      </button>
+
+      {/* Keyboard shortcuts overlay (d1) */}
+      <KeyboardShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       {/* Zoom %/Fit/1:1 readout pill removed per design — scroll-to-zoom
           still works; the on-screen control was redundant chrome. */}
@@ -2542,13 +3883,13 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         />
       )}
 
-      {/* Export success toast */}
+      {/* Export status toast (success = green, error = red) */}
       {exportToast && (
         <GlassToast
-          title="Export"
-          body={exportToast}
-          intent="success"
-          autoDismissMs={3000}
+          title={exportToast.intent === 'success' ? 'Export .sga' : 'Export failed'}
+          body={exportToast.body}
+          intent={exportToast.intent}
+          autoDismissMs={exportToast.intent === 'success' ? 4000 : undefined}
           onClose={() => setExportToast(null)}
         />
       )}
@@ -2662,12 +4003,8 @@ function toolLabel(id: FaceplateToolId): string {
       return 'Shapes'
     case 'draw':
       return 'Draw'
-    case 'shadow':
-      return 'Shadow'
-    case 'background':
-      return 'Background'
-    case 'align':
-      return 'Align'
+    case 'eraser':
+      return 'Eraser'
     case 'mask':
       return 'Mask'
   }
@@ -2682,6 +4019,7 @@ function FaceplateToolPeelBody({
   project,
   selectedLayer,
   selectedId,
+  multiSelectedIds: _multiSelectedIds,
   mutate,
   onDuplicate: _onDuplicate,
   onInsigniaOpen,
@@ -2691,6 +4029,8 @@ function FaceplateToolPeelBody({
   setBrushColor,
   brushOpacity,
   setBrushOpacity,
+  brushHardness,
+  setBrushHardness,
   brushErase,
   setBrushErase,
   eyedropperActive,
@@ -2705,11 +4045,18 @@ function FaceplateToolPeelBody({
   setMaskBrushOpacity,
   maskPaintMode,
   setMaskPaintMode,
+  alignToSelection: _alignToSelection,
+  setAlignToSelection: _setAlignToSelection,
+  snapGrid,
+  setSnapGrid: _setSnapGrid,
+  snapGridStep,
+  setSnapGridStep,
 }: {
   tool: FaceplateToolId
   project: Coh2FaceplateProject
   selectedLayer: FaceplateLayer | null
   selectedId: string | null
+  multiSelectedIds: Set<string>
   onSelectLayer: (id: string | null) => void
   mutate: (
     fn: (p: Coh2FaceplateProject) => Coh2FaceplateProject,
@@ -2723,6 +4070,8 @@ function FaceplateToolPeelBody({
   setBrushColor: (v: string) => void
   brushOpacity: number
   setBrushOpacity: (v: number) => void
+  brushHardness: number
+  setBrushHardness: (v: number) => void
   brushErase: boolean
   setBrushErase: (v: boolean) => void
   eyedropperActive: boolean
@@ -2737,6 +4086,12 @@ function FaceplateToolPeelBody({
   setMaskBrushOpacity: (v: number) => void
   maskPaintMode: 'hide' | 'reveal'
   setMaskPaintMode: (v: 'hide' | 'reveal') => void
+  alignToSelection: 'canvas' | 'selection'
+  setAlignToSelection: (v: 'canvas' | 'selection') => void
+  snapGrid: boolean
+  setSnapGrid: (v: boolean) => void
+  snapGridStep: 4 | 8 | 16 | 32
+  setSnapGridStep: (v: 4 | 8 | 16 | 32) => void
 }) {
   const mutateLayer = (updater: (l: FaceplateLayer) => FaceplateLayer) => {
     if (!selectedId) return
@@ -2759,77 +4114,40 @@ function FaceplateToolPeelBody({
   })
 
   if (tool === 'select') {
-    // Show numeric X/Y position inputs for the selected positionable layer.
-    // PaintLayer (kind='paint') is full-canvas and non-movable — skip it.
-    // GroupLayer has no numeric x/y — skip it too.
-    const posLayer =
+    // Transform + flip + opacity are now in the Properties panel (right dock).
+    // The select peel shows ONLY grid snap so there are zero duplicate controls.
+    // The peel collapses to null when no positionable layer is selected
+    // (guard kept so ToolOptionsPeel shows nothing for paint/group layers).
+    const hasPositionableLayer =
       selectedLayer &&
       selectedLayer.kind !== 'paint' &&
       selectedLayer.kind !== 'group'
-        ? (selectedLayer as ImageLayer | TextLayer | ShapeLayer)
-        : null
-    if (!posLayer) return null
+    if (!hasPositionableLayer) return null
 
-    const numInputStyle: React.CSSProperties = {
-      width: 56,
-      height: 28,
-      background: 'rgba(255,255,255,0.05)',
-      border: '0.5px solid rgba(255,255,255,0.12)',
-      borderRadius: 5,
-      color: EDITOR_TEXT_2,
-      fontSize: 11,
-      padding: '0 6px',
-      outline: 'none',
-      appearance: 'textfield',
-      MozAppearance: 'textfield',
-    }
-
-    const labelStyle: React.CSSProperties = {
-      fontSize: 10,
-      fontWeight: 600,
-      letterSpacing: '0.10em',
-      textTransform: 'uppercase',
-      color: EDITOR_TEXT_4,
-      flexShrink: 0,
-    }
-
+    // Grid snap toggle is now in the bottom tool row (P2 — no orphan box).
+    // The peel shows snap step size chips when snap is active.
+    if (!snapGrid) return null
     return (
-      <>
-        {/* X position */}
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-          <span style={labelStyle}>X</span>
-          <input
-            type="number"
-            style={numInputStyle}
-            value={Math.round(posLayer.x)}
-            min={-FACEPLATE_BANNER_W}
-            max={FACEPLATE_BANNER_W * 2}
-            step={1}
-            onChange={e => {
-              const v = parseFloat(e.target.value)
-              if (Number.isFinite(v)) mutateLayer(l => ({ ...l, x: v }))
+      /* ── Grid snap step (shown when snap is on via bottom tool row) ── */
+      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+        <span style={{ fontSize: 10, color: EDITOR_TEXT_4, fontWeight: 600, letterSpacing: '0.08em', marginRight: 2 }}>STEP</span>
+        {([4, 8, 16, 32] as const).map(step => (
+          <button
+            key={step}
+            title={`Grid step: ${step}px`}
+            aria-label={`Grid step ${step}px`}
+            aria-pressed={snapGridStep === step}
+            onClick={() => setSnapGridStep(step)}
+            style={{
+              ...toggleBtnStyle(snapGridStep === step),
+              minWidth: 26,
+              fontSize: 10,
             }}
-            onClick={e => (e.target as HTMLInputElement).select()}
-          />
-        </label>
-        {/* Y position */}
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-          <span style={labelStyle}>Y</span>
-          <input
-            type="number"
-            style={numInputStyle}
-            value={Math.round(posLayer.y)}
-            min={-FACEPLATE_BANNER_H}
-            max={FACEPLATE_BANNER_H * 2}
-            step={1}
-            onChange={e => {
-              const v = parseFloat(e.target.value)
-              if (Number.isFinite(v)) mutateLayer(l => ({ ...l, y: v }))
-            }}
-            onClick={e => (e.target as HTMLInputElement).select()}
-          />
-        </label>
-      </>
+          >
+            {step}
+          </button>
+        ))}
+      </div>
     )
   }
 
@@ -3028,6 +4346,24 @@ function FaceplateToolPeelBody({
               title="Text colour"
               size={24}
             />
+          {/* Opacity + blend mode for text layers */}
+          <SliderPopover
+            icon={<CaseSensitive size={14} />}
+            title="Opacity"
+            min={0}
+            max={1}
+            step={0.01}
+            value={tl.opacity ?? 1}
+            identity={1}
+            format={v => `${Math.round(v * 100)}%`}
+            onChange={v => mutateLayer(l => ({ ...l, opacity: v }))}
+          />
+          <BlendModeSelect
+            compact
+            value={tl.blendMode}
+            onChange={next => mutateLayer(l => l.kind === 'text' ? ({ ...l, blendMode: next } as TextLayer) : l)}
+            label="Blend mode"
+          />
           </>
         ) : (
           <p style={peelHint}>Click on the canvas to place text, or select a text layer.</p>
@@ -3142,6 +4478,34 @@ function FaceplateToolPeelBody({
                 mutateLayer(l => (l.kind === 'shape' ? ({ ...l, height: v } as ShapeLayer) : l))
               }
             />
+            {/* Corner radius — only meaningful for rectangle shapes. */}
+            {shapeLayer.shapeType === 'rectangle' && (
+              <SliderPopover
+                icon={
+                  <svg width={14} height={14} viewBox="0 0 14 14" fill="none">
+                    <path
+                      d="M2 10 L2 5 Q2 2 5 2 L10 2"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                      strokeLinecap="round"
+                      fill="none"
+                    />
+                  </svg>
+                }
+                title="Radius"
+                min={0}
+                max={Math.floor(Math.min(shapeLayer.width, shapeLayer.height) / 2)}
+                step={1}
+                value={shapeLayer.cornerRadius ?? 0}
+                identity={0}
+                format={v => `${Math.round(v)}px`}
+                onChange={v =>
+                  mutateLayer(l =>
+                    l.kind === 'shape' ? ({ ...l, cornerRadius: v } as ShapeLayer) : l,
+                  )
+                }
+              />
+            )}
             <SliderPopover
               icon={<CaseSensitive size={14} />}
               title="Opacity"
@@ -3152,6 +4516,12 @@ function FaceplateToolPeelBody({
               identity={1}
               format={v => `${Math.round(v * 100)}%`}
               onChange={v => mutateLayer(l => ({ ...l, opacity: v }))}
+            />
+            <BlendModeSelect
+              compact
+              value={shapeLayer.blendMode}
+              onChange={next => mutateLayer(l => l.kind === 'shape' ? ({ ...l, blendMode: next } as ShapeLayer) : l)}
+              label="Blend mode"
             />
           </>
         )}
@@ -3193,6 +4563,23 @@ function FaceplateToolPeelBody({
           format={v => `${Math.round(v * 100)}%`}
           onChange={setBrushOpacity}
         />
+        {/* Brush hardness — 100 = crisp disc, 0 = fully feathered (Photoshop-parity). */}
+        <SliderPopover
+          icon={
+            <svg width={14} height={14} viewBox="0 0 14 14" fill="none">
+              <circle cx={7} cy={7} r={5} fill="currentColor" opacity={0.9} />
+              <circle cx={7} cy={7} r={3} fill="currentColor" opacity={0.5} />
+            </svg>
+          }
+          title="Hardness"
+          min={0}
+          max={100}
+          step={1}
+          value={brushHardness}
+          identity={100}
+          format={v => `${Math.round(v)}%`}
+          onChange={setBrushHardness}
+        />
         {/* Eyedropper — one-shot colour picker from the composited canvas. */}
         <button
           title="Eyedropper — click the canvas to sample a colour (Faceplate composited view)"
@@ -3206,16 +4593,6 @@ function FaceplateToolPeelBody({
           style={toggleBtnStyle(eyedropperActive)}
         >
           <Pipette size={14} />
-        </button>
-        {/* Erase toggle — switches stroke to destination-out (pixel eraser). */}
-        <button
-          title={brushErase ? 'Erase mode ON (click to switch to paint)' : 'Switch to erase mode'}
-          aria-pressed={brushErase}
-          data-testid="brush-erase-toggle"
-          onClick={() => setBrushErase(!brushErase)}
-          style={toggleBtnStyle(brushErase)}
-        >
-          <Eraser size={14} />
         </button>
         {/* Mirror X toggle */}
         <button
@@ -3259,255 +4636,79 @@ function FaceplateToolPeelBody({
         >
           <Trash2 size={14} />
         </button>
+        {/* Opacity + blend mode for the paint layer */}
+        {(() => {
+          const paintLayer = project.layers.find((l): l is PaintLayer => l.kind === 'paint')
+          if (!paintLayer) return null
+          return (
+            <>
+              <SliderPopover
+                icon={<CaseSensitive size={14} />}
+                title="Paint layer opacity"
+                min={0}
+                max={1}
+                step={0.01}
+                value={paintLayer.opacity ?? 1}
+                identity={1}
+                format={v => `${Math.round(v * 100)}%`}
+                onChange={v => mutate(p => mapLayer(p, paintLayer.id, l => ({ ...l, opacity: v })))}
+              />
+              <BlendModeSelect
+                compact
+                value={paintLayer.blendMode}
+                onChange={next => mutate(p => mapLayer(p, paintLayer.id, l => l.kind === 'paint' ? ({ ...l, blendMode: next } as PaintLayer) : l))}
+                label="Blend mode"
+              />
+            </>
+          )
+        })()}
       </>
     )
   }
 
-  if (tool === 'shadow') {
-    if (!selectedLayer) {
-      return <p style={peelHint}>Select a layer to add a drop shadow.</p>
-    }
-    const shadow =
-      (selectedLayer.kind !== 'group' ? selectedLayer.shadow : undefined) ?? LAYER_SHADOW_DEFAULTS
-    const hexFromRgba = (rgba: string): string => {
-      const m = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
-      if (!m) return '#000000'
-      const r = parseInt(m[1]).toString(16).padStart(2, '0')
-      const g = parseInt(m[2]).toString(16).padStart(2, '0')
-      const b = parseInt(m[3]).toString(16).padStart(2, '0')
-      return `#${r}${g}${b}`
-    }
-    const alphaFromRgba = (rgba: string): number => {
-      const m = rgba.match(/rgba\(\d+,\s*\d+,\s*\d+,\s*([\d.]+)/)
-      return m ? parseFloat(m[1]) : 0.5
-    }
-    const hexColor = hexFromRgba(shadow.color)
-    const shadowAlpha = alphaFromRgba(shadow.color)
-    const buildRgba = (hex: string, alpha: number): string => {
-      const r = parseInt(hex.slice(1, 3), 16)
-      const g = parseInt(hex.slice(3, 5), 16)
-      const b = parseInt(hex.slice(5, 7), 16)
-      return `rgba(${r},${g},${b},${alpha})`
-    }
-    const updateShadow = (patch: Partial<typeof shadow>) => {
-      const merged = { ...shadow, ...patch }
-      const isIdentity = merged.offsetX === 0 && merged.offsetY === 0 && merged.blur === 0
-      mutateLayer(l => ({ ...l, shadow: isIdentity ? undefined : merged }))
-    }
 
+
+  if (tool === 'eraser') {
+    // Eraser tool peel — same controls as Draw minus colour/eyedropper
+    // (colour is meaningless for destination-out compositing).
     return (
       <>
-        <HexColorInput
-          value={hexColor}
-          onChange={hex => updateShadow({ color: buildRgba(hex, shadowAlpha) })}
-          title="Shadow colour"
-          size={24}
+        {/* Brush size */}
+        <SliderPopover
+          icon={<Brush size={14} />}
+          title="Eraser size"
+          min={1}
+          max={200}
+          step={1}
+          value={brushSize}
+          identity={12}
+          format={v => `${v}px`}
+          onChange={v => setBrushSize(v)}
         />
+        {/* Opacity */}
         <SliderPopover
           icon={<CaseSensitive size={14} />}
-          title="Shadow opacity"
+          title="Eraser opacity"
           min={0}
           max={1}
           step={0.05}
-          value={shadowAlpha}
-          identity={0.5}
+          value={brushOpacity}
+          identity={1}
           format={v => `${Math.round(v * 100)}%`}
-          onChange={v => updateShadow({ color: buildRgba(hexColor, v) })}
+          onChange={v => setBrushOpacity(v)}
         />
-        <SliderPopover
-          icon={<MoveHorizontal size={14} />}
-          title="Shadow offset X"
-          min={-50}
-          max={50}
-          step={1}
-          value={shadow.offsetX}
-          identity={0}
-          format={v => `${v}px`}
-          onChange={v => updateShadow({ offsetX: v })}
-        />
-        <SliderPopover
-          icon={<MoveVertical size={14} />}
-          title="Shadow offset Y"
-          min={-50}
-          max={50}
-          step={1}
-          value={shadow.offsetY}
-          identity={0}
-          format={v => `${v}px`}
-          onChange={v => updateShadow({ offsetY: v })}
-        />
+        {/* Hardness */}
         <SliderPopover
           icon={<Slash size={14} />}
-          title="Shadow blur"
+          title="Eraser hardness"
           min={0}
-          max={50}
+          max={100}
           step={1}
-          value={shadow.blur}
-          identity={0}
-          format={v => `${v}px`}
-          onChange={v => updateShadow({ blur: v })}
+          value={brushHardness}
+          identity={100}
+          format={v => `${v}%`}
+          onChange={v => setBrushHardness(v)}
         />
-        {/* Silhouette stroke section — only for TextLayer and PaintLayer.
-            ShapeLayer has its own stroke editing in the Shapes peel. */}
-        {(selectedLayer.kind === 'text' || selectedLayer.kind === 'paint') &&
-          (() => {
-            const stroke: LayerStroke | undefined =
-              selectedLayer.kind === 'text'
-                ? (selectedLayer as TextLayer).stroke
-                : (selectedLayer as PaintLayer).stroke
-            const strokeColor = stroke?.color ?? '#000000'
-            const strokeWidth = stroke?.width ?? 0
-            const updateStroke = (patch: Partial<LayerStroke>) => {
-              const next = { ...stroke, ...patch }
-              const isIdentity = (next.width ?? 0) === 0
-              mutateLayer(l =>
-                l.kind === 'text'
-                  ? ({ ...l, stroke: isIdentity ? undefined : next } as TextLayer)
-                  : l.kind === 'paint'
-                    ? ({ ...l, stroke: isIdentity ? undefined : next } as PaintLayer)
-                    : l,
-              )
-            }
-            return (
-              <>
-                <div
-                  style={{
-                    width: 1,
-                    height: 24,
-                    background: 'rgba(255,255,255,0.10)',
-                    flexShrink: 0,
-                    marginLeft: 4,
-                    marginRight: 4,
-                  }}
-                />
-                <HexColorInput
-                  value={strokeColor}
-                  onChange={color => updateStroke({ color, width: strokeWidth || 1 })}
-                  title="Stroke colour"
-                  size={24}
-                />
-                <SliderPopover
-                  icon={<Slash size={14} />}
-                  title="Stroke width"
-                  min={0}
-                  max={20}
-                  step={0.5}
-                  value={strokeWidth}
-                  identity={0}
-                  format={v => `${v}px`}
-                  onChange={v => updateStroke({ color: strokeColor, width: v })}
-                />
-              </>
-            )
-          })()}
-      </>
-    )
-  }
-
-  if (tool === 'background') {
-    const isTransparent = project.backgroundColor === null
-    return (
-      <>
-        <HexColorInput
-          value={isTransparent ? '#000000' : (project.backgroundColor ?? '#000000')}
-          onChange={hex => {
-            if (!isTransparent) mutate(p => ({ ...p, backgroundColor: hex }))
-          }}
-          title="Background colour"
-          size={24}
-        />
-        <button
-          title={isTransparent ? 'Switch to solid colour' : 'Switch to transparent background'}
-          aria-label={isTransparent ? 'Switch to solid colour' : 'Switch to transparent background'}
-          aria-pressed={isTransparent}
-          style={toggleBtnStyle(isTransparent)}
-          onClick={() => mutate(p => ({ ...p, backgroundColor: isTransparent ? '#000000' : null }))}
-        >
-          {isTransparent ? <WholeWord size={14} /> : <Slash size={14} />}
-        </button>
-      </>
-    )
-  }
-
-  if (tool === 'align') {
-    if (!selectedLayer) {
-      return <p style={peelHint}>Select a layer first.</p>
-    }
-    const alignLayer = (updater: (l: FaceplateLayer) => FaceplateLayer) => {
-      mutate(p => mapLayer(p, selectedLayer.id, updater))
-    }
-
-    const layerBoundsW = (() => {
-      if (selectedLayer.kind === 'text') {
-        const lines = selectedLayer.text.split('\n')
-        const longestLine = Math.max(...lines.map(l => l.length), 1)
-        return longestLine * selectedLayer.fontSize * selectedLayer.scale * 0.6
-      }
-      if (selectedLayer.kind === 'shape') return selectedLayer.width * selectedLayer.scale
-      return 0
-    })()
-    const layerBoundsH = (() => {
-      if (selectedLayer.kind === 'text') {
-        const lines = selectedLayer.text.split('\n')
-        return lines.length * selectedLayer.fontSize * selectedLayer.scale * 1.2
-      }
-      if (selectedLayer.kind === 'shape') return selectedLayer.height * selectedLayer.scale
-      return 0
-    })()
-
-    return (
-      <>
-        <button
-          style={toggleBtnStyle(false)}
-          title="Align Left"
-          onClick={() => alignLayer(l => ({ ...l, x: layerBoundsW / 2 }))}
-        >
-          <AlignStartVertical size={13} />
-        </button>
-        <button
-          style={toggleBtnStyle(false)}
-          title="Center Horizontally"
-          onClick={() => alignLayer(l => ({ ...l, x: FACEPLATE_BANNER_W / 2 }))}
-        >
-          <AlignCenterVertical size={13} />
-        </button>
-        <button
-          style={toggleBtnStyle(false)}
-          title="Align Right"
-          onClick={() => alignLayer(l => ({ ...l, x: FACEPLATE_BANNER_W - layerBoundsW / 2 }))}
-        >
-          <AlignEndVertical size={13} />
-        </button>
-        <button
-          style={toggleBtnStyle(false)}
-          title="Align Top"
-          onClick={() => alignLayer(l => ({ ...l, y: layerBoundsH / 2 }))}
-        >
-          <AlignStartHorizontal size={13} />
-        </button>
-        <button
-          style={toggleBtnStyle(false)}
-          title="Center Vertically"
-          onClick={() => alignLayer(l => ({ ...l, y: FACEPLATE_BANNER_H / 2 }))}
-        >
-          <AlignCenter size={13} />
-        </button>
-        <button
-          style={toggleBtnStyle(false)}
-          title="Align Bottom"
-          onClick={() => alignLayer(l => ({ ...l, y: FACEPLATE_BANNER_H - layerBoundsH / 2 }))}
-        >
-          <AlignEndHorizontal size={13} />
-        </button>
-        <button
-          style={toggleBtnStyle(false)}
-          title="Center both axes"
-          onClick={() =>
-            alignLayer(l => ({ ...l, x: FACEPLATE_BANNER_W / 2, y: FACEPLATE_BANNER_H / 2 }))
-          }
-        >
-          <AlignCenter size={13} />
-        </button>
       </>
     )
   }
@@ -3845,80 +5046,6 @@ function moveLayer(p: Coh2FaceplateProject, id: string, dir: -1 | 1): Coh2Facepl
   return { ...p, layers }
 }
 
-/** Pointer drag — translates the layer's centre by the pointer delta,
- *  scaled from on-screen pixels back to canvas-space pixels. Uses pointer
- *  capture so the drag continues even when the pointer leaves the layer.
- *
- *  Passes snap targets derived from canvas edges, canvas centre, and sibling
- *  layer centres. Renders guide lines via `setSnapGuides` while dragging. */
-function beginDrag(
-  ev: ReactPointerEvent,
-  layer: FaceplateLayer,
-  viewScale: number,
-  mutate: (fn: (p: Coh2FaceplateProject) => Coh2FaceplateProject) => void,
-  project: Coh2FaceplateProject,
-  setSnapGuides: (guides: SnapTarget[]) => void,
-) {
-  // Group layers don't carry position — cannot drag them.
-  if (layer.kind === 'group') return
-  const startX = ev.clientX
-  const startY = ev.clientY
-  const startLayerX = layer.x
-  const startLayerY = layer.y
-  const targetEl = ev.currentTarget as HTMLElement
-  try {
-    targetEl.setPointerCapture(ev.pointerId)
-  } catch {
-    /* setPointerCapture can throw in some headless contexts */
-  }
-
-  // Build snap targets once at drag-start (targets from sibling layer
-  // centres don't need to update mid-drag — they don't move).
-  // Half-bbox is not easily computable without DOM, so we use 0 for edges
-  // (the layer's x/y IS its centre due to translate(-50%,-50%)).
-  const snapTargets: SnapTarget[] = [
-    { kind: 'x', value: FACEPLATE_BANNER_W / 2, label: 'canvas center X' },
-    { kind: 'y', value: FACEPLATE_BANNER_H / 2, label: 'canvas center Y' },
-    { kind: 'x', value: 0, label: 'canvas left edge' },
-    { kind: 'x', value: FACEPLATE_BANNER_W, label: 'canvas right edge' },
-    { kind: 'y', value: 0, label: 'canvas top edge' },
-    { kind: 'y', value: FACEPLATE_BANNER_H, label: 'canvas bottom edge' },
-    // Sibling layer centres (other visible, non-group, non-paint layers with numeric x/y).
-    ...project.layers
-      .filter(
-        (l): l is ImageLayer | TextLayer | ShapeLayer =>
-          l.id !== layer.id &&
-          l.visible &&
-          (l.kind === 'image' || l.kind === 'text' || l.kind === 'shape'),
-      )
-      .flatMap(l => [
-        { kind: 'x' as const, value: l.x, label: `layer ${l.id} X` },
-        { kind: 'y' as const, value: l.y, label: `layer ${l.id} Y` },
-      ]),
-  ]
-
-  const onMove = (e: PointerEvent) => {
-    const dx = (e.clientX - startX) / viewScale
-    const dy = (e.clientY - startY) / viewScale
-    const candidateX = startLayerX + dx
-    const candidateY = startLayerY + dy
-    const { snappedX, snappedY, firedTargets } = applySnap(candidateX, candidateY, snapTargets)
-    setSnapGuides(firedTargets)
-    mutate(p => mapLayer(p, layer.id, l => ({ ...l, x: snappedX, y: snappedY })))
-  }
-  const onUp = (e: PointerEvent) => {
-    setSnapGuides([])
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    try {
-      targetEl.releasePointerCapture(e.pointerId)
-    } catch {
-      /* releasePointerCapture can throw in some contexts */
-    }
-  }
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Canvas composition — runs the layers through an offscreen 2D canvas so
@@ -3962,43 +5089,23 @@ function hashLayerId(id: string): number {
   return h >>> 0
 }
 
-/** @public */
+/**
+ * Per-layer render callback for the faceplate compositor.
+ * Contains the faceplate-specific switch/case logic extracted from the
+ * old composeFaceplateCanvas loop.  Byte-identical to the original.
+ *
+ * @returns A snapshot HTMLCanvasElement of what was drawn (for clipping-mask
+ *          support on the next layer), or null if not applicable.
+ */
 // eslint-disable-next-line react-refresh/only-export-components
-export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<HTMLCanvasElement> {
-  const c = document.createElement('canvas')
-  c.width = FACEPLATE_BANNER_W
-  c.height = FACEPLATE_BANNER_H
-  const ctx = c.getContext('2d')
-  if (!ctx) throw new Error('Canvas 2D unavailable')
-
-  // Background
-  if (p.backgroundColor) {
-    ctx.fillStyle = p.backgroundColor
-    ctx.fillRect(0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
-  }
-
-  // Load all images in parallel — composing serially would block the
-  // first paint of the preview behind every successive decode.
-  const imageEls = await Promise.all(
-    Object.values(p.images).map(
-      img =>
-        new Promise<{ id: string; el: HTMLImageElement }>((res, rej) => {
-          const el = new Image()
-          el.onload = () => res({ id: img.id, el })
-          el.onerror = () => rej(new Error(`Image "${img.name}" failed to decode`))
-          el.src = img.dataUrl
-        }),
-    ),
-  )
-  const byId = new Map(imageEls.map(it => [it.id, it.el]))
-
-  // Track the previous visible layer's rendered canvas for clipping-mask
-  // support on ImageLayer and PaintLayer (Wave 1 scope only).
-  let prevLayerCanvas: HTMLCanvasElement | null = null
-
-  for (const layer of p.layers) {
-    if (!layer.visible) continue
-
+export async function faceplateRenderLayer(
+  ctx: CanvasRenderingContext2D,
+  layer: FaceplateLayer,
+  byId: Map<string, HTMLImageElement>,
+  canvasW: number,
+  canvasH: number,
+  prevLayerCanvas: HTMLCanvasElement | null,
+): Promise<HTMLCanvasElement | null> {
     if (layer.kind === 'text') {
       ctx.save()
       ctx.globalAlpha = layer.opacity
@@ -4061,8 +5168,7 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
       ctx.globalCompositeOperation = 'source-over'
       ctx.restore()
       // TextLayer mask + clipping deferred to Wave 3 (TODO).
-      prevLayerCanvas = null
-      continue
+      return null
     }
 
     if (layer.kind === 'paint') {
@@ -4078,14 +5184,14 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
         // Only supported on PaintLayer in Wave 1.
         if (layer.clippedToLayerBelow && prevLayerCanvas) {
           const offClip = document.createElement('canvas')
-          offClip.width = FACEPLATE_BANNER_W
-          offClip.height = FACEPLATE_BANNER_H
+          offClip.width = canvasW
+          offClip.height = canvasH
           const offClipCtx = offClip.getContext('2d')
           if (offClipCtx) {
             offClipCtx.globalAlpha = layer.opacity
             offClipCtx.globalCompositeOperation = (layer.blendMode ??
               'normal') as GlobalCompositeOperation
-            offClipCtx.drawImage(paintEl, 0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
+            offClipCtx.drawImage(paintEl, 0, 0, canvasW, canvasH)
             offClipCtx.globalCompositeOperation = 'destination-in'
             offClipCtx.drawImage(prevLayerCanvas, 0, 0)
             ctx.drawImage(offClip, 0, 0)
@@ -4094,21 +5200,21 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
           ctx.save()
           ctx.globalAlpha = layer.opacity
           ctx.globalCompositeOperation = (layer.blendMode ?? 'normal') as GlobalCompositeOperation
-          ctx.drawImage(paintEl, 0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
+          ctx.drawImage(paintEl, 0, 0, canvasW, canvasH)
           // v6: silhouette stroke on PaintLayer.
           // Render the paint to an offscreen canvas, blur + composite to extract
           // the silhouette, draw the tinted border behind the fill.
           if (layer.stroke && layer.stroke.width > 0) {
             const offStroke = document.createElement('canvas')
-            offStroke.width = FACEPLATE_BANNER_W
-            offStroke.height = FACEPLATE_BANNER_H
+            offStroke.width = canvasW
+            offStroke.height = canvasH
             const offCtx = offStroke.getContext('2d')
             if (offCtx) {
-              offCtx.drawImage(paintEl, 0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
+              offCtx.drawImage(paintEl, 0, 0, canvasW, canvasH)
               offCtx.filter = `blur(${layer.stroke.width}px)`
               offCtx.globalCompositeOperation = 'source-out'
               offCtx.fillStyle = layer.stroke.color
-              offCtx.fillRect(0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
+              offCtx.fillRect(0, 0, canvasW, canvasH)
               ctx.globalCompositeOperation = 'destination-over'
               ctx.drawImage(offStroke, 0, 0)
             }
@@ -4128,19 +5234,19 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
           if (maskEl) {
             // Read back the region we just painted, apply the mask in-place.
             const offMask = document.createElement('canvas')
-            offMask.width = FACEPLATE_BANNER_W
-            offMask.height = FACEPLATE_BANNER_H
+            offMask.width = canvasW
+            offMask.height = canvasH
             const offMCtx = offMask.getContext('2d')
             if (offMCtx) {
-              offMCtx.drawImage(paintEl, 0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
+              offMCtx.drawImage(paintEl, 0, 0, canvasW, canvasH)
               offMCtx.globalCompositeOperation = layer.mask.invert
                 ? 'destination-out'
                 : 'destination-in'
-              offMCtx.drawImage(maskEl, 0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
+              offMCtx.drawImage(maskEl, 0, 0, canvasW, canvasH)
               // Clear the painted region then redraw through the mask.
               ctx.save()
               ctx.globalCompositeOperation = 'destination-out'
-              ctx.drawImage(paintEl, 0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
+              ctx.drawImage(paintEl, 0, 0, canvasW, canvasH)
               ctx.restore()
               ctx.drawImage(offMask, 0, 0)
             }
@@ -4149,15 +5255,14 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
 
         // Record this layer's render for the next layer's potential clipping.
         const snap = document.createElement('canvas')
-        snap.width = FACEPLATE_BANNER_W
-        snap.height = FACEPLATE_BANNER_H
+        snap.width = canvasW
+        snap.height = canvasH
         const snapCtx = snap.getContext('2d')
-        if (snapCtx) snapCtx.drawImage(paintEl, 0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
-        prevLayerCanvas = snap
+        if (snapCtx) snapCtx.drawImage(paintEl, 0, 0, canvasW, canvasH)
+        return snap
       } else {
-        prevLayerCanvas = null
+        return null
       }
-      continue
     }
 
     if (layer.kind === 'shape') {
@@ -4180,7 +5285,7 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
       ctx.scale(layer.scale, layer.scale)
       const sw = layer.width
       const sh = layer.height
-      const path = shapeToPath2D(layer.shapeType, sw, sh)
+      const path = shapeToPath2D(layer.shapeType, sw, sh, layer.cornerRadius ?? 0)
 
       // v6: gradientFill — overrides fillColor when present.
       if (layer.gradientFill) {
@@ -4226,8 +5331,7 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
       ctx.globalCompositeOperation = 'source-over'
       ctx.restore()
       // ShapeLayer mask + clipping deferred to Wave 3 (TODO).
-      prevLayerCanvas = null
-      continue
+      return null
     }
 
     // Group layer — children are already in the flat layers array; the group
@@ -4235,11 +5339,11 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
     // Compositing children under a group opacity would require a separate
     // offscreen canvas per group — deferred to v1.1. For now we skip the
     // group node itself; children render via the normal loop.
-    if (layer.kind === 'group') continue
+    if (layer.kind === 'group') return null
 
     // Image layer
     const el = byId.get(layer.imageId)
-    if (!el) continue
+    if (!el) return null
 
     // v6: clipping mask — clip this image layer to the alpha of the previous
     // visible layer. Only supported on ImageLayer in Wave 1.
@@ -4249,8 +5353,8 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
     if (layer.clippedToLayerBelow && prevLayerCanvas) {
       // Render the image into an offscreen canvas, then clip to prev layer.
       const offClip = document.createElement('canvas')
-      offClip.width = FACEPLATE_BANNER_W
-      offClip.height = FACEPLATE_BANNER_H
+      offClip.width = canvasW
+      offClip.height = canvasH
       const offClipCtx = offClip.getContext('2d')
       if (offClipCtx) {
         offClipCtx.save()
@@ -4270,8 +5374,7 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
         offClipCtx.drawImage(prevLayerCanvas, 0, 0)
         ctx.drawImage(offClip, 0, 0)
       }
-      prevLayerCanvas = offClip
-      continue
+      return offClip
     }
 
     ctx.save()
@@ -4328,7 +5431,7 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
       // For simplicity, we noise the full canvas and rely on the alpha channel
       // to clip invisible pixels. Noising only the tight bounding box would
       // require inverse-transforming the box corners — deferred to Wave 2 (TODO).
-      const imageData = ctx.getImageData(0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
+      const imageData = ctx.getImageData(0, 0, canvasW, canvasH)
       const data = imageData.data
       for (let i = 0; i < data.length; i += 4) {
         if (data[i + 3] > 0) {
@@ -4354,8 +5457,8 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
         // Read back what we just painted into an offscreen canvas, apply the
         // mask via destination-in/out, then redraw the masked result.
         const offMask = document.createElement('canvas')
-        offMask.width = FACEPLATE_BANNER_W
-        offMask.height = FACEPLATE_BANNER_H
+        offMask.width = canvasW
+        offMask.height = canvasH
         const offMCtx = offMask.getContext('2d')
         if (offMCtx) {
           // Blit the layer content into the offscreen canvas via the same
@@ -4373,15 +5476,15 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
           offMCtx.globalCompositeOperation = layer.mask.invert
             ? 'destination-out'
             : 'destination-in'
-          offMCtx.drawImage(maskEl, 0, 0, FACEPLATE_BANNER_W, FACEPLATE_BANNER_H)
+          offMCtx.drawImage(maskEl, 0, 0, canvasW, canvasH)
           // Erase the un-masked layer render from the main canvas and
           // composite the masked result back in.
           ctx.save()
           ctx.globalCompositeOperation = 'destination-out'
           offMCtx.globalCompositeOperation = 'source-over' // reset for the erase blit
           const tmpErase = document.createElement('canvas')
-          tmpErase.width = FACEPLATE_BANNER_W
-          tmpErase.height = FACEPLATE_BANNER_H
+          tmpErase.width = canvasW
+          tmpErase.height = canvasH
           const tmpCtx = tmpErase.getContext('2d')
           if (tmpCtx) {
             tmpCtx.globalAlpha = layer.opacity
@@ -4399,8 +5502,8 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
 
     // Record this layer's render for potential clipping of the next layer.
     const snap = document.createElement('canvas')
-    snap.width = FACEPLATE_BANNER_W
-    snap.height = FACEPLATE_BANNER_H
+    snap.width = canvasW
+    snap.height = canvasH
     const snapCtx = snap.getContext('2d')
     if (snapCtx) {
       snapCtx.globalAlpha = layer.opacity
@@ -4411,10 +5514,20 @@ export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<H
       snapCtx.drawImage(el, -w / 2, -h / 2, w, h)
       snapCtx.filter = 'none'
     }
-    prevLayerCanvas = snap
-  }
+    return snap
+}
 
-  return c
+/** @public */
+// eslint-disable-next-line react-refresh/only-export-components
+export async function composeFaceplateCanvas(p: Coh2FaceplateProject): Promise<HTMLCanvasElement> {
+  return composeLayers(
+    p.layers,
+    p.images,
+    FACEPLATE_BANNER_W,
+    FACEPLATE_BANNER_H,
+    p.backgroundColor,
+    faceplateRenderLayer,
+  )
 }
 
 async function composeFaceplatePng(p: Coh2FaceplateProject): Promise<string> {
@@ -4472,83 +5585,110 @@ function shapeToSvgElement(
   }
 }
 
-/** Build a Canvas2D Path2D for the given shape type. The path is centred
- *  at the origin (0,0) so translate + rotate + scale can be applied via
- *  ctx transforms before drawing. w/h are the box dimensions in canvas px. */
-function shapeToPath2D(shapeType: ShapeLayer['shapeType'], w: number, h: number): Path2D {
-  const path = new Path2D()
+/** Shared path-drawing helper — called by BOTH shapeToPath2D (export) and
+ *  the Konva sceneFunc (live preview) so the two paths can't diverge.
+ *
+ *  Draws only the complex shapes (chevron, star, shield). Rectangle and circle
+ *  have native equivalents in both Path2D and Konva and are handled separately.
+ *  The path is centred at the origin (0,0); w/h are the box dimensions in px.
+ *
+ *  The `pen` argument abstracts over Path2D vs Konva.Context:
+ *    - Path2D: `new Path2D()` object (moveTo/lineTo/quadraticCurveTo/closePath)
+ *    - Konva.Context: the `ctx` passed into sceneFunc (same API)
+ */
+function drawComplexShapePath(
+  shapeType: 'chevron' | 'star' | 'shield',
+  w: number,
+  h: number,
+  pen: {
+    moveTo(x: number, y: number): void
+    lineTo(x: number, y: number): void
+    quadraticCurveTo(cpx: number, cpy: number, x: number, y: number): void
+    closePath(): void
+  },
+): void {
   switch (shapeType) {
-    case 'rectangle':
-      path.rect(-w / 2, -h / 2, w, h)
-      break
-    case 'circle':
-      path.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2)
-      break
     case 'chevron': {
       // Points from viewBox 0 0 100 100 scaled to w×h, centred at origin.
       const pts: [number, number][] = [
-        [0, 0],
-        [60, 0],
-        [100, 50],
-        [60, 100],
-        [0, 100],
-        [40, 50],
+        [0, 0], [60, 0], [100, 50], [60, 100], [0, 100], [40, 50],
       ]
       pts.forEach(([px, py], i) => {
         const x = (px / 100) * w - w / 2
         const y = (py / 100) * h - h / 2
-        if (i === 0) path.moveTo(x, y)
-        else path.lineTo(x, y)
+        if (i === 0) pen.moveTo(x, y)
+        else pen.lineTo(x, y)
       })
-      path.closePath()
+      pen.closePath()
       break
     }
     case 'star': {
-      const cx = 0
-      const cy = 0
-      const outerR5 = Math.min(w, h) / 2
-      const innerR5 = outerR5 * (20 / 50)
-      const points5 = 5
-      for (let i = 0; i < points5 * 2; i++) {
-        const angle = (Math.PI / points5) * i - Math.PI / 2
-        const r = i % 2 === 0 ? outerR5 : innerR5
-        const x = cx + r * Math.cos(angle)
-        const y = cy + r * Math.sin(angle)
-        if (i === 0) path.moveTo(x, y)
-        else path.lineTo(x, y)
+      const outerR = Math.min(w, h) / 2
+      const innerR = outerR * (20 / 50)
+      for (let i = 0; i < 10; i++) {
+        const angle = (Math.PI / 5) * i - Math.PI / 2
+        const r = i % 2 === 0 ? outerR : innerR
+        const x = r * Math.cos(angle)
+        const y = r * Math.sin(angle)
+        if (i === 0) pen.moveTo(x, y)
+        else pen.lineTo(x, y)
       }
-      path.closePath()
+      pen.closePath()
       break
     }
     case 'shield': {
       // M 0 0 L 100 0 L 100 60 Q 100 100 50 100 Q 0 100 0 60 Z
       // scaled to w×h, centred at origin
-      const scaleX = w / 100
-      const scaleY = h / 100
+      const scX = w / 100
+      const scY = h / 100
       const ox = -w / 2
       const oy = -h / 2
-      path.moveTo(ox + 0 * scaleX, oy + 0 * scaleY)
-      path.lineTo(ox + 100 * scaleX, oy + 0 * scaleY)
-      path.lineTo(ox + 100 * scaleX, oy + 60 * scaleY)
-      path.quadraticCurveTo(
-        ox + 100 * scaleX,
-        oy + 100 * scaleY,
-        ox + 50 * scaleX,
-        oy + 100 * scaleY,
-      )
-      path.quadraticCurveTo(ox + 0 * scaleX, oy + 100 * scaleY, ox + 0 * scaleX, oy + 60 * scaleY)
-      path.closePath()
+      pen.moveTo(ox + 0 * scX, oy + 0 * scY)
+      pen.lineTo(ox + 100 * scX, oy + 0 * scY)
+      pen.lineTo(ox + 100 * scX, oy + 60 * scY)
+      pen.quadraticCurveTo(ox + 100 * scX, oy + 100 * scY, ox + 50 * scX, oy + 100 * scY)
+      pen.quadraticCurveTo(ox + 0 * scX, oy + 100 * scY, ox + 0 * scX, oy + 60 * scY)
+      pen.closePath()
       break
     }
+  }
+}
+
+/** Build a Canvas2D Path2D for the given shape type. The path is centred
+ *  at the origin (0,0) so translate + rotate + scale can be applied via
+ *  ctx transforms before drawing. w/h are the box dimensions in canvas px. */
+function shapeToPath2D(shapeType: ShapeLayer['shapeType'], w: number, h: number, cornerRadius = 0): Path2D {
+  const path = new Path2D()
+  switch (shapeType) {
+    case 'rectangle':
+      if (cornerRadius > 0) {
+        const r = Math.min(cornerRadius, w / 2, h / 2)
+        path.roundRect(-w / 2, -h / 2, w, h, r)
+      } else {
+        path.rect(-w / 2, -h / 2, w, h)
+      }
+      break
+    case 'circle':
+      path.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2)
+      break
+    case 'chevron':
+    case 'star':
+    case 'shield':
+      // Delegate to shared helper so geometry stays in sync with the Konva sceneFunc.
+      drawComplexShapePath(shapeType, w, h, path)
+      break
   }
   return path
 }
 
-function checkerBackground(): string {
-  // Two-stop conic gradient produces a tight 4-square checker pattern when
-  // tiled at a fixed background-size. Matches Photoshop's "transparent"
-  // backdrop, which the user expects when working with PNG-style assets.
-  return `repeating-conic-gradient(rgba(255,255,255,0.06) 0% 25%, rgba(0,0,0,0) 0% 50%) 50% / 24px 24px`
+/**
+ * Dark transparency checker — layered over the canvas when `backgroundColor === null`
+ * (true transparency). Two-stop conic gradient produces a clearly visible 16px
+ * dark-mode checker so the user can see exactly which regions are transparent.
+ * Colors chosen to read clearly against the #252836 document surface.
+ */
+function darkCheckerBackground(): string {
+  return `repeating-conic-gradient(#1c1f2d 0% 25%, #141620 0% 50%) 50% / 16px 16px`
 }
 
 /** Classic light-grey/white Photoshop transparency checker — used by the

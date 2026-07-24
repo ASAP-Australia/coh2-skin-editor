@@ -1,0 +1,17 @@
+# CoH2 boot crash — gamemode SGA corrupt (.info)
+Captured: 2026-07-19 ~12:19 (harness attempt 4)
+
+## Fatal block from warnings.log:
+12:17:34.20   ARC -- C:\users\steamuser\Documents\My Games\Company of Heroes 2\mods\gamemode\a5a90ec1f00f4b7e9c0d3a2b1e4f5a60.sga 4597 B [ID:a5a90ec1f00f4b7e9c0d3a2b1e4f5a60] [Ver:f7c1af11ede8e35cfa6f2fcc24970f4d] [Sig:0]
+12:17:34.20   DB -- Unable to load symbols.
+[Fatal]
+
+Archive 'C:\users\steamuser\Documents\My Games\Company of Heroes 2\mods\gamemode\a5a90ec1f00f4b7e9c0d3a2b1e4f5a60.sga' file 'a5a90ec1f00f4b7e9c0d3a2b1e4f5a60.info' is corrupt! Unable to continue.
+
+Owner: unknown
+
+-- FATAL EXIT --
+archive.cpp/130:!
+--stack trace--
+
+Application closed with error code 1129468744

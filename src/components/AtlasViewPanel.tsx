@@ -39,7 +39,7 @@ export default function AtlasViewPanel({ mode, setMode, ariaLabel = 'View mode' 
     <div
       role="group"
       aria-label={ariaLabel}
-      className="glass-hud fixed top-1/2 right-3 -translate-y-1/2 z-30 flex flex-col gap-2 p-1.5 rounded-2xl"
+      className="glass-hud fixed top-1/2 right-5 -translate-y-1/2 z-30 flex flex-col gap-2 p-1.5 rounded-2xl"
     >
       {ATLAS_VIEW_MODE_ORDER.map(id => {
         const active = mode === id

@@ -15,7 +15,7 @@ export default function CssGradientBackground() {
     <>
       <div
         aria-hidden
-        className="fixed inset-0 -z-10 pointer-events-none"
+        className="absolute inset-0 -z-10 pointer-events-none"
         style={{ backgroundColor: '#212121' }}
       >
         {/* Subtle animated radial gradients mimicking the wave shader's

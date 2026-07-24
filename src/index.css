@@ -144,6 +144,68 @@
   box-shadow: 0 16px 40px rgb(0 0 0 / 0.5), inset 0 0.5px 0 rgb(255 255 255 / 0.08);
 }
 
+/* ── Glass-frame window border ────────────────────────────────────────────
+ * Outermost wrapper rendered by App.tsx. Provides:
+ *   • The dark translucent background of the app chrome (rgba(13,13,13,0.4))
+ *   • A 20 px border-radius that clips the app corners — combined with a
+ *     transparent BrowserWindow this shows the desktop through the corners
+ *   • The reference multi-layer box-shadow for depth and a subtle top-edge
+ *     inset highlight
+ *   • 4 px padding (p-1) so the inner content sits inside the glass ring
+ *   • hasShadow:false on the BrowserWindow means the shadow here IS the
+ *     only shadow — it renders into the slim 10 px margin around #root
+ * The inner content area (glass-frame-inner) clips to 16 px radius so
+ * content doesn't bleed past the outer 20 px glass ring. */
+
+/* Match the reference's design language: superellipse (squircle) corners on
+ * every element with a radius — lab01.dev applies this globally via
+ * `*, ::before, ::after`. border-radius stays the circular fallback. */
+*,
+::before,
+::after {
+  corner-shape: superellipse(1.33);
+}
+/* The reference carves circles out of the global squircle: fully-round
+ * elements (pills, dots, the spotlight) keep true circular corners —
+ * lab01.dev's compiled CSS emits exactly this override for .rounded-full. */
+.rounded-full {
+  corner-shape: round;
+}
+
+@utility glass-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  overflow: hidden;
+  border-radius: 20px;
+  /* Squircle corner via the global corner-shape rule below (the reference
+   * applies superellipse(1.33) to *, so its card is a squircle too).
+   * border-radius is the circular fallback if corner-shape is unsupported. */
+  background-color: rgba(13, 13, 13, 0.4);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 14px 5px -3px rgba(0, 0, 0, 0.01),
+    0 8px 5px -2px rgba(0, 0, 0, 0.02),
+    0 3px 3px -1px rgba(0, 0, 0, 0.03),
+    0 1px 2px -0.5px rgba(0, 0, 0, 0.03),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+@utility glass-frame-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  background-color: #0D0D0D;
+  overflow: hidden;
+  /* Crisp inner white edge defining the card — the reference's inset-ring-white.
+   * Kept as an inset box-shadow: a real `border` vanished on this element
+   * (clip/stacking interaction). On the squircle corner-shape it reads uniform
+   * around the curve, same as the reference. */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
 /* When running in Electron the custom titlebar pill occupies the top-right
  * corner (~y 8 → 36, ~80 px wide). Shift the right-side chrome down + the
  * left-side TopMenu down by the same amount so nothing overlaps the pill
@@ -154,14 +216,74 @@
 /* Top-row chrome shifts down beneath the titlebar pill in Electron.
  * Intact/Wrecked toggle now lives at the bottom-right (above the faction nav)
  * so it no longer needs a top-shift. */
-/* Align top-left menu vertically with the titlebar pill (top: 0.625rem). */
+/* Align top-left menu with the titlebar pill. The pill sits at top-5/right-5
+ * (≈20px, comfortably inset from the glass edge); we match the left menu at
+ * 0.625rem (10px) so it hugs the slim glass-frame edge. */
 body.is-electron .top-menu-wrap         { top: 0.625rem; left: 0.625rem; }
 
-/* Body baseline — pure dark, no coloured ambient light. The 3D viewport
- * is the visual subject; the chrome is glass over near-black. */
-html, body, #root { height: 100%; }
+/* Body baseline — TRANSPARENT so the OS desktop shows through the
+ * rounded corners of the glass card. html/body must be transparent for
+ * the BrowserWindow's transparent:true + hasShadow:false to work —
+ * any opaque background here would paint over the see-through OS layer.
+ * The glass card itself is rendered by .glass-frame / .glass-frame-inner
+ * inside #root (10px margin so corners and the CSS drop-shadow float).
+ * `overflow: hidden` on #root clips any child that would bleed past the
+ * frame corners.
+ *
+ * Scrollbar prevention: html must be overflow:hidden so the 10px #root
+ * margin + box-sizing never triggers a viewport scrollbar. Without this,
+ * the margin adds to the document height and the browser shows a scrollbar.
+ * box-sizing: border-box is scoped here so glass-frame's 4px padding
+ * stays inside its 100%/100% dimensions without adding overflow. */
+*, *::before, *::after { box-sizing: border-box; }
+html {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;   /* prevents scrollbar from margin + padding math */
+  background-color: transparent; /* explicit property — never shorthand (minifier → background:0 0) */
+}
 body {
-  background: #0a0b0e;   /* near-black with a hint of cool — Apple-ish */
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  /* Transparent. Use background-color (not the shorthand): a CSS minifier
+   * compresses `background: transparent` into `background: 0 0` which
+   * resets ALL background sub-properties and breaks the transparent layer.
+   * background-color: transparent !important defeats @layer base's
+   * body { background-color: var(--background) } so the OS shows through. */
+  background-color: transparent !important;
+}
+#root {
+  /* Slim 10px margin so the app NEARLY FILLS the window with just a thin
+   * glass border + a little room for the edge/shadow to read against the
+   * dark surround. (Was 28px, which the user reported as too much padding.)
+   * The glass drop-shadow is soft/short-spread, so 10px is enough headroom
+   * for it to render without viewport clipping. height calc subtracts
+   * top+bottom margins (2 × 10px = 20px) so #root stays inside the viewport
+   * without triggering a scrollbar; box-sizing:border-box + overflow:hidden
+   * on html/body keep this exact. */
+  margin: 10px;
+  height: calc(100% - 20px);
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+/* Maximized state: drop the floating margin and radius so the app fills
+ * the screen cleanly with no gap or scrollbar. The `is-maximized` class
+ * is toggled on <body> by WindowControls via its isMaximized poll. */
+body.is-maximized #root {
+  margin: 0;
+  height: 100%;
+  border-radius: 0;
+}
+body.is-maximized .glass-frame {
+  border-radius: 0;
+}
+body.is-maximized .glass-frame-inner {
+  border-radius: 0;
+}
+body {
+  background-color: transparent; /* transparent — see above comment */
   color: var(--color-text-1);
   /* Lead with Geist (our --font-sans) so the body inherits the same face the
    * rest of the app declares via `html { @apply font-sans }`. Previously this
@@ -172,6 +294,22 @@ body {
   font-feature-settings: 'cv11', 'ss01', 'kern';
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Native-app text selection: this is a desktop app, not a web page — disable
+ * text selection on ALL UI so click-drag never highlights labels/headings.
+ * Re-enable only in real text-entry fields (the `none` on body enforces the
+ * subtree; descendants with `text` opt back in). */
+body {
+  user-select: none;
+  -webkit-user-select: none;
+}
+input,
+textarea,
+[contenteditable="true"],
+[contenteditable=""] {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 @theme inline {

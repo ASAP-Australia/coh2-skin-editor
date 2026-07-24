@@ -1,0 +1,13 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`rasteriseDecal — KONVA MIGRATION golden export tests > flipH decal: fingerprint is stable > golden-flipH-pixel-sum 1`] = `588000`;
+
+exports[`rasteriseDecal — KONVA MIGRATION golden export tests > identity decal (x=64, y=64, scale=1, rotation=0): non-zero pixel sum is stable > golden-identity-pixel-sum 1`] = `619520`;
+
+exports[`rasteriseDecal — KONVA MIGRATION golden export tests > opacity=0.5: alpha channel reduces total pixel sum vs opacity=1 > golden-opacity-half-pixel-sum 1`] = `742400`;
+
+exports[`rasteriseDecal — KONVA MIGRATION golden export tests > rotated decal (rotation=45°): fingerprint is stable and differs from identity > golden-rotated-45-pixel-sum 1`] = `758642`;
+
+exports[`rasteriseDecal — KONVA MIGRATION golden export tests > scaled decal (scale=0.5): fewer pixels drawn than scale=1 > golden-scale-half-pixel-sum 1`] = `629760`;
+
+exports[`rasteriseDecal — KONVA MIGRATION golden export tests > tint decal: fingerprint differs from no-tint version > golden-tint-red-pixel-sum 1`] = `522240`;

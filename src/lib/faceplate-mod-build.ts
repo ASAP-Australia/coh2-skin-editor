@@ -8,6 +8,7 @@
  *   attrib/faceplate/<slug>_faceplate.rgd       (497 bytes, template-substituted)
  *   english/english.ucs                         (UTF-16-LE, generated)
  *   <guid>.info                                 (ASCII CRLF, generated)
+ *   <slug>.dds                                  (BC3/DXT5, 692×204, root-level preview)
  *   ui/assets/textures/<guid>_i1.dds            (BC3/DXT5, 692×204, encoded here)
  *   ui/bin/<guid>.gfx                           (8485 bytes, template-substituted)
  *
@@ -137,6 +138,17 @@ export async function buildFaceplateMod(
   const info = buildInfoFile(project, guid)
 
   // ----- 5. Pack everything into an SGA archive --------------------------
+  //
+  // ⚠ ROOT PREVIEW .DDS MUST LIVE AT THE SGA ROOT (no folder prefix) so the
+  // SGA writer routes it to drive 2 ("info"). Every published Workshop
+  // faceplate includes exactly one root-level .dds (e.g. `icone.dds`,
+  // `<slug>.dds`). Without it the engine logs:
+  //   MOD -- Error loading mod pack '...': invalid file structure.
+  // Verified against 1394135665.sga (6-file layout: attrib RGD, english UCS,
+  // <guid>.info, <slug>.dds at root, ui/assets/textures/<guid>_i1.dds,
+  // ui/bin/<guid>.gfx). The `dds` we already encoded for the atlas doubles as
+  // the preview — the engine doesn't constrain the preview's dimensions
+  // (workshop previews range from tiny icons to full atlas size).
   const sga = await buildSga({
     archiveName: guid,
     files: [
@@ -150,10 +162,16 @@ export async function buildFaceplateMod(
         path: 'english/english.ucs',
         bytes: ucs,
       },
-      // info drive
+      // info drive (root-level files, no path separator → drive 2 per driveOf):
+      //   - `<guid>.info`   pack metadata
+      //   - `${slug}.dds`   pack preview texture (required by the engine)
       {
         path: `${guid}.info`,
         bytes: info,
+      },
+      {
+        path: `${slug}.dds`,
+        bytes: dds,
       },
       // data drive (ui textures + gfx)
       {

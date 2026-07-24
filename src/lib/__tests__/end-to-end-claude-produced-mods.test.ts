@@ -367,11 +367,14 @@ describe('claude-produced mods — end-to-end via library functions', () => {
         new MemFile(result.sga, result.sgaFilename) as unknown as File,
       )
       expect(arch).toBeDefined()
-      // The 5 canonical faceplate-mod files must all be readable back.
+      // The 6 canonical faceplate-mod files must all be readable back.
+      // The 6th file (${slug}.dds at root) is the pack preview texture required
+      // by the engine — without it the engine logs "invalid file structure".
       const paths = [
         `attrib/faceplate/${result.slug}_faceplate.rgd`,
         'english/english.ucs',
         `${result.guid}.info`,
+        `${result.slug}.dds`,
         `ui/assets/textures/${result.guid}_i1.dds`,
         `ui/bin/${result.guid}.gfx`,
       ]

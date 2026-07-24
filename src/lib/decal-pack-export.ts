@@ -323,16 +323,64 @@ async function getOrLoadBitmap(
 ): Promise<ImageBitmap | HTMLImageElement> {
   const cached = cache.get(src.id)
   if (cached) return cached
-  // Prefer ImageBitmap (off-thread decode); fall back to HTMLImageElement
-  // for JSDOM / test envs that don't implement createImageBitmap.
-  if (typeof createImageBitmap !== 'undefined') {
-    const blob = dataUrlToBlob(src.dataUrl)
-    const bmp = await createImageBitmap(blob)
-    cache.set(src.id, bmp)
-    return bmp
+  const decoded = await decodeSourceImage(src.dataUrl)
+  cache.set(src.id, decoded)
+  return decoded
+}
+
+/**
+ * Decode a source-image data URL into a fully-decoded, drawImage-ready bitmap.
+ *
+ * Robustness contract (shared by every rasterise/export path — the editor
+ * preview AND the .sga / .zip export bake both funnel through here):
+ *
+ *  • SVG sources (the insignia library — e.g. balkenkreuz.svg) are decoded via
+ *    an <img> element, NOT createImageBitmap. Chromium's createImageBitmap
+ *    rejects SVG blobs that lack an intrinsic width/height with
+ *    "InvalidStateError: The source image could not be decoded" — which is
+ *    exactly the export crash this guards against. An <img> resolves the
+ *    intrinsic size from the SVG viewBox and decodes fine.
+ *  • Raster sources (PNG/JPG) prefer createImageBitmap (off-thread decode) but
+ *    fall back to the <img> path if it throws for any reason.
+ *  • The returned image is ALWAYS fully decoded before it is handed back:
+ *    for the <img> path we `await img.decode()` (falling back to the load
+ *    Promise where decode() is unavailable, e.g. jsdom) so a subsequent
+ *    ctx.drawImage() can never race an undecoded image.
+ */
+export async function decodeSourceImage(
+  dataUrl: string,
+): Promise<ImageBitmap | HTMLImageElement> {
+  const isSvg = /^data:image\/svg\+xml/i.test(dataUrl)
+  // Raster fast path: off-thread ImageBitmap decode. Skipped for SVG (see above)
+  // and guarded so a createImageBitmap rejection falls through to the <img> path.
+  if (!isSvg && typeof createImageBitmap !== 'undefined') {
+    try {
+      const blob = dataUrlToBlob(dataUrl)
+      return await createImageBitmap(blob)
+    } catch {
+      // Fall through to the <img> path below.
+    }
   }
-  const img = await loadHtmlImage(src.dataUrl)
-  cache.set(src.id, img)
+  return decodeHtmlImage(dataUrl)
+}
+
+/**
+ * Load AND fully decode a data URL into an <img>. Resolves only once the pixels
+ * are decode-ready, so callers can draw immediately without a decode race.
+ */
+async function decodeHtmlImage(dataUrl: string): Promise<HTMLImageElement> {
+  const img = await loadHtmlImage(dataUrl)
+  // decode() guarantees the bitmap is ready for drawImage. It may be missing in
+  // some test/older environments — in that case onload (awaited in loadHtmlImage)
+  // is a sufficient readiness signal.
+  if (typeof img.decode === 'function') {
+    try {
+      await img.decode()
+    } catch {
+      // A decode() rejection after a successful load is benign for SVG/data
+      // URLs in some engines; the element is already usable via onload.
+    }
+  }
   return img
 }
 
