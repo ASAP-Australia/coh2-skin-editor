@@ -2467,6 +2467,20 @@ export default function Editor({
           canRedo={history.canRedo()}
           vehicleName={veh.name ?? vehicle.id}
           uvLines={uvLines}
+          // SLICE 3 live-preview plumbing (S3→S2 handoff): feed the left-column
+          // Viewport the same install handle + vehicle + scene the main editor
+          // Viewport uses, so the LEFT pane renders the ACTUAL selected vehicle
+          // with the LIVE overlayCanvas as its diffuse (paint on the right →
+          // texture updates on the mesh in real time). Without these,
+          // `canShow3D` in VehicleTextureEditor is false and the pane shows only
+          // the "Live 3D preview appears here" placeholder.
+          vehicle={vehicle}
+          root={root}
+          season={season}
+          envArchive={envArchive}
+          envName={envName}
+          preset={preset}
+          badgeDecalSource={badgeDecalSource}
         />
       )}
 
