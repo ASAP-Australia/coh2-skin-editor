@@ -68,7 +68,7 @@ export default function ToolOptionsPeel({ activeId, label, children, style, clas
   // saturated black for contrast, but the same hairline stroke + soft
   // drop shadow so it reads as part of the same family.
   const peelStyle: CSSProperties = {
-    background: 'rgba(20, 22, 28, 0.72)',
+    background: 'rgba(20, 20, 20, 0.74)',
     backdropFilter: 'blur(32px) saturate(180%)',
     WebkitBackdropFilter: 'blur(32px) saturate(180%)',
     border: '0.5px solid rgba(255,255,255,0.10)',
@@ -95,7 +95,7 @@ export default function ToolOptionsPeel({ activeId, label, children, style, clas
       // the minWidth set by its caller. `items-center` keeps every child
       // (sliders, swatches, toggles) vertically centred on a single row.
       className={
-        'flex flex-row items-center gap-2 flex-nowrap' + (className ? ' ' + className : '')
+        'l01-ring flex flex-row items-center gap-2 flex-nowrap' + (className ? ' ' + className : '')
       }
       style={peelStyle}
     >

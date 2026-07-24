@@ -102,7 +102,7 @@ export default function BottomToolPill<TId extends string>({
             className={
               'relative shrink-0 mx-0.5 rounded-xl transition-all duration-150 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-white/70 ' +
               (isActive
-                ? 'bg-white/15 shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.85),0_4px_12px_rgba(0,0,0,0.4)] text-white'
+                ? 'l01-ring bg-[rgba(186,150,90,0.22)] shadow-[inset_0_0_0_1.5px_rgba(186,150,90,0.85),0_4px_12px_rgba(0,0,0,0.4)] text-white'
                 : 'hover:bg-white/10 text-[var(--color-text-2)] hover:text-white')
             }
             style={{ width: 56, height: 56, padding: 4 }}
@@ -111,7 +111,7 @@ export default function BottomToolPill<TId extends string>({
               <span aria-hidden className="flex items-center justify-center">
                 {tool.icon}
               </span>
-              <span className="text-[10px] leading-none font-medium tracking-tight select-none">
+              <span className="font-mono text-[10px] leading-none font-medium tracking-tight select-none">
                 {tool.label}
               </span>
             </div>
@@ -138,7 +138,7 @@ export default function BottomToolPill<TId extends string>({
           className={
             'relative shrink-0 mx-0.5 rounded-xl transition-all duration-150 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-white/70 ' +
             (extra.pressed
-              ? 'bg-white/15 shadow-[inset_0_0_0_1.5px_rgba(255,255,255,0.85),0_4px_12px_rgba(0,0,0,0.4)] text-white'
+              ? 'l01-ring bg-[rgba(186,150,90,0.22)] shadow-[inset_0_0_0_1.5px_rgba(186,150,90,0.85),0_4px_12px_rgba(0,0,0,0.4)] text-white'
               : 'hover:bg-white/10 text-[var(--color-text-2)] hover:text-white')
           }
           style={{ width: 56, height: 56, padding: 4 }}

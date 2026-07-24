@@ -120,12 +120,13 @@ const panelSurface: CSSProperties = {
   width: 228,
   // Match the glass-hud recipe exactly (same as BottomToolPill / AtlasViewPanel)
   // so all three floating surfaces read as one family.
-  background: 'rgba(20,22,28,0.62)',
-  backdropFilter: 'blur(36px) saturate(160%)',
-  WebkitBackdropFilter: 'blur(36px) saturate(160%)',
+  background: 'rgba(20,20,20,0.68)',
+  backdropFilter: 'blur(36px) saturate(125%)',
+  WebkitBackdropFilter: 'blur(36px) saturate(125%)',
   border: '0.5px solid rgba(255,255,255,0.10)',
   borderRadius: 16,
-  boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
+  boxShadow:
+    '0 1px 1px rgba(0,0,0,0.30), 0 12px 30px rgba(0,0,0,0.46), inset 0 0.5px 0 rgba(255,255,255,0.10)',
   overflow: 'hidden',
 }
 
@@ -179,8 +180,8 @@ export function iconBtnStyle(active: boolean): CSSProperties {
     width: 26,
     height: 26,
     borderRadius: 5,
-    border: `1px solid ${active ? 'rgba(120,180,255,0.5)' : 'rgba(255,255,255,0.12)'}`,
-    background: active ? 'rgba(120,180,255,0.15)' : 'rgba(255,255,255,0.04)',
+    border: `1px solid ${active ? 'rgba(186,150,90,0.5)' : 'rgba(255,255,255,0.12)'}`,
+    background: active ? 'rgba(186,150,90,0.15)' : 'rgba(255,255,255,0.04)',
     color: active ? EDITOR_ACCENT : EDITOR_TEXT_2,
     cursor: 'pointer',
     padding: 0,
@@ -229,6 +230,7 @@ export default function PropertiesPanel<L extends BaseLayer = BaseLayer>({
   return (
     <div
       data-testid="properties-panel"
+      className="l01-ring l01-bloom l01-grain"
       style={panelSurface}
     >
       {/* ── Header ── */}
@@ -913,10 +915,10 @@ export function FaceplatePropertiesExtension({
                 title="Curves & tone presets"
                 onClick={onOpenCurves}
                 style={{
-                  background: 'rgba(120,180,255,0.10)',
-                  border: '1px solid rgba(120,180,255,0.25)',
+                  background: 'rgba(186,150,90,0.10)',
+                  border: '1px solid rgba(186,150,90,0.25)',
                   borderRadius: 5,
-                  color: 'rgba(120,180,255,0.85)',
+                  color: 'rgba(186,150,90,0.85)',
                   fontSize: 10,
                   fontWeight: 600,
                   padding: '2px 7px',
@@ -994,8 +996,8 @@ function FaceplateDocumentSection({
     width: 26,
     height: 26,
     borderRadius: 5,
-    border: `1px solid ${active ? 'rgba(120,180,255,0.5)' : 'rgba(255,255,255,0.12)'}`,
-    background: active ? 'rgba(120,180,255,0.15)' : 'rgba(255,255,255,0.04)',
+    border: `1px solid ${active ? 'rgba(186,150,90,0.5)' : 'rgba(255,255,255,0.12)'}`,
+    background: active ? 'rgba(186,150,90,0.15)' : 'rgba(255,255,255,0.04)',
     color: active ? EDITOR_ACCENT : EDITOR_TEXT_2,
     cursor: 'pointer',
     padding: 0,

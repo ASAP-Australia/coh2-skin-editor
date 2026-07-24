@@ -2107,7 +2107,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                   : 'default',
             // Drop shadow lifts the canvas off the void; drag-over adds inner highlight.
             boxShadow: dragOver
-              ? '0 16px 64px -8px rgba(0,0,0,0.90), 0 4px 16px -4px rgba(0,0,0,0.70), inset 0 0 0 2px rgba(120,180,255,0.6)'
+              ? '0 16px 64px -8px rgba(0,0,0,0.90), 0 4px 16px -4px rgba(0,0,0,0.70), inset 0 0 0 2px rgba(186,150,90,0.6)'
               : '0 16px 64px -8px rgba(0,0,0,0.90), 0 4px 16px -4px rgba(0,0,0,0.70)',
             outline: 'none',
             // overflow:visible so layers dragged past the canvas edge remain
@@ -2134,7 +2134,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                 top: 0,
                 width: 1,
                 height: FACEPLATE_BANNER_H,
-                background: 'rgba(120,180,255,0.4)',
+                background: 'rgba(186,150,90,0.4)',
                 pointerEvents: 'none',
                 zIndex: 998,
               }}
@@ -2148,7 +2148,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                 top: FACEPLATE_BANNER_H / 2,
                 width: FACEPLATE_BANNER_W,
                 height: 1,
-                background: 'rgba(120,180,255,0.4)',
+                background: 'rgba(186,150,90,0.4)',
                 pointerEvents: 'none',
                 zIndex: 998,
               }}
@@ -2166,7 +2166,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                   top: 0,
                   width: 1,
                   height: FACEPLATE_BANNER_H,
-                  background: 'rgba(120,180,255,0.85)',
+                  background: 'rgba(186,150,90,0.85)',
                   pointerEvents: 'none',
                   zIndex: 1000,
                 }}
@@ -2180,7 +2180,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                   top: g.value * viewScale,
                   width: FACEPLATE_BANNER_W,
                   height: 1,
-                  background: 'rgba(120,180,255,0.85)',
+                  background: 'rgba(186,150,90,0.85)',
                   pointerEvents: 'none',
                   zIndex: 1000,
                 }}
@@ -2572,7 +2572,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                 anchorSize={10 / viewScale}
                 anchorCornerRadius={2}
                 anchorStroke={EDITOR_ACCENT}
-                anchorFill="rgba(20,22,28,0.92)"
+                anchorFill="rgba(20,20,20,0.92)"
                 visible={activeTool !== 'draw' && activeTool !== 'mask'}
               />
             </Layer>
@@ -2934,8 +2934,9 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                 : 'Download the faceplate as a .sga mod file'
           }
           aria-label="Export faceplate as .sga"
-          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-40 disabled:cursor-not-allowed"
           style={{
+            position: 'relative',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -2943,7 +2944,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             height: 36,
             padding: '0 12px',
             borderRadius: 12,
-            background: 'rgba(15, 17, 22, 0.75)',
+            background: 'rgba(17, 17, 17, 0.78)',
             backgroundImage:
               'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
             backdropFilter: 'blur(40px) saturate(150%)',
@@ -3057,12 +3058,13 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           tool-based gating. */}
       {adjustImageOpen && selectedLayer?.kind === 'image' && (
         <div
+          className="l01-ring"
           style={{
             position: 'fixed',
             top: 56,
             right: 12,
             zIndex: 45,
-            background: 'rgba(20, 22, 28, 0.88)',
+            background: 'rgba(20, 20, 20, 0.88)',
             backdropFilter: 'blur(24px) saturate(180%)',
             WebkitBackdropFilter: 'blur(24px) saturate(180%)',
             border: '0.5px solid rgba(255,255,255,0.10)',
@@ -3077,6 +3079,8 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span
               style={{
+                fontFamily: 'var(--font-mono)',
+                fontVariantNumeric: 'slashed-zero',
                 fontSize: 10,
                 fontWeight: 600,
                 color: EDITOR_TEXT_3,
@@ -3093,10 +3097,12 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                 data-testid="curves-open-btn"
                 onClick={() => setCurvesOpen(true)}
                 style={{
-                  background: 'rgba(120,180,255,0.10)',
-                  border: '1px solid rgba(120,180,255,0.25)',
+                  fontFamily: 'var(--font-mono)',
+                  fontVariantNumeric: 'slashed-zero',
+                  background: 'rgba(186,150,90,0.10)',
+                  border: '1px solid rgba(186,150,90,0.25)',
                   borderRadius: 5,
-                  color: 'rgba(120,180,255,0.85)',
+                  color: 'rgba(186,150,90,0.85)',
                   fontSize: 10,
                   fontWeight: 600,
                   padding: '2px 8px',
@@ -3207,7 +3213,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
             alignItems: 'center',
             gap: 6,
             padding: '10px 6px',
-            background: 'rgba(16,18,24,0.72)',
+            background: 'rgba(20,20,20,0.72)',
             backdropFilter: 'blur(20px) saturate(160%)',
             WebkitBackdropFilter: 'blur(20px) saturate(160%)',
             border: '1px solid rgba(255,255,255,0.08)',
@@ -3402,9 +3408,11 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                     }}
                     style={{
                       width: 36,
+                      fontFamily: 'var(--font-mono)',
+                      fontVariantNumeric: 'slashed-zero',
                       fontSize: 9,
                       background: 'rgba(0,0,0,0.5)',
-                      border: '1px solid rgba(120,180,255,0.6)',
+                      border: '1px solid rgba(186,150,90,0.6)',
                       borderRadius: 3,
                       color: '#fff',
                       padding: '1px 3px',
@@ -3484,7 +3492,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                       border: 'none',
                       color:
                         layer.lockFlags?.position || layer.lockFlags?.aspect
-                          ? 'rgba(120,180,255,0.9)'
+                          ? 'rgba(186,150,90,0.9)'
                           : 'rgba(255,255,255,0.3)',
                       cursor: 'pointer',
                       padding: 0,
@@ -3557,12 +3565,13 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           if (!layer) return null
           return (
             <div
+              className="l01-ring"
               style={{
                 position: 'fixed',
                 left: layerCtxMenu.x,
                 top: layerCtxMenu.y,
                 zIndex: 200,
-                background: 'rgba(20,22,28,0.96)',
+                background: 'rgba(20,20,20,0.96)',
                 backdropFilter: 'blur(24px)',
                 border: '0.5px solid rgba(255,255,255,0.12)',
                 borderRadius: 10,
@@ -3791,7 +3800,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
                   justifyContent: 'center',
                   borderRadius: 14,
                   border: '0.5px solid rgba(255,255,255,0.10)',
-                  background: adjustImageOpen ? 'rgba(120,180,255,0.18)' : 'rgba(20, 22, 28, 0.72)',
+                  background: adjustImageOpen ? 'rgba(186,150,90,0.18)' : 'rgba(20, 20, 20, 0.72)',
                   backdropFilter: 'blur(32px) saturate(180%)',
                   WebkitBackdropFilter: 'blur(32px) saturate(180%)',
                   boxShadow: '0 8px 24px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
@@ -3832,7 +3841,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
         title="Keyboard shortcuts (F1)"
         aria-label="Keyboard shortcuts (F1)"
         onClick={() => setShortcutsOpen(true)}
-        className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+        className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
         style={{
           position: 'fixed',
           bottom: 24,
@@ -3843,7 +3852,7 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
           width: 36,
           height: 36,
           borderRadius: 12,
-          background: 'rgba(15, 17, 22, 0.75)',
+          background: 'rgba(17, 17, 17, 0.78)',
           backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))',
           backdropFilter: 'blur(40px) saturate(150%)',
           WebkitBackdropFilter: 'blur(40px) saturate(150%)',
@@ -4105,8 +4114,8 @@ function FaceplateToolPeelBody({
     width: 28,
     height: 28,
     borderRadius: 6,
-    background: active ? 'rgba(120,180,255,0.18)' : 'rgba(255,255,255,0.06)',
-    border: `1px solid ${active ? 'rgba(120,180,255,0.6)' : 'rgba(255,255,255,0.12)'}`,
+    background: active ? 'rgba(186,150,90,0.18)' : 'rgba(255,255,255,0.06)',
+    border: `1px solid ${active ? 'rgba(186,150,90,0.6)' : 'rgba(255,255,255,0.12)'}`,
     color: active ? EDITOR_ACCENT : EDITOR_TEXT_2,
     cursor: 'pointer',
     flexShrink: 0,
@@ -4748,8 +4757,8 @@ function FaceplateToolPeelBody({
             display: 'inline-flex',
             alignItems: 'center',
             gap: 6,
-            background: 'rgba(120,180,255,0.12)',
-            border: '1px solid rgba(120,180,255,0.30)',
+            background: 'rgba(186,150,90,0.12)',
+            border: '1px solid rgba(186,150,90,0.30)',
             borderRadius: 7,
             color: EDITOR_ACCENT,
             fontSize: 11,

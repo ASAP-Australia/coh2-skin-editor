@@ -44,7 +44,7 @@ export default function FactionPanel({ selected, onSelect, packFactions }: Props
             aria-pressed={active}
             title={FACTION_LABELS[id]}
             className={[
-              'relative w-11 h-11 rounded-xl flex items-center justify-center',
+              'relative w-11 h-11 rounded-xl flex items-center justify-center font-mono',
               'transition-all duration-150 active:scale-95',
               active
                 ? 'bg-white/95 shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_2px_8px_rgba(0,0,0,0.25)]'

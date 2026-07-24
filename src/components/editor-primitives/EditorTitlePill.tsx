@@ -106,7 +106,7 @@ export default function EditorTitlePill({
         height: 36,
         padding: '0 10px',
         borderRadius: 12,
-        background: 'rgba(15, 17, 22, 0.75)',
+        background: 'rgba(20, 20, 20, 0.75)',
         backgroundImage:
           'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
         backdropFilter: 'blur(40px) saturate(150%)',
@@ -114,7 +114,7 @@ export default function EditorTitlePill({
         border: '0.5px solid rgba(255, 255, 255, 0.08)',
         boxShadow:
           'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-        color: liveSyncEnabled ? 'rgb(52 211 153)' /* emerald-400 */ : 'rgba(247,247,250,0.55)',
+        color: liveSyncEnabled ? 'rgb(52 211 153)' /* emerald-400 */ : 'rgba(245,245,245,0.55)',
         cursor: 'pointer',
         fontSize: 12,
         fontWeight: 600,
@@ -141,7 +141,7 @@ export default function EditorTitlePill({
     paddingLeft: 14,
     paddingRight: 14,
     borderRadius: 12,
-    background: 'rgba(15, 17, 22, 0.75)',
+    background: 'rgba(20, 20, 20, 0.75)',
     backgroundImage:
       'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
     backdropFilter: 'blur(40px) saturate(150%)',
@@ -149,9 +149,10 @@ export default function EditorTitlePill({
     border: '0.5px solid rgba(255, 255, 255, 0.08)',
     boxShadow:
       'inset 0 0.5px 0 rgba(255, 255, 255, 0.05), 0 4px 12px -4px rgba(0, 0, 0, 0.2)',
-    color: 'rgba(247,247,250,0.88)',
+    color: 'rgba(245,245,245,0.88)',
     cursor: 'pointer',
     padding: '0 14px',
+    fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
     fontSize: 14,
     fontWeight: 700,
     letterSpacing: '0.01em',
@@ -168,6 +169,7 @@ export default function EditorTitlePill({
       title={publishError ?? liveSyncTitle}
       aria-label={publishError ? `Publish error: ${publishError}` : liveSyncAriaLabel}
       onClick={handleClick}
+      className="l01-ring"
       style={pillStyle}
     >
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>

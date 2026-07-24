@@ -47,7 +47,7 @@ export default function EditorHomeButton({
     width: 36,
     height: 36,
     borderRadius: 12,
-    background: 'rgba(15, 17, 22, 0.75)',
+    background: 'rgba(17, 17, 17, 0.78)',
     backgroundImage:
       'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
     backdropFilter: 'blur(40px) saturate(150%)',
@@ -73,7 +73,7 @@ export default function EditorHomeButton({
       onClick={onClick}
       title={title}
       aria-label={label}
-      className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+      className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
       style={merged}
     >
       <Home size={16} strokeWidth={2} aria-hidden />

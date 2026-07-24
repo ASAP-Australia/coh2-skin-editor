@@ -2127,7 +2127,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                 top: 0,
                 width: 1,
                 height: '100%',
-                background: 'rgba(120,180,255,0.4)',
+                background: 'rgba(186,150,90,0.4)',
                 pointerEvents: 'none',
                 zIndex: 998,
               }}
@@ -2141,7 +2141,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                 top: '50%',
                 width: '100%',
                 height: 1,
-                background: 'rgba(120,180,255,0.4)',
+                background: 'rgba(186,150,90,0.4)',
                 pointerEvents: 'none',
                 zIndex: 998,
               }}
@@ -2159,7 +2159,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                   top: 0,
                   width: 1,
                   height: '100%',
-                  background: 'rgba(120,180,255,0.85)',
+                  background: 'rgba(186,150,90,0.85)',
                   pointerEvents: 'none',
                   zIndex: 1000,
                 }}
@@ -2173,7 +2173,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                   top: `${(g.value / DECAL_PACK_SIZE) * 100}%`,
                   width: '100%',
                   height: 1,
-                  background: 'rgba(120,180,255,0.85)',
+                  background: 'rgba(186,150,90,0.85)',
                   pointerEvents: 'none',
                   zIndex: 1000,
                 }}
@@ -2231,6 +2231,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
       {refPreviewDataUrl && (
         <div
           aria-label="Default slot preview"
+          className="l01-ring"
           style={{
             position: 'fixed',
             right: 20,
@@ -2242,16 +2243,18 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
             alignItems: 'center',
             gap: 6,
             padding: '8px 8px 10px',
-            background: 'rgba(16,18,24,0.72)',
+            background: 'rgba(20,20,20,0.72)',
             backdropFilter: 'blur(20px) saturate(160%)',
             WebkitBackdropFilter: 'blur(20px) saturate(160%)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            border: '0.5px solid rgba(255,255,255,0.10)',
             borderRadius: 10,
             pointerEvents: 'none',
             userSelect: 'none',
           } as CSSProperties}
         >
           <span style={{
+            fontFamily: 'var(--font-mono)',
+            fontVariantNumeric: 'slashed-zero',
             fontSize: 9,
             fontWeight: 500,
             letterSpacing: '0.08em',
@@ -2325,7 +2328,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           data-testid="dc-export-sga"
           disabled={isExporting || !hasExportableArtwork}
           onClick={handleExportSga}
-          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-35 disabled:pointer-events-none"
+          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-35 disabled:pointer-events-none"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -2334,13 +2337,15 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
             height: 36,
             padding: '0 12px',
             borderRadius: 12,
-            background: 'rgba(15, 17, 22, 0.75)',
+            background: 'rgba(17,17,17,0.78)',
             backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))',
             backdropFilter: 'blur(40px) saturate(150%)',
             WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-            border: '0.5px solid rgba(255,255,255,0.08)',
+            border: '0.5px solid rgba(255,255,255,0.10)',
             boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05), 0 4px 12px -4px rgba(0,0,0,0.2)',
             color: 'var(--color-text-2)',
+            fontFamily: 'var(--font-mono)',
+            fontVariantNumeric: 'slashed-zero',
             fontSize: 12,
             fontWeight: 600,
             cursor: 'pointer',
@@ -2468,17 +2473,20 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
             onClick={() => setShowAdvancedPlacement(v => !v)}
             aria-expanded={showAdvancedPlacement}
             title="Show advanced placement controls (parts, factions and overrides)"
+            className="l01-ring"
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: 8,
               padding: '5px 12px',
-              background: 'rgba(16,18,24,0.72)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'rgba(20,20,20,0.72)',
+              border: '0.5px solid rgba(255,255,255,0.10)',
               borderRadius: 8,
               backdropFilter: 'blur(20px) saturate(160%)',
               WebkitBackdropFilter: 'blur(20px) saturate(160%)',
               color: 'rgba(255,255,255,0.75)',
+              fontFamily: 'var(--font-mono)',
+              fontVariantNumeric: 'slashed-zero',
               fontSize: 12,
               cursor: 'pointer',
               whiteSpace: 'nowrap',
@@ -2529,6 +2537,8 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
                 background: `${FACTION_COLORS[activeFaction as Faction]}22`,
                 border: `1px solid ${FACTION_COLORS[activeFaction as Faction]}55`,
                 borderRadius: 8,
+                fontFamily: 'var(--font-mono)',
+                fontVariantNumeric: 'slashed-zero',
                 fontSize: 11,
                 color: FACTION_COLORS[activeFaction as Faction],
                 backdropFilter: 'blur(8px)',
@@ -2603,12 +2613,15 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           </button>
           {showPartMatrix && (
             <div
+              className="l01-ring"
               style={{
-                background: 'rgba(16,18,24,0.92)',
-                border: '1px solid rgba(255,255,255,0.10)',
+                position: 'relative',
+                background: 'rgba(22,22,22,0.88)',
+                border: '0.5px solid rgba(255,255,255,0.10)',
                 borderRadius: 12,
                 padding: 12,
                 backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
               }}
             >
               <FactionPartMatrix
@@ -2711,13 +2724,15 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           if (!decal) return null
           return (
             <div
+              className="l01-ring"
               style={{
                 position: 'fixed',
                 left: decalCtxMenu.x,
                 top: decalCtxMenu.y,
                 zIndex: 200,
-                background: 'rgba(20,22,28,0.96)',
+                background: 'rgba(20,20,20,0.96)',
                 backdropFilter: 'blur(24px)',
+                WebkitBackdropFilter: 'blur(24px)',
                 border: '0.5px solid rgba(255,255,255,0.12)',
                 borderRadius: 10,
                 padding: '4px 0',
@@ -2902,6 +2917,7 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           Shows the current zoom percentage. "Fit" resets to the default
           4× and "1:1" snaps to 100% (exact pixels). */}
       <div
+        className="l01-ring"
         style={{
           position: 'fixed',
           bottom: 24,
@@ -2913,10 +2929,10 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
           height: 32,
           padding: '0 10px',
           borderRadius: 10,
-          background: 'rgba(15, 17, 22, 0.75)',
+          background: 'rgba(20,20,20,0.68)',
           backdropFilter: 'blur(40px) saturate(150%)',
           WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-          border: '0.5px solid rgba(255, 255, 255, 0.08)',
+          border: '0.5px solid rgba(255,255,255,0.10)',
           boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05), 0 4px 12px -4px rgba(0,0,0,0.2)',
           WebkitAppRegion: 'no-drag',
         } as CSSProperties}
@@ -2924,9 +2940,10 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
         {/* Zoom percentage label */}
         <span
           style={{
+            fontFamily: 'var(--font-mono)',
             fontSize: 11,
             fontWeight: 500,
-            fontVariantNumeric: 'tabular-nums',
+            fontVariantNumeric: 'slashed-zero tabular-nums',
             color: EDITOR_TEXT_2,
             minWidth: 36,
             textAlign: 'right',
@@ -3225,8 +3242,8 @@ function DecalToolPeelBody({
     width: 28,
     height: 28,
     borderRadius: 6,
-    background: active ? 'rgba(120,180,255,0.18)' : 'rgba(255,255,255,0.06)',
-    border: `1px solid ${active ? 'rgba(120,180,255,0.6)' : 'rgba(255,255,255,0.12)'}`,
+    background: active ? 'rgba(186,150,90,0.18)' : 'rgba(255,255,255,0.06)',
+    border: `1px solid ${active ? 'rgba(186,150,90,0.6)' : 'rgba(255,255,255,0.12)'}`,
     color: active ? EDITOR_ACCENT : EDITOR_TEXT_2,
     cursor: 'pointer',
     flexShrink: 0,
@@ -3250,7 +3267,7 @@ function DecalToolPeelBody({
               style={{
                 padding: '0 7px',
                 height: 28,
-                background: nudgeStep === opt ? 'rgba(120,180,255,0.18)' : 'rgba(255,255,255,0.04)',
+                background: nudgeStep === opt ? 'rgba(186,150,90,0.18)' : 'rgba(255,255,255,0.04)',
                 border: 'none',
                 borderRight: opt !== 8 ? '1px solid rgba(255,255,255,0.10)' : 'none',
                 color: nudgeStep === opt ? EDITOR_ACCENT : EDITOR_TEXT_2,
@@ -3287,7 +3304,7 @@ function DecalToolPeelBody({
                 style={{
                   padding: '0 6px',
                   height: 28,
-                  background: snapGridStep === opt ? 'rgba(120,180,255,0.18)' : 'rgba(255,255,255,0.04)',
+                  background: snapGridStep === opt ? 'rgba(186,150,90,0.18)' : 'rgba(255,255,255,0.04)',
                   border: 'none',
                   borderRight: opt !== 32 ? '1px solid rgba(255,255,255,0.10)' : 'none',
                   color: snapGridStep === opt ? EDITOR_ACCENT : EDITOR_TEXT_2,

@@ -170,7 +170,7 @@ function VehiclePill({
         data-id={vehicle.id}
         onClick={() => onSelect(vehicle)}
         title={isCovered ? `${vehicle.displayName} — covered by faction-default livery` : vehicle.displayName}
-        className={`relative px-3 py-1.5 rounded-pill text-[11px] font-medium whitespace-nowrap transition-all duration-150 cursor-pointer ${
+        className={`relative px-3 py-1.5 rounded-pill text-[11px] font-medium font-mono whitespace-nowrap transition-all duration-150 cursor-pointer ${
           isActive
             ? 'bg-white/95 text-black shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_2px_8px_rgba(0,0,0,0.25)]'
             : 'text-[var(--color-text-2)] hover:bg-white/10 hover:text-white'
@@ -208,7 +208,7 @@ function VehiclePill({
       {/* Icon strip removed — name-only layout */}
       {/* Name caption */}
       <span
-        className={`whitespace-nowrap text-[11px] leading-tight font-medium select-none ${
+        className={`whitespace-nowrap text-[11px] leading-tight font-medium font-mono select-none ${
           isActive ? 'text-white' : 'text-white/70'
         }`}
       >

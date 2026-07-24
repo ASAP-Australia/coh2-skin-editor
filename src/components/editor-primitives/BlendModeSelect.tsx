@@ -99,10 +99,12 @@ export default function BlendModeSelect({
         onChange={handleChange}
         aria-label={label ?? 'Blend mode'}
         style={{
-          background: 'rgba(20, 22, 28, 0.72)',
+          background: 'rgba(20, 20, 20, 0.72)',
           border: '1px solid rgba(255,255,255,0.12)',
           borderRadius: 5,
           color: EDITOR_TEXT_2,
+          fontFamily: 'var(--font-mono)',
+          fontVariantNumeric: 'slashed-zero',
           fontSize: 11,
           height: 26,
           padding: '0 6px',
@@ -114,7 +116,7 @@ export default function BlendModeSelect({
         }}
       >
         {BLEND_MODES.map(mode => (
-          <option key={mode} value={mode} style={{ background: '#1a1c22' }}>
+          <option key={mode} value={mode} style={{ background: '#1a1a1a' }}>
             {toLabel(mode)}
           </option>
         ))}

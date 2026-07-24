@@ -241,7 +241,7 @@ export default function CanvasHandles({
     position: 'absolute',
     width: 12,
     height: 12,
-    background: 'rgba(120,180,255,0.95)',
+    background: 'rgba(186,150,90,0.95)',
     border: '1.5px solid #fff',
     borderRadius: '50%',
     pointerEvents: 'auto',

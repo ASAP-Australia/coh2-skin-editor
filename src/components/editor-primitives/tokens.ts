@@ -36,26 +36,28 @@ import type { CSSProperties } from 'react'
 
 // ── Color atoms ────────────────────────────────────────────────────────────
 
-/** Blue selection accent. Matches CanvasHandles' fill colour exactly so the
- *  active state in any layer-list row, slider thumb, modal CTA, etc. visually
- *  rhymes with the on-canvas selection outline. */
-export const EDITOR_ACCENT = 'rgba(120,180,255,0.95)'
+/** SELECTION / FOCUS accent is now house gold #BA965A (was blue). Matches
+ *  CanvasHandles' fill colour exactly so the active state in any layer-list
+ *  row, slider thumb, modal CTA, etc. visually rhymes with the on-canvas
+ *  selection outline. */
+export const EDITOR_ACCENT = 'rgba(186,150,90,0.95)'
 
 /** Soft fills derived from EDITOR_ACCENT — used for active-state backgrounds
- *  (10% alpha) and borders (30% alpha) in LayerRow / ToggleChip. */
-export const EDITOR_ACCENT_FILL = 'rgba(120,180,255,0.10)'
-export const EDITOR_ACCENT_BORDER = 'rgba(120,180,255,0.30)'
+ *  and borders in LayerRow / ToggleChip. */
+export const EDITOR_ACCENT_FILL = 'rgba(186,150,90,0.14)'
+export const EDITOR_ACCENT_BORDER = 'rgba(186,150,90,0.42)'
 
 /** A slightly stronger fill for two-state buttons (Flip H / Flip V toggles). */
-export const EDITOR_ACCENT_FILL_STRONG = 'rgba(120,180,255,0.18)'
+export const EDITOR_ACCENT_FILL_STRONG = 'rgba(186,150,90,0.22)'
 
-/** Primary / secondary / tertiary text on glass surfaces. Aligns with the
- *  --color-text-1..3 OKLCH ladder in index.css but expressed as rgba so we
- *  can compose into other rgba values without `color-mix`. */
-export const EDITOR_TEXT_1 = 'rgba(247,247,250,0.92)'
-export const EDITOR_TEXT_2 = 'rgba(247,247,250,0.70)'
-export const EDITOR_TEXT_3 = 'rgba(247,247,250,0.50)'
-export const EDITOR_TEXT_4 = 'rgba(247,247,250,0.35)'
+/** Primary / secondary / tertiary text on glass surfaces. Neutral grayscale
+ *  whites (was faintly warm 247,247,250) to match the neutral near-black base;
+ *  aligns with the --color-text-1..3 OKLCH ladder in index.css but expressed
+ *  as rgba so we can compose into other rgba values without `color-mix`. */
+export const EDITOR_TEXT_1 = 'rgba(245,245,245,0.92)'
+export const EDITOR_TEXT_2 = 'rgba(245,245,245,0.70)'
+export const EDITOR_TEXT_3 = 'rgba(245,245,245,0.50)'
+export const EDITOR_TEXT_4 = 'rgba(245,245,245,0.35)'
 
 /** Hairline stroke — matches --color-stroke-1 in index.css. Only the
  *  faintest tier survived the redesign; the 0.10 and 0.18 alpha variants
@@ -83,20 +85,22 @@ export const EDITOR_STROKE_1 = 'rgba(255,255,255,0.06)'
 // the canonical recipe again, restore both the helper objects and the
 // EDITOR_SURFACE_* fill tokens together — they were five lines each.
 
-/** Topbar action button — Save / Undo / etc. */
+/** Topbar action button — Save / Undo / etc. lab01 raised recipe: radial
+ *  top-highlight over a neutral #1F1F1F surface + inner top hairline. */
 export const topbarButtonStyle: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 6,
   padding: '6px 12px',
-  background: 'rgba(255,255,255,0.04)',
-  /* 0.5px hairline matches the glass system convention (glass-1/2/3 in
-   * index.css) — thicker strokes read as outlines rather than hairlines. */
+  background: 'radial-gradient(ellipse at -20px top, rgba(255,255,255,0.10), rgba(255,255,255,0) 60%), #1F1F1F',
   border: '0.5px solid rgba(255,255,255,0.10)',
-  borderRadius: 10,
+  borderRadius: 12,
   color: EDITOR_TEXT_1,
+  fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
   fontSize: 12,
   fontWeight: 500,
+  fontVariantNumeric: 'slashed-zero',
+  boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.06), 0 1px 2px rgba(0,0,0,0.3)',
   cursor: 'pointer',
 }
 
@@ -106,12 +110,15 @@ export const panelButtonStyle: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   padding: '6px 8px',
-  background: 'rgba(255,255,255,0.03)',
-  border: '1px solid rgba(255,255,255,0.08)',
-  borderRadius: 6,
+  background: 'radial-gradient(ellipse at -12px top, rgba(255,255,255,0.08), rgba(255,255,255,0) 60%), #1F1F1F',
+  border: '0.5px solid rgba(255,255,255,0.08)',
+  borderRadius: 8,
   color: EDITOR_TEXT_1,
+  fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
   fontSize: 11,
   fontWeight: 500,
+  fontVariantNumeric: 'slashed-zero',
+  boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05)',
   cursor: 'pointer',
 }
 
@@ -124,23 +131,28 @@ export const panelButtonLargeStyle: CSSProperties = {
   justifyContent: 'center',
   gap: 6,
   padding: '8px 12px',
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.08)',
-  borderRadius: 8,
+  background: 'radial-gradient(ellipse at -16px top, rgba(255,255,255,0.09), rgba(255,255,255,0) 60%), #1F1F1F',
+  border: '0.5px solid rgba(255,255,255,0.08)',
+  borderRadius: 12,
   color: EDITOR_TEXT_1,
+  fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
   fontSize: 12,
   fontWeight: 500,
+  fontVariantNumeric: 'slashed-zero',
+  boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05), 0 1px 2px rgba(0,0,0,0.25)',
   cursor: 'pointer',
 }
 
 /** Section heading — used inside left/right panels to delimit logical
  *  groups ("Tools", "Adjustments", "Decals", "Transform"). 10px uppercase
- *  with 1.5 letter-spacing is the iOS Control Center pattern. */
+ *  mono with 1.5 letter-spacing is the iOS Control Center pattern. */
 export const sectionHeadingStyle: CSSProperties = {
   margin: 0,
+  fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
   fontSize: 10,
   fontWeight: 600,
   letterSpacing: 1.5,
   textTransform: 'uppercase',
+  fontVariantNumeric: 'slashed-zero',
   color: EDITOR_TEXT_3,
 }

@@ -66,7 +66,7 @@ function Segment({
     <button
       onClick={onClick}
       aria-pressed={active}
-      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-all duration-150 cursor-pointer ${
+      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium font-mono transition-all duration-150 cursor-pointer ${
         active
           ? 'text-black shadow-[inset_0_0.5px_0_rgb(255_255_255/0.8),0_2px_8px_rgba(0,0,0,0.25)]'
           : 'hover:text-white'

@@ -388,7 +388,7 @@ function Section({
   return (
     <div className="mb-4 last:mb-0">
       <div className="flex items-center justify-between mb-2">
-        <div className="text-[10px] uppercase tracking-[1.5px] text-[var(--color-text-3)] font-medium">
+        <div className="text-[10px] uppercase tracking-[1.5px] text-[var(--color-text-3)] font-medium font-mono">
           {label}
         </div>
         {actions ? <div className="flex items-center">{actions}</div> : null}
@@ -478,7 +478,7 @@ function Slider({
     <label aria-label={label} className="block mb-2">
       <div className="flex justify-between text-[10px] mb-0.5">
         <span className="text-[var(--color-text-2)]">{label}</span>
-        <span className="text-white tabular-nums">
+        <span className="text-white tabular-nums font-mono [font-variant-numeric:slashed-zero_tabular-nums]">
           {value}
           {suffix}
         </span>

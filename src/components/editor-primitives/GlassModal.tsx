@@ -105,9 +105,10 @@ export default function GlassModal({
         }}
       />
       <div
+        className="l01-ring l01-bloom"
         style={{
           position: 'relative',
-          background: '#13151c',
+          background: '#161616',
           border: '1px solid rgba(255,255,255,0.10)',
           borderRadius: 16,
           padding: 28,
@@ -130,7 +131,15 @@ export default function GlassModal({
             }}
           >
             {title ? (
-              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: -0.2 }}>
+              <h2
+                style={{
+                  margin: 0,
+                  fontFamily: 'var(--font-sans)',
+                  fontSize: 18,
+                  fontWeight: 600,
+                  letterSpacing: '-0.025em',
+                }}
+              >
                 {title}
               </h2>
             ) : (

@@ -23,7 +23,7 @@ import { EDITOR_TEXT_1, EDITOR_TEXT_2 } from './tokens'
 type Intent = 'info' | 'success' | 'error'
 
 const INTENT_BORDER: Record<Intent, string> = {
-  info: 'rgba(120,180,255,0.45)',
+  info: 'rgba(186,150,90,0.45)',
   success: 'rgba(140,200,140,0.45)',
   error: 'rgba(240,140,140,0.50)',
 }
@@ -63,7 +63,7 @@ export default function GlassToast({
         bottom: 24,
         right: 24,
         zIndex: 100,
-        background: 'rgba(20,22,28,0.92)',
+        background: 'rgba(20,20,20,0.92)',
         border: `1px solid ${INTENT_BORDER[intent]}`,
         borderRadius: 10,
         padding: '12px 16px',
@@ -76,6 +76,8 @@ export default function GlassToast({
     >
       <div
         style={{
+          fontFamily: 'var(--font-mono)',
+          fontVariantNumeric: 'slashed-zero',
           fontSize: 12,
           fontWeight: 600,
           marginBottom: body ? 4 : 0,
@@ -84,7 +86,18 @@ export default function GlassToast({
       >
         {title}
       </div>
-      {body && <div style={{ fontSize: 11, color: EDITOR_TEXT_2 }}>{body}</div>}
+      {body && (
+        <div
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontVariantNumeric: 'slashed-zero',
+            fontSize: 11,
+            color: EDITOR_TEXT_2,
+          }}
+        >
+          {body}
+        </div>
+      )}
       {dismissable && onClose && (
         <button
           type="button"
@@ -96,7 +109,7 @@ export default function GlassToast({
             right: 4,
             background: 'transparent',
             border: 'none',
-            color: 'rgba(247,247,250,0.5)',
+            color: 'rgba(245,245,245,0.5)',
             cursor: 'pointer',
             fontSize: 12,
             padding: '2px 6px',

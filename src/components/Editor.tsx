@@ -2462,14 +2462,11 @@ export default function Editor({
               <button
                 type="button"
                 onClick={() => setSelectedPart(null)}
-                className="relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium cursor-pointer transition-all duration-150 select-none"
+                className="glass-pill l01-ring relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium cursor-pointer transition-all duration-150 select-none"
                 style={{
-                  background: 'rgba(20, 22, 28, 0.72)',
                   color: 'rgb(229, 231, 235)',
-                  backdropFilter: 'blur(36px) saturate(160%)',
-                  border: '0.5px solid rgba(255,255,255,0.18)',
-                  boxShadow:
-                    '0 8px 22px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
+                  fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
+                  fontVariantNumeric: 'slashed-zero',
                 }}
                 title="Back to full view (Esc)"
                 aria-label="Back to full view"

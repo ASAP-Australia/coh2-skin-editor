@@ -48,8 +48,9 @@ export default function CanvasPlaceholder({ width, height, label }: Props) {
     top: 8,
     left: '50%',
     transform: 'translateX(-50%)',
-    font: '11px/1 monospace',
-    color: 'rgba(247,247,250,0.50)',
+    font: "11px/1 'Geist Mono Variable', ui-monospace, monospace",
+    fontVariantNumeric: 'slashed-zero',
+    color: 'rgba(245,245,245,0.50)',
     letterSpacing: '0.04em',
     userSelect: 'none',
     padding: '2px 6px',
@@ -68,8 +69,9 @@ export default function CanvasPlaceholder({ width, height, label }: Props) {
     top: 28,
     left: '50%',
     transform: 'translateX(-50%)',
-    font: '10px/1 monospace',
-    color: 'rgba(247,247,250,0.35)',
+    font: "10px/1 'Geist Mono Variable', ui-monospace, monospace",
+    fontVariantNumeric: 'slashed-zero',
+    color: 'rgba(245,245,245,0.35)',
     letterSpacing: '0.02em',
     userSelect: 'none',
     padding: '2px 6px',
@@ -87,7 +89,7 @@ export default function CanvasPlaceholder({ width, height, label }: Props) {
     width: 6,
     height: 6,
     borderRadius: '50%',
-    background: 'rgba(247,247,250,0.35)',
+    background: 'rgba(245,245,245,0.35)',
   }
 
   // Arrow geometry constants (in SVG-user-units / px at 1:1 scale).
@@ -151,7 +153,7 @@ export default function CanvasPlaceholder({ width, height, label }: Props) {
             <polyline
               points="1,1 5,5 1,9"
               fill="none"
-              stroke="rgba(247,247,250,0.35)"
+              stroke="rgba(245,245,245,0.35)"
               strokeWidth="1.5"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -166,7 +168,7 @@ export default function CanvasPlaceholder({ width, height, label }: Props) {
             y1={l.y1}
             x2={l.x2}
             y2={l.y2}
-            stroke="rgba(247,247,250,0.35)"
+            stroke="rgba(245,245,245,0.35)"
             strokeWidth="1.5"
             strokeLinecap="round"
             vectorEffect="non-scaling-stroke"

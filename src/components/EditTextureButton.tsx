@@ -53,7 +53,7 @@ export default function EditTextureButton({ brushOn, onClick, disabled = false }
       }
       data-testid="edit-texture-pill"
       className={
-        'relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium cursor-pointer transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed' +
+        'l01-ring relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium cursor-pointer transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed' +
         // Inactive surface = shared `glass-pill` recipe; active swaps to the
         // green "editing" tint below.
         (brushOn ? '' : ' glass-pill')
@@ -68,8 +68,14 @@ export default function EditTextureButton({ brushOn, onClick, disabled = false }
               border: '0.5px solid rgba(255,255,255,0.30)',
               boxShadow:
                 '0 8px 22px rgba(120, 160, 60, 0.40), inset 0 0.5px 0 rgba(255,255,255,0.30)',
+              fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
+              fontVariantNumeric: 'slashed-zero',
             }
-          : { color: 'rgb(229, 231, 235)' }
+          : {
+              color: 'rgb(229, 231, 235)',
+              fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
+              fontVariantNumeric: 'slashed-zero',
+            }
       }
     >
       <Brush size={13} strokeWidth={2} />

@@ -352,8 +352,8 @@ export default function CurvesEditor({ filters, onApply, onClose }: CurvesEditor
   }
 
   const applyBtnStyle: CSSProperties = {
-    background: 'rgba(120,180,255,0.14)',
-    border: '1px solid rgba(120,180,255,0.35)',
+    background: 'rgba(186,150,90,0.14)',
+    border: '1px solid rgba(186,150,90,0.35)',
     borderRadius: 6,
     color: EDITOR_ACCENT,
     fontSize: 11,
@@ -421,7 +421,7 @@ export default function CurvesEditor({ filters, onApply, onClose }: CurvesEditor
             flexDirection: 'row',
             alignItems: 'flex-start',
             gap: 20,
-            borderColor: 'rgba(120,180,255,0.18)',
+            borderColor: 'rgba(186,150,90,0.18)',
           }}
         >
           <div style={{ flexShrink: 0 }}>

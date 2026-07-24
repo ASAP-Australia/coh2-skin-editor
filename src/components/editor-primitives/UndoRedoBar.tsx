@@ -45,7 +45,7 @@ const CHIP_STYLE: CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   borderRadius: 12,
-  background: 'rgba(15, 17, 22, 0.75)',
+  background: 'rgba(20, 20, 20, 0.75)',
   backgroundImage:
     'linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))',
   backdropFilter: 'blur(40px) saturate(150%)',
@@ -61,7 +61,7 @@ const CHIP_STYLE: CSSProperties = {
 } as CSSProperties
 
 const CHIP_CLASS =
-  'hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none ' +
+  'l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none ' +
   'focus-visible:ring-1 focus-visible:ring-white/30 ' +
   'disabled:opacity-35 disabled:pointer-events-none'
 

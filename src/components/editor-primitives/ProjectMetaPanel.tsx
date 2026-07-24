@@ -81,7 +81,7 @@ export default function ProjectMetaPanel({
   }, [open])
 
   const glass: CSSProperties = {
-    background: 'rgba(15, 17, 22, 0.75)',
+    background: 'rgba(17, 17, 17, 0.78)',
     backgroundImage:
       'linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03))',
     backdropFilter: 'blur(40px) saturate(150%)',
@@ -124,9 +124,11 @@ export default function ProjectMetaPanel({
       >
         <span
           style={{
+            fontFamily: 'var(--font-mono)',
+            fontVariantNumeric: 'slashed-zero',
             fontSize: 11,
             fontWeight: 600,
-            color: 'rgba(247,247,250,0.92)',
+            color: 'rgba(245,245,245,0.92)',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -137,8 +139,10 @@ export default function ProjectMetaPanel({
         </span>
         <span
           style={{
+            fontFamily: 'var(--font-mono)',
+            fontVariantNumeric: 'slashed-zero',
             fontSize: 10,
-            color: 'rgba(247,247,250,0.55)',
+            color: 'rgba(245,245,245,0.55)',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -205,9 +209,10 @@ function MetaField({ label, value, placeholder, multiline, onChange }: MetaField
     border: '0.5px solid rgba(255, 255, 255, 0.10)',
     borderRadius: 6,
     padding: '6px 8px',
-    color: 'rgba(247,247,250,0.95)',
+    color: 'rgba(245,245,245,0.95)',
     fontSize: 11,
-    fontFamily: 'inherit',
+    fontFamily: 'var(--font-mono)',
+    fontVariantNumeric: 'slashed-zero',
     outline: 'none',
     resize: 'vertical',
   }
@@ -219,7 +224,7 @@ function MetaField({ label, value, placeholder, multiline, onChange }: MetaField
           fontSize: 9,
           letterSpacing: '0.10em',
           textTransform: 'uppercase',
-          color: 'rgba(247,247,250,0.55)',
+          color: 'rgba(245,245,245,0.55)',
           fontWeight: 600,
         }}
       >

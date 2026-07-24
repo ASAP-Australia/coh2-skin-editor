@@ -104,7 +104,8 @@ export default function SliderRow({
         <span>{label}</span>
         <span
           style={{
-            fontVariantNumeric: 'tabular-nums',
+            fontFamily: 'var(--font-mono)',
+            fontVariantNumeric: 'slashed-zero tabular-nums',
             color: isIdentity ? EDITOR_TEXT_4 : accent,
           }}
         >

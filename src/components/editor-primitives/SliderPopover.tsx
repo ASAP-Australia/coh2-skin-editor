@@ -88,8 +88,8 @@ export default function SliderPopover({
     width: 28,
     height: 28,
     borderRadius: 6,
-    background: active || open ? 'rgba(120,180,255,0.18)' : 'rgba(255,255,255,0.06)',
-    border: `1px solid ${active || open ? 'rgba(120,180,255,0.6)' : 'rgba(255,255,255,0.12)'}`,
+    background: active || open ? 'rgba(186,150,90,0.22)' : 'rgba(255,255,255,0.06)',
+    border: `1px solid ${active || open ? 'rgba(186,150,90,0.6)' : 'rgba(255,255,255,0.12)'}`,
     color: active || open ? EDITOR_ACCENT : EDITOR_TEXT_2,
     cursor: 'pointer',
     flexShrink: 0,
@@ -102,7 +102,7 @@ export default function SliderPopover({
     left: '50%',
     transform: 'translateX(-50%)',
     zIndex: 200,
-    background: 'rgba(20, 22, 28, 0.96)',
+    background: 'rgba(20, 20, 20, 0.96)',
     backdropFilter: 'blur(24px) saturate(180%)',
     WebkitBackdropFilter: 'blur(24px) saturate(180%)',
     border: '0.5px solid rgba(255,255,255,0.12)',
@@ -130,7 +130,7 @@ export default function SliderPopover({
       </button>
 
       {open && (
-        <div style={popoverStyle} role="dialog" aria-label={`${title} slider`}>
+        <div className="l01-ring" style={popoverStyle} role="dialog" aria-label={`${title} slider`}>
           {/* Numeric readout */}
           <span
             style={{

@@ -39,3 +39,5 @@ Q6 "Export .sga" in all 3 editors (browser Blob download + toast / Electron writ
 - R4 — non-destructive layers/history in the diffuse (skin) editor.
 
 ## Wiki: ✅ updated — new page `coh2-skin-editor-running-and-authoring.md` + extended architecture/decal/entity pages + index/MOC/log.
+
+## Editor reskin (lab01): ✅ SHIPPED 2026-07-24 — all phases (1, 2A, 2B, 2C) landed incl. the final skin-editor sub-panel Geist-Mono slice (VehicleMenu/ScenePanel/FactionPanel/SeasonToggle); merged-tree gates green (typecheck 0, 2189/2189 tests, build ok). See `artifacts/editor-redesign/EDITOR-REDESIGN-SPEC.md` → "IMPLEMENTED 2026-07-24".

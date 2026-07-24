@@ -529,7 +529,7 @@ export default function VehicleTextureEditor(p: Props) {
     justifyContent: 'center',
     height: 36,
     borderRadius: 12,
-    background: 'rgba(15, 17, 22, 0.75)',
+    background: 'rgba(17, 17, 17, 0.78)',
     backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))',
     backdropFilter: 'blur(40px) saturate(150%)',
     WebkitBackdropFilter: 'blur(40px) saturate(150%)',
@@ -624,7 +624,7 @@ export default function VehicleTextureEditor(p: Props) {
           onClick={p.onBack}
           title="Back to the 3D view (Esc)"
           aria-label="Back to 3D view"
-          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
           style={{
             ...glassPillStyle,
             gap: 6,
@@ -644,7 +644,7 @@ export default function VehicleTextureEditor(p: Props) {
           aria-label="Undo (Ctrl+Z)"
           disabled={!canUndo}
           onClick={doUndo}
-          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-35 disabled:pointer-events-none"
+          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-35 disabled:pointer-events-none"
           style={{ ...glassPillStyle, width: 36, padding: 0 }}
         >
           <RotateCcw size={16} strokeWidth={2} aria-hidden />
@@ -657,7 +657,7 @@ export default function VehicleTextureEditor(p: Props) {
           aria-label="Redo (Ctrl+Shift+Z)"
           disabled={!canRedo}
           onClick={doRedo}
-          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-35 disabled:pointer-events-none"
+          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:opacity-35 disabled:pointer-events-none"
           style={{ ...glassPillStyle, width: 36, padding: 0 }}
         >
           <RotateCw size={16} strokeWidth={2} aria-hidden />
@@ -668,6 +668,7 @@ export default function VehicleTextureEditor(p: Props) {
       {/* Matches the EditorTitlePill placement in FaceplateEditor/DecalPackEditor.
           VTE's title is static (no rename popover) so we use a plain glass pill. */}
       <div
+        className="l01-ring"
         style={{
           position: 'fixed',
           top: 'calc(12px + var(--app-top-inset, 0px))',
@@ -679,12 +680,14 @@ export default function VehicleTextureEditor(p: Props) {
           height: 36,
           padding: '0 16px',
           borderRadius: 12,
-          background: 'rgba(15, 17, 22, 0.75)',
+          background: 'rgba(17, 17, 17, 0.78)',
           backdropFilter: 'blur(40px) saturate(150%)',
           WebkitBackdropFilter: 'blur(40px) saturate(150%)',
           border: '0.5px solid rgba(255, 255, 255, 0.08)',
           boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.05), 0 4px 12px -4px rgba(0,0,0,0.2)',
           color: 'rgba(247,247,250,0.88)',
+          fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
+          fontVariantNumeric: 'slashed-zero',
           fontSize: 14,
           fontWeight: 700,
           letterSpacing: '0.01em',
@@ -721,7 +724,7 @@ export default function VehicleTextureEditor(p: Props) {
           title="Fit texture to window (Ctrl+0)"
           aria-label="Fit texture to window"
           onClick={pz.fitToWindow}
-          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
           style={{ ...glassPillStyle, width: 36, padding: 0 }}
         >
           <Maximize2 size={15} strokeWidth={2} aria-hidden />
@@ -733,7 +736,7 @@ export default function VehicleTextureEditor(p: Props) {
           title="100% zoom (Ctrl+1)"
           aria-label="100% zoom"
           onClick={pz.resetTo100}
-          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
           style={{ ...glassPillStyle, width: 36, padding: 0 }}
         >
           <Percent size={15} strokeWidth={2} aria-hidden />
@@ -748,7 +751,7 @@ export default function VehicleTextureEditor(p: Props) {
           title={`Download ${p.vehicleName}.png — full 2048² composited texture`}
           aria-label={`Download ${p.vehicleName}.png`}
           onClick={downloadTexturePng}
-          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
           style={{ ...glassPillStyle, width: 36, padding: 0 }}
         >
           <Download size={15} strokeWidth={2} aria-hidden />
@@ -760,7 +763,7 @@ export default function VehicleTextureEditor(p: Props) {
           title="Keyboard shortcuts (F1 or ?)"
           aria-label="Keyboard shortcuts"
           onClick={() => setShortcutsOpen(v => !v)}
-          className="hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+          className="l01-ring hover:text-white hover:bg-white/10 active:scale-95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
           style={{ ...glassPillStyle, width: 36, padding: 0 }}
         >
           <HelpCircle size={16} strokeWidth={2} aria-hidden />

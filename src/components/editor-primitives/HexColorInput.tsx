@@ -141,7 +141,8 @@ export default function HexColorInput({
         }}
         spellCheck={false}
         style={{
-          fontFamily: 'monospace',
+          fontFamily: 'var(--font-mono)',
+          fontVariantNumeric: 'slashed-zero',
           fontSize: 12,
           color: EDITOR_TEXT_1,
           background: 'rgba(255,255,255,0.05)',

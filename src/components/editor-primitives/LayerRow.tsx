@@ -119,6 +119,8 @@ export default function LayerRow({
           background: 'transparent',
           border: 'none',
           color: EDITOR_TEXT_1,
+          fontFamily: 'var(--font-mono)',
+          fontVariantNumeric: 'slashed-zero',
           fontSize: 11,
           outline: 'none',
           padding: 0,

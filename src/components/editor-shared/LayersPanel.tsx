@@ -96,12 +96,13 @@ const panelSurface: CSSProperties = {
   width: 210,
   // Match the glass-hud recipe exactly (same as BottomToolPill / AtlasViewPanel)
   // so all three floating surfaces read as one family.
-  background: 'rgba(20,22,28,0.62)',
-  backdropFilter: 'blur(36px) saturate(160%)',
-  WebkitBackdropFilter: 'blur(36px) saturate(160%)',
+  background: 'rgba(20,20,20,0.68)',
+  backdropFilter: 'blur(36px) saturate(125%)',
+  WebkitBackdropFilter: 'blur(36px) saturate(125%)',
   border: '0.5px solid rgba(255,255,255,0.10)',
   borderRadius: 16,
-  boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 0.5px 0 rgba(255,255,255,0.10)',
+  boxShadow:
+    '0 1px 1px rgba(0,0,0,0.30), 0 12px 30px rgba(0,0,0,0.46), inset 0 0.5px 0 rgba(255,255,255,0.10)',
   overflow: 'hidden',
 }
 
@@ -192,6 +193,7 @@ export default function LayersPanel<L extends { id: string; visible: boolean }>(
       role="toolbar"
       aria-label="Layers"
       data-testid="layers-panel"
+      className="l01-ring l01-bloom l01-grain"
       style={panelSurface}
       onClick={onClickOutside}
       onKeyDown={ev => {
@@ -647,7 +649,7 @@ function LayerRow<L extends { id: string; visible: boolean }>({
               flex: 1,
               minWidth: 0,
               height: 20,
-              background: 'rgba(20,22,28,0.72)',
+              background: 'rgba(20,20,20,0.72)',
               border: '0.5px solid rgba(255,255,255,0.12)',
               borderRadius: 4,
               color: EDITOR_TEXT_2,
