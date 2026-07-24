@@ -341,6 +341,8 @@ export interface Coh2DecalPackProject {
   activePartIndex?: number
   /** Which faction override is being edited. null = shared (default). */
   activeFaction?: DecalFaction | null
+  /** Army this pack is authored for (faction-first flow). Absent on legacy packs → 'shared'/all-factions behavior unchanged. */
+  targetFaction?: DecalFaction
   /** Persisted editor zoom level (0.5–8). Absent = default 4. */
   editorZoom?: number
   /** ISO timestamp of the last save — drives the recent-projects ordering. */
@@ -438,7 +440,10 @@ export function findDecalPackIdByWorkshopId(workshopId: string): string | null {
   return null
 }
 
-export function newDecalPackProject(packName = 'My Decal Pack'): Coh2DecalPackProject {
+export function newDecalPackProject(
+  packName = 'My Decal Pack',
+  targetFaction?: DecalFaction,
+): Coh2DecalPackProject {
   return {
     magic: 'coh2-decalpack-project',
     version: 6,
@@ -457,7 +462,10 @@ export function newDecalPackProject(packName = 'My Decal Pack'): Coh2DecalPackPr
       locked: def.locked ?? false,
     })),
     activePartIndex: 1,
-    activeFaction: null,
+    // Seed the edited-cell to the pack's target faction so the editor opens on
+    // that faction's cell; absent target → shared (legacy behavior).
+    activeFaction: targetFaction ?? null,
+    ...(targetFaction ? { targetFaction } : {}),
     modifiedAt: new Date().toISOString(),
     titleAcknowledged: false,
   }

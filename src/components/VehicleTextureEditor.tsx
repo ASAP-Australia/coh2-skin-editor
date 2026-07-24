@@ -1,6 +1,18 @@
 /**
- * VehicleTextureEditor — full-screen 2D editor for a vehicle's in-game
- * diffuse texture atlas (A3).
+ * VehicleTextureEditor — full-screen editor for a vehicle's in-game diffuse
+ * texture atlas (A3).
+ *
+ * SLICE 3 LAYOUT (3D-LEFT / canvas-RIGHT split):
+ *   • LEFT half — a live 3D {@link Viewport} of the vehicle, fed the SAME
+ *     `overlayCanvas` the skin editor paints, so every brush dab appears on the
+ *     model in real time (a second WebGL context while the VTE is open; the
+ *     editor's own context is occluded behind this overlay). It renders only
+ *     when the caller plumbs the Viewport props (`vehicle`, `root`, …); absent
+ *     → a placeholder, and the right canvas still works standalone.
+ *   • RIGHT half — the 2D paint canvas (pan/zoom, UV overlay), unchanged
+ *     interaction pipeline.
+ *   • BOTTOM (spanning) — the tools dock + options peel. TOP-LEFT — Back +
+ *     Undo/Redo. TOP-CENTRE — title. TOP-RIGHT — zoom + help.
  *
  * The "Edit texture" pill used to merely toggle the cramped Decals SIDE
  * panel. Users expected a proper editor screen — the same full-screen,
@@ -31,7 +43,7 @@
  *     the Editor through callbacks, reusing the exact same paths the
  *     in-viewport brush uses. No new persistence logic lives here.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   ArrowLeft,
   Brush,
@@ -49,6 +61,7 @@ import {
 import BottomToolPill, { type ToolDef } from './editor-primitives/BottomToolPill'
 import ToolOptionsPeel from './editor-primitives/ToolOptionsPeel'
 import KeyboardShortcutsOverlay from './editor-primitives/KeyboardShortcutsOverlay'
+import ViewportGuard from './ViewportGuard'
 import { EDITOR_ACCENT, EDITOR_TEXT_2, EDITOR_TEXT_3 } from './editor-primitives/tokens'
 import type { ShortcutGroup } from './editor-primitives/keyboard-shortcuts-data'
 import {
@@ -59,6 +72,14 @@ import {
 } from '@/lib/brush'
 import { usePanZoom, ZOOM_MIN, ZOOM_MAX, fitScale } from '@/lib/use-pan-zoom'
 import { PaintHistory, type PaintSnapshot } from '@/lib/paint-history'
+import type { VehicleSpec } from '@/lib/vehicles'
+import type { SgaArchive } from '@/lib/sga'
+import type { ScenePreset } from '@/lib/scene-settings'
+
+// Lazily load the heavy Three.js Viewport exactly like Editor.tsx does, so the
+// texture editor's first paint isn't blocked parsing Three.js. It only mounts
+// when the VTE is open AND the caller plumbs the live-preview props (below).
+const Viewport = lazy(() => import('./Viewport'))
 
 /** Shortcuts specific to the texture editor surface. */
 const VTE_SHORTCUTS: ShortcutGroup[] = [
@@ -137,6 +158,38 @@ interface Props {
    * canvas pixel (x·VIEW, (1-y)·VIEW). null when the model has no body UVs.
    */
   uvLines?: Float32Array | null
+
+  // ── SLICE 3: 3D-LEFT / canvas-RIGHT split ─────────────────────────────────
+  // The data the LEFT-column live Viewport needs. All OPTIONAL so the current
+  // Editor.tsx mount (which does not yet plumb them — that plumbing is owned by
+  // Slice 2, the Editor.tsx owner) still typechecks and renders the canvas-only
+  // layout. When present, the LEFT column shows the live-painted 3D model that
+  // updates in real time from the shared `overlayCanvas`; when absent, the left
+  // column degrades to a "connect a vehicle" placeholder and the right paint
+  // canvas is fully usable (parity with the old fullscreen 2D editor).
+  //
+  // Cross-slice handoff (S3 → Editor.tsx / S2): plumb these at the VTE mount
+  // (Editor.tsx ~2449-2467) — every value is already in scope there:
+  //   vehicle={vehicle}  root={root}  season={season}
+  //   envArchive={envArchive}  envName={envName}  preset={preset}
+  //   badgeDecalSource={badgeDecalSource}
+  /** The vehicle being painted (mesh id + faction tint for the left Viewport). */
+  vehicle?: VehicleSpec | null
+  /** CoH2 install handle — the left Viewport reads RGM/RGT through it. */
+  root?: FileSystemDirectoryHandle | null
+  /** Season → lighting + skybox + terrain for the left Viewport. */
+  season?: 'summer' | 'winter'
+  /** ArtEnvironment.sga archive for the left Viewport skybox/terrain. */
+  envArchive?: SgaArchive | null
+  /** Environment name (e.g. "mission_06") for the left Viewport. */
+  envName?: string
+  /** Active scene preset (lighting/tone-mapping) for the left Viewport. */
+  preset?: ScenePreset
+  /**
+   * Any selected decal-pack badge atlas, so the 3D preview also shows the
+   * decal through the TC1 badge shader. null/undefined = no badge overlay.
+   */
+  badgeDecalSource?: string | HTMLCanvasElement | null
 }
 
 export default function VehicleTextureEditor(p: Props) {
@@ -218,12 +271,22 @@ export default function VehicleTextureEditor(p: Props) {
   )
 
   // Zoom/pan — wheel zooms the atlas; Space+drag or middle-drag pans.
-  // Compute the initial fit synchronously using window dimensions (the
-  // container is `position:fixed; inset:0` so window.inner* IS the container).
+  // Compute the initial fit synchronously using the RIGHT column's dimensions.
+  // SLICE 3: the paint canvas now lives in the RIGHT ~50% column (3D preview is
+  // on the LEFT), not the full viewport, so the fit is against half the width
+  // minus the bottom tool-dock reserve — otherwise the atlas would spill under
+  // the tools / off the right edge on first paint.
   // useState lazy initializer runs exactly once, so this never re-computes.
-  // This eliminates the flash of an oversized 1024×1024 atlas that appeared
-  // when initialScale=1 and a deferred fitToWindow() effect had to correct it.
-  const [initFit] = useState(() => fitScale(window.innerWidth, window.innerHeight, VIEW, VIEW))
+  const RIGHT_COL_FRACTION = 0.5
+  const BOTTOM_DOCK_RESERVE = 120 // tool dock + options peel height at the bottom
+  const [initFit] = useState(() =>
+    fitScale(
+      window.innerWidth * RIGHT_COL_FRACTION,
+      Math.max(200, window.innerHeight - BOTTOM_DOCK_RESERVE),
+      VIEW,
+      VIEW,
+    ),
+  )
   const pz = usePanZoom({
     containerRef: atlasWrapRef,
     contentSize: { w: VIEW, h: VIEW },
@@ -506,6 +569,13 @@ export default function VehicleTextureEditor(p: Props) {
   // The peel collapses for the 'pick' tool (a one-shot action with no options).
   const peelId = tool === 'pick' ? null : tool
 
+  // SLICE 3: the LEFT-column live 3D preview only renders when the caller has
+  // plumbed the Viewport essentials (install handle + vehicle). Absent → the
+  // left column shows a placeholder and the right paint canvas stays fully
+  // usable (parity with the old fullscreen-2D editor). `season` defaults, so it
+  // isn't gated on.
+  const canShow3D = !!(p.root && p.vehicle)
+
   // ── Shared glass-pill style (same recipe as EditorHomeButton / Back pill) ──
   const glassPillStyle = {
     display: 'inline-flex',
@@ -530,59 +600,117 @@ export default function VehicleTextureEditor(p: Props) {
       className="fixed inset-0 z-[60]"
       style={{ background: 'rgb(17, 19, 24)', color: 'rgba(247,247,250,0.92)', fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}
     >
-      {/* ── Canvas stage — pan-zoom container fills the full viewport ──────── */}
-      {/* atlasWrapRef is the scroll/clip boundary; usePanZoom attaches its wheel
-          listener here and pz.handlers spread here for Space/middle-drag pan.
-          overflow:hidden clips the zoomed content to the work area.
-          The inner atlas div carries translate+scale via CSS transform so the
-          correct transformOrigin: '0 0' preserves the hook's cursor-anchor math. */}
-      <div
-        ref={atlasWrapRef}
-        style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}
-        {...pz.handlers}
-      >
+      {/* ── SLICE 3 split body: LEFT = live 3D preview, RIGHT = paint canvas ──
+          Two equal columns filling the viewport. The floating chrome (Back +
+          Undo/Redo top-left, title top-centre, zoom top-right, tool dock
+          bottom-centre) overlays this split via `fixed` positioning below, so
+          the tools span the full width and the back button stays top-left. */}
+      <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
+        {/* ── LEFT COLUMN: live 3D vehicle ──────────────────────────────────
+            Mounts a SECOND WebGL context (the editor's own is occluded behind
+            this overlay) fed the SAME live `overlayCanvas` the skin editor
+            paints, so every brush dab shows on the 3D model in real time
+            (overlayVersion bump → Viewport re-uploads the material map). Only
+            rendered when the caller plumbs the required Viewport props; absent
+            → a "connect a vehicle" placeholder so the right paint canvas still
+            works exactly like the old fullscreen 2D editor. */}
+        <div style={{ position: 'relative', flex: '1 1 50%', minWidth: 0, height: '100%' }}>
+          {canShow3D ? (
+            <Suspense fallback={<div className="absolute inset-0" style={{ background: 'rgb(17, 19, 24)' }} />}>
+              <ViewportGuard label="Texture-editor Viewport">
+                <Viewport
+                  root={p.root!}
+                  vehicle={p.vehicle!}
+                  overlayCanvas={p.overlayCanvas}
+                  overlayVersion={p.version}
+                  selectedPart={null}
+                  explodeAll={false}
+                  season={p.season ?? 'summer'}
+                  envArchive={p.envArchive ?? null}
+                  envName={p.envName ?? ''}
+                  preset={p.preset}
+                  controlsEnabled={true}
+                  badgeDecalSource={p.badgeDecalSource ?? null}
+                />
+              </ViewportGuard>
+            </Suspense>
+          ) : (
+            <div className="relative w-full h-full grid place-items-center" role="status">
+              <div
+                className="glass-2 rounded-xl px-4 py-3 text-[12px] max-w-xs text-center leading-relaxed"
+                style={{ color: EDITOR_TEXT_2 }}
+              >
+                <div style={{ fontWeight: 600, color: 'rgba(247,247,250,0.9)', marginBottom: 4 }}>
+                  Live 3D preview
+                </div>
+                <div style={{ color: EDITOR_TEXT_3 }}>
+                  Paint on the right — the vehicle preview appears here.
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── RIGHT COLUMN: paint canvas (pan-zoom stage) ───────────────────
+            atlasWrapRef is the scroll/clip boundary; usePanZoom attaches its
+            wheel listener here and pz.handlers spread here for Space/middle-drag
+            pan. overflow:hidden clips the zoomed content to the right half.
+            A thin divider separates it from the 3D preview. */}
         <div
+          ref={atlasWrapRef}
           style={{
-            // R7 WIRING FIX: transform-origin MUST be '0 0' so the hook's
-            // wheel-zoom math holds. The hook computes:
-            //   newOx = cx - (cx - prevOx) * (newScale / prevScale)
-            // This decomposition is valid only when the CSS origin is the
-            // top-left corner. 'center center' adds an implicit extra translate
-            // of (w/2 - w*s/2, h/2 - h*s/2) which breaks cursor anchoring.
-            transformOrigin: '0 0',
-            transform: `translate(${pz.offset.x}px, ${pz.offset.y}px) scale(${pz.scale})`,
-            // The atlas is VIEW² — keep it at natural size and let scale do the work.
-            width: VIEW,
-            height: VIEW,
-            position: 'absolute',
-            // Subtle checker so the atlas bounds are obvious.
-            backgroundColor: '#1c1f26',
-            backgroundImage:
-              'linear-gradient(45deg, #232733 25%, transparent 25%), linear-gradient(-45deg, #232733 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #232733 75%), linear-gradient(-45deg, transparent 75%, #232733 75%)',
-            backgroundSize: '24px 24px',
-            backgroundPosition: '0 0, 0 12px, 12px -12px, -12px 0',
-            borderRadius: 8,
-            boxShadow: '0 12px 40px rgba(0,0,0,0.55)',
+            position: 'relative',
+            flex: '1 1 50%',
+            minWidth: 0,
+            height: '100%',
+            overflow: 'hidden',
+            borderLeft: '0.5px solid rgba(255,255,255,0.08)',
           }}
+          {...pz.handlers}
         >
-          <canvas
-            ref={displayRef}
-            width={VIEW}
-            height={VIEW}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={endStroke}
-            onPointerCancel={endStroke}
-            onPointerLeave={endStroke}
-            onLostPointerCapture={endStroke}
+          <div
             style={{
-              display: 'block',
+              // R7 WIRING FIX: transform-origin MUST be '0 0' so the hook's
+              // wheel-zoom math holds. The hook computes:
+              //   newOx = cx - (cx - prevOx) * (newScale / prevScale)
+              // This decomposition is valid only when the CSS origin is the
+              // top-left corner. 'center center' adds an implicit extra translate
+              // of (w/2 - w*s/2, h/2 - h*s/2) which breaks cursor anchoring.
+              transformOrigin: '0 0',
+              transform: `translate(${pz.offset.x}px, ${pz.offset.y}px) scale(${pz.scale})`,
+              // The atlas is VIEW² — keep it at natural size and let scale do the work.
               width: VIEW,
               height: VIEW,
-              cursor: 'crosshair',
-              touchAction: 'none',
+              position: 'absolute',
+              // Subtle checker so the atlas bounds are obvious.
+              backgroundColor: '#1c1f26',
+              backgroundImage:
+                'linear-gradient(45deg, #232733 25%, transparent 25%), linear-gradient(-45deg, #232733 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #232733 75%), linear-gradient(-45deg, transparent 75%, #232733 75%)',
+              backgroundSize: '24px 24px',
+              backgroundPosition: '0 0, 0 12px, 12px -12px, -12px 0',
+              borderRadius: 8,
+              boxShadow: '0 12px 40px rgba(0,0,0,0.55)',
             }}
-          />
+          >
+            <canvas
+              ref={displayRef}
+              width={VIEW}
+              height={VIEW}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={endStroke}
+              onPointerCancel={endStroke}
+              onPointerLeave={endStroke}
+              onLostPointerCapture={endStroke}
+              style={{
+                display: 'block',
+                width: VIEW,
+                height: VIEW,
+                cursor: 'crosshair',
+                touchAction: 'none',
+              }}
+            />
+          </div>
         </div>
       </div>
 

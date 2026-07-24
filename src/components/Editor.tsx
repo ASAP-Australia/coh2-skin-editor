@@ -17,7 +17,7 @@ import FactionPanel from './FactionPanel'
 import VehicleMenu, { type VehicleIconResolver } from './VehicleMenu'
 import TemplateDecalPills from './TemplateDecalPills'
 import SeasonToggle from './SeasonToggle'
-import EditTextureButton from './EditTextureButton'
+import EditVehicleAffordance from './EditVehicleAffordance'
 import VehicleTextureEditor from './VehicleTextureEditor'
 import { UndoRedoBar } from '@/components/editor-primitives'
 import { extractBodyUvWireframe } from '@/lib/uv-wireframe'
@@ -2386,15 +2386,18 @@ export default function Editor({
                 installRoot={root}
               />
               <SeasonToggle value={season} onChange={handleSetSeason} loading={seasonLoading} />
-              {/* Edit Texture pill — opens the FULL-SCREEN vehicle-texture
-                  editor (A3): the live in-game atlas shown large, with brush
-                  tools and a back button in the top-left. */}
-              <EditTextureButton
-                brushOn={textureEditorOpen}
-                disabled={!vehicle}
-                onClick={() => setTextureEditorOpen(true)}
-              />
             </div>
+            {/* "Edit {vehicle}" affordance — reveal-on-selection pill sitting
+                directly ABOVE the VehicleMenu (VISION.md:19). Opens the
+                FULL-SCREEN vehicle-texture editor for the selected vehicle
+                (relocated here from the mid control row above). Renders nothing
+                until a vehicle is selected. */}
+            <EditVehicleAffordance
+              vehicleName={vehicle?.displayName ?? null}
+              editing={textureEditorOpen}
+              disabled={!vehicle}
+              onEdit={() => setTextureEditorOpen(true)}
+            />
             <VehicleMenu
               vehicles={factionVehicles}
               selected={vehicle}

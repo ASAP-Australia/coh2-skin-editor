@@ -36,9 +36,22 @@ interface Props {
   onClick: () => void
   /** Disable while no vehicle is loaded (there's nothing to paint on). */
   disabled?: boolean
+  /**
+   * Idle label text. Defaults to `'Edit texture'` (the pinned copy the
+   * standalone `EditTextureButton.test` asserts). The `EditVehicleAffordance`
+   * wrapper passes the selected vehicle's name here (e.g. `'Edit Tiger I'`) so
+   * the reveal-on-selection affordance above the VehicleMenu reads naturally.
+   * When active (`brushOn`) the label always flips to `'Editing texture'`.
+   */
+  label?: string
 }
 
-export default function EditTextureButton({ brushOn, onClick, disabled = false }: Props) {
+export default function EditTextureButton({
+  brushOn,
+  onClick,
+  disabled = false,
+  label = 'Edit texture',
+}: Props) {
   return (
     <button
       type="button"
@@ -79,7 +92,7 @@ export default function EditTextureButton({ brushOn, onClick, disabled = false }
       }
     >
       <Brush size={13} strokeWidth={2} />
-      <span>{brushOn ? 'Editing texture' : 'Edit texture'}</span>
+      <span>{brushOn ? 'Editing texture' : label}</span>
     </button>
   )
 }

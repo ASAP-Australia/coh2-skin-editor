@@ -67,14 +67,18 @@ const ALL_SCREENS = [
   'new-skin-form',
   'new-faceplate-form',
   'new-decal-form',
+  'faction-chooser-skin',
+  'faction-chooser-decal',
   'skin-editor',
   'skin-camo-panel',
   'skin-decals-panel',
   'skin-scene-panel',
   'texture-editor',
+  'texture-split',
   'decal-editor',
   'decal-insignia',
   'decal-advanced',
+  'decal-3d-preview',
   'faceplate-editor',
   'faceplate-shapes',
 ] as const
@@ -218,6 +222,59 @@ async function clickWhenReady(
   return false
 }
 
+// German-faction row target on the FactionChooserStep (S1). The row exposes
+// `title` = FACTION_LABELS.german = 'OstHeer' (src/lib/factions.tsx:91) and its
+// innerText contains 'OstHeer' + the sublabel, so an includes-match on 'OstHeer'
+// selects the German row without depending on emoji/emblem alt text.
+const GERMAN_FACTION_LABEL = 'OstHeer'
+
+/**
+ * Navigate the faction-chooser step (S1 faction-first flow) by picking the
+ * German army, IF the chooser rendered.
+ *
+ * Resilient to the flow landing/not-landing mid-campaign: the new-skin/new-decal
+ * buttons may still route straight to the editor (S1 not yet merged) OR through
+ * the new FactionChooserStep. We detect the chooser by its "Which faction?"
+ * heading; if present we click the German row and confirm we left the chooser.
+ *
+ * Returns:
+ *   'picked'   — chooser was present and we clicked German (new flow).
+ *   'absent'   — no chooser rendered; caller is already past it (legacy direct-
+ *                to-editor flow). Not an error.
+ *   'stuck'    — chooser rendered but we could NOT advance past it (missing/
+ *                broken faction row). Caller should mark the state DEGRADED.
+ */
+async function pickGermanFaction(
+  wc: Electron.WebContents,
+  waitMs = 6000,
+): Promise<'picked' | 'absent' | 'stuck'> {
+  // Give the chooser a brief window to render after the New-* click. If the
+  // heading never appears, assume the legacy direct-to-editor flow.
+  const onChooser = await pollUntil(
+    wc,
+    `window.__uiCap && window.__uiCap.hasText('Which faction')`,
+    waitMs,
+  )
+  if (!onChooser) return 'absent'
+
+  // Chooser is up — pick the German row. Try the label, then a couple of
+  // fallbacks in case the row markup differs from FactionPicker's.
+  const clicked =
+    (await clickWhenReady(wc, GERMAN_FACTION_LABEL, 'includes', 8000)) ||
+    (await clickWhenReady(wc, 'German', 'includes', 2000)) ||
+    (await clickWhenReady(wc, 'Wehrmacht', 'includes', 2000))
+  if (!clicked) return 'stuck'
+
+  // Confirm we actually left the chooser (heading gone) — otherwise the pick
+  // didn't advance the flow and downstream waits would hang.
+  const left = await pollUntil(
+    wc,
+    `window.__uiCap && !window.__uiCap.hasText('Which faction')`,
+    8000,
+  )
+  return left ? 'picked' : 'stuck'
+}
+
 /** Load a fresh production page and wait for the renderer to paint. */
 async function freshLoad(win: BrowserWindow): Promise<void> {
   const indexPath = path.join(__dirname, '..', 'dist', 'index.html')
@@ -284,20 +341,31 @@ async function driveAndCapture(
       return { ok: true, note: 'StartScreen', png }
     }
 
-    // The "new *" forms: in the current build the New buttons route straight
-    // into their editor (App.onNewSkin/onNewFaceplate/onNewDecalPack open the
-    // editor directly — there is no intermediate faction/name form yet). We
-    // click the button and capture the FIRST frame after navigation so the
-    // fix agents can see the current reality vs the VISION's planned form.
+    // The "new *" states: capture the FIRST frame after clicking a New button.
+    // Under the S1 faction-first flow, New Skin Pack / New Decal Pack now open
+    // the FactionChooserStep first (see the dedicated faction-chooser-* states
+    // for a settled capture); New Faceplate still routes straight to its editor
+    // (faceplates get NO faction step, per VISION). If S1 hasn't landed yet, the
+    // New buttons fall back to opening the editor directly — either way we grab
+    // the first frame so a before/after is visible.
     case 'new-skin-form': {
       if (!(await clickWhenReady(wc, 'New Skin Pack', 'includes'))) {
         return { ok: false, note: 'could not click "New Skin Pack"' }
       }
-      // Land in editor immediately; capture before heavy 3D so any interim
-      // form/picker (if one exists) is caught.
-      await sleep(600)
+      // Capture the first frame — the faction chooser (new flow) or the editor
+      // (legacy). Don't pick a faction here; faction-chooser-skin covers that.
+      await sleep(800)
+      const onChooser = await wc
+        .executeJavaScript(`window.__uiCap && window.__uiCap.hasText('Which faction')`, true)
+        .catch(() => false)
       const png = await capture(win, state)
-      return { ok: true, note: 'New Skin Pack currently opens the skin editor directly (no separate form in this build)', png }
+      return {
+        ok: true,
+        note: onChooser
+          ? 'New Skin Pack opens the faction chooser (S1 flow)'
+          : 'New Skin Pack opened the skin editor directly (S1 faction chooser not present)',
+        png,
+      }
     }
     case 'new-faceplate-form': {
       if (!(await clickWhenReady(wc, 'New Faceplate', 'includes'))) {
@@ -305,15 +373,76 @@ async function driveAndCapture(
       }
       await sleep(600)
       const png = await capture(win, state)
-      return { ok: true, note: 'New Faceplate currently opens the faceplate editor directly (no separate form in this build)', png }
+      return { ok: true, note: 'New Faceplate opens the faceplate editor directly (no faction step, per VISION)', png }
     }
     case 'new-decal-form': {
       if (!(await clickWhenReady(wc, 'New Decal Pack', 'includes'))) {
         return { ok: false, note: 'could not click "New Decal Pack"' }
       }
-      await sleep(600)
+      await sleep(800)
+      const onChooser = await wc
+        .executeJavaScript(`window.__uiCap && window.__uiCap.hasText('Which faction')`, true)
+        .catch(() => false)
       const png = await capture(win, state)
-      return { ok: true, note: 'New Decal Pack currently opens the decal editor directly (no separate form in this build)', png }
+      return {
+        ok: true,
+        note: onChooser
+          ? 'New Decal Pack opens the faction chooser (S1 flow)'
+          : 'New Decal Pack opened the decal editor directly (S1 faction chooser not present)',
+        png,
+      }
+    }
+
+    // ── Faction chooser (S1 faction-first flow) ─────────────────────────────
+    // Click New Skin/Decal Pack, DO NOT pick a faction — capture the chooser.
+    // The skin/decal choosers share one component; distinguish by subtitle.
+    case 'faction-chooser-skin': {
+      if (!(await clickWhenReady(wc, 'New Skin Pack', 'includes'))) {
+        return { ok: false, note: 'could not click "New Skin Pack"' }
+      }
+      const onChooser = await pollUntil(
+        wc,
+        `window.__uiCap && window.__uiCap.hasText('Which faction')`,
+        6000,
+      )
+      const png = await capture(win, state, 800)
+      if (!onChooser) {
+        return { ok: true, note: 'DEGRADED: faction chooser not present (S1 not landed?) — captured whatever New Skin Pack opened', png }
+      }
+      const skinSubtitle = await wc
+        .executeJavaScript(`window.__uiCap && window.__uiCap.hasText('skin belongs to')`, true)
+        .catch(() => false)
+      return {
+        ok: true,
+        note: skinSubtitle
+          ? 'faction chooser (skin) — "Which faction?" with skin subtitle'
+          : 'faction chooser rendered (skin subtitle text not matched — check PNG)',
+        png,
+      }
+    }
+    case 'faction-chooser-decal': {
+      if (!(await clickWhenReady(wc, 'New Decal Pack', 'includes'))) {
+        return { ok: false, note: 'could not click "New Decal Pack"' }
+      }
+      const onChooser = await pollUntil(
+        wc,
+        `window.__uiCap && window.__uiCap.hasText('Which faction')`,
+        6000,
+      )
+      const png = await capture(win, state, 800)
+      if (!onChooser) {
+        return { ok: true, note: 'DEGRADED: faction chooser not present (S1 not landed?) — captured whatever New Decal Pack opened', png }
+      }
+      const decalSubtitle = await wc
+        .executeJavaScript(`window.__uiCap && window.__uiCap.hasText('decal pack is for')`, true)
+        .catch(() => false)
+      return {
+        ok: true,
+        note: decalSubtitle
+          ? 'faction chooser (decal) — "Which faction?" with decal subtitle'
+          : 'faction chooser rendered (decal subtitle text not matched — check PNG)',
+        png,
+      }
     }
 
     // ── Skin editor + panels ────────────────────────────────────────────
@@ -321,9 +450,22 @@ async function driveAndCapture(
     case 'skin-camo-panel':
     case 'skin-decals-panel':
     case 'skin-scene-panel':
-    case 'texture-editor': {
+    case 'texture-editor':
+    case 'texture-split': {
       if (!(await clickWhenReady(wc, 'New Skin Pack', 'includes'))) {
         return { ok: false, note: 'could not click "New Skin Pack"' }
+      }
+      // S1 faction-first flow: New Skin Pack now opens the FactionChooserStep.
+      // Pick German to land the editor on Wehrmacht vehicles (Tiger I lives
+      // there). Resilient: if the chooser isn't present (S1 not landed), the
+      // click routes straight to the editor and pickGermanFaction returns
+      // 'absent' — not an error. Only a 'stuck' chooser is a problem.
+      const factionPick = await pickGermanFaction(wc)
+      if (factionPick === 'stuck') {
+        // Chooser rendered but we couldn't advance — capture it so the failure
+        // is visible, and mark the state DEGRADED rather than hanging.
+        const png = await capture(win, state, 800)
+        return { ok: true, note: `DEGRADED: faction chooser present but German row not clickable — captured chooser instead of ${state}`, png }
       }
       // Pick Tiger I from the vehicle menu (buttons carry aria-label =
       // displayName "Tiger I"). Editor defaults to Brummbär, both german.
@@ -367,14 +509,40 @@ async function driveAndCapture(
         const png = await capture(win, state, 1500)
         return { ok: true, note: 'Scene panel open', png }
       }
-      // texture-editor: the "Edit texture" pill flips into brush/texture mode.
-      if (state === 'texture-editor') {
+      // texture-editor / texture-split: the "Edit vehicle" affordance (S2, above
+      // the VehicleMenu — it KEEPS aria-label="Edit vehicle texture" +
+      // data-testid="edit-texture-pill" per the plan) opens the VTE. S3 makes
+      // the VTE a 3D-left / paint-canvas-right split. Both states open the same
+      // overlay; texture-split just settles longer so BOTH the left Viewport and
+      // the right paint canvas have painted.
+      if (state === 'texture-editor' || state === 'texture-split') {
         const clicked =
           (await clickWhenReady(wc, 'Edit vehicle texture', 'starts')) ||
           (await clickWhenReady(wc, 'edit-texture-pill', 'exact')) ||
           (await clickWhenReady(wc, 'Edit texture', 'includes'))
         if (!clicked) {
-          return { ok: false, note: 'could not find/click the "Edit texture" pill' }
+          return { ok: false, note: 'could not find/click the "Edit vehicle" texture affordance (edit-texture-pill)' }
+        }
+        if (state === 'texture-split') {
+          // The VTE split mounts a SECOND Viewport on the left. Wait for a 2nd
+          // canvas (right paint canvas + left 3D) then settle long for the 3D
+          // to load its mesh/textures. Resilient: if a 2nd canvas never appears
+          // (S3 split not landed → still fullscreen 2D), we still capture and
+          // mark DEGRADED so the before/after is visible without hanging.
+          const twoCanvases = await pollUntil(
+            wc,
+            `document.querySelectorAll('canvas').length >= 2`,
+            THREE_D_MS,
+          )
+          await sleep(6000)
+          const png = await capture(win, state, 4000)
+          return {
+            ok: true,
+            note: twoCanvases
+              ? 'texture editor split — 3D-left + paint-canvas-right (S3)'
+              : 'DEGRADED: only one canvas (S3 split not landed?) — captured the current texture-edit overlay',
+            png,
+          }
         }
         const png = await capture(win, state, 2500)
         return { ok: true, note: 'texture-edit (brush) mode', png }
@@ -385,17 +553,45 @@ async function driveAndCapture(
     // ── Decal editor ────────────────────────────────────────────────────
     case 'decal-editor':
     case 'decal-insignia':
-    case 'decal-advanced': {
+    case 'decal-advanced':
+    case 'decal-3d-preview': {
       if (!(await clickWhenReady(wc, 'New Decal Pack', 'includes'))) {
         return { ok: false, note: 'could not click "New Decal Pack"' }
       }
-      // Decal editor mounts a live 3D preview; give it time.
+      // S1 faction-first flow: New Decal Pack now opens the FactionChooserStep.
+      // Pick German so the decal editor's S4 left Viewport shows a German
+      // representative vehicle. Resilient: 'absent' (legacy direct flow) is fine.
+      const factionPick = await pickGermanFaction(wc)
+      if (factionPick === 'stuck') {
+        const png = await capture(win, state, 800)
+        return { ok: true, note: `DEGRADED: faction chooser present but German row not clickable — captured chooser instead of ${state}`, png }
+      }
+      // Decal editor mounts a live 3D preview (S4 left Viewport); give it time.
+      // Under S4 there IS a 3D canvas here (there wasn't before S4).
       await pollUntil(wc, `!!document.querySelector('canvas')`, THREE_D_MS)
       await sleep(4000)
 
       if (state === 'decal-editor') {
         const png = await capture(win, state, 2500)
         return { ok: true, note: 'decal pack editor', png }
+      }
+      if (state === 'decal-3d-preview') {
+        // S4: the LEFT half is a representative German vehicle rendered in 3D
+        // with the decal-pack composite on the badge cell. Settle long so the
+        // mesh + badge texture have decoded. Resilient: if no canvas exists
+        // (S4 not landed → still 2D-only decal editor), capture + mark DEGRADED.
+        const hasCanvas = await wc
+          .executeJavaScript(`!!document.querySelector('canvas')`, true)
+          .catch(() => false)
+        await sleep(4000)
+        const png = await capture(win, state, 4000)
+        return {
+          ok: true,
+          note: hasCanvas
+            ? 'decal editor 3D preview — representative vehicle left + Konva canvas right (S4, GLITCH-LIST #8)'
+            : 'DEGRADED: no 3D canvas in the decal editor (S4 preview not landed?) — captured the current 2D decal editor',
+          png,
+        }
       }
       if (state === 'decal-insignia') {
         // Select the "Images" tool (its options peel exposes the Insignia

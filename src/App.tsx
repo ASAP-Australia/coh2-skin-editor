@@ -19,6 +19,7 @@ import AuthShell from '@/components/AuthShell'
 import WindowControls from '@/components/WindowControls'
 import {
   type Coh2SkinProject,
+  newProject,
   loadById as loadSkinById,
   loadActive as loadActiveProject,
   persistActive,
@@ -36,10 +37,12 @@ import {
   loadDecalPackById,
   tryParseDecalPackFile,
 } from '@/lib/decal-pack-project'
+import type { DecalFaction } from '@/lib/decal-mod-templates'
+import FactionChooserStep from '@/components/FactionChooserStep'
 import { loadSavedHandle } from '@/lib/coh2-fs'
 import { isElectron, detectInstallPath, nativePathToHandle, httpPathToHandle } from '@/lib/native-fs'
 import { preloadCommonArchives } from '@/lib/preload'
-import { VEHICLES, defaultVehicleForFaction, type VehicleSpec } from '@/lib/vehicles'
+import { VEHICLES, defaultVehicleForFaction, type VehicleSpec, type Faction } from '@/lib/vehicles'
 
 // Lazy-loaded so Three.js stays out of the initial JS parse budget.
 // The background warmup Viewport is only mounted after a successful Connect.
@@ -100,6 +103,8 @@ type Phase =
   | 'editor'
   | 'faceplate'
   | 'decal-pack'
+  | 'faction-chooser-skin'
+  | 'faction-chooser-decal'
 
 // EDITOR_LOADING_MS and EDITOR_LOADING_MIN_MS removed (Phase 3 — F2c/F1/F3):
 // faceplate/decal-pack open directly via withViewTransition; skin editor uses
@@ -154,6 +159,9 @@ export default function App() {
   /** Hydrated decal-pack project, set just before navigating into the
    *  decal-pack editor. Cleared on back-to-start. */
   const [decalPackProject, setDecalPackProject] = useState<Coh2DecalPackProject | null>(null)
+  /** Faction chosen in the faction-chooser step (faction-first new-pack flow),
+   *  carried into the skin editor mount. null = no chooser pick (legacy flow). */
+  const [chosenFaction, setChosenFaction] = useState<Faction | null>(null)
   /** Pending-load error surfaced above the AuthShell-hosted screens when
    *  a project file fails to open (corrupt JSON, unrecognised extension,
    *  unknown saved id, etc.). Dismissed explicitly by the user. */
@@ -551,7 +559,9 @@ export default function App() {
     phase === 'connect' ||
     phase === 'start' ||
     phase === 'saved-projects' ||
-    phase === 'editor-loading'
+    phase === 'editor-loading' ||
+    phase === 'faction-chooser-skin' ||
+    phase === 'faction-chooser-decal'
 
   let panel: React.ReactNode = null
   if (phase === 'connect') {
@@ -574,16 +584,42 @@ export default function App() {
           } catch {
             /* ignore */
           }
-          withViewTransition(() => setPhase('editor'))
+          setChosenFaction(null)
+          withViewTransition(() => setPhase('faction-chooser-skin'))
         }}
         onNewFaceplate={() => openFaceplate(newFaceplateProject())}
-        onNewDecalPack={() => openDecalPack(newDecalPackProject())}
+        onNewDecalPack={() => withViewTransition(() => setPhase('faction-chooser-decal'))}
         onLoadSkin={openSkin}
         onLoadFaceplate={openFaceplate}
         onLoadDecalPack={openDecalPack}
         onOpenRecentFaceplate={openFaceplate}
         onOpenRecentDecalPack={openDecalPack}
         onShowSavedProjects={() => setPhase('saved-projects')}
+      />
+    )
+  } else if (phase === 'faction-chooser-skin') {
+    panel = (
+      <FactionChooserStep
+        title="Which faction?"
+        subtitle="Pick the army your skin belongs to."
+        onBack={() => withViewTransition(() => setPhase('start'))}
+        onPick={f => {
+          setChosenFaction(f)
+          withViewTransition(() => setPhase('editor'))
+        }}
+      />
+    )
+  } else if (phase === 'faction-chooser-decal') {
+    panel = (
+      <FactionChooserStep
+        title="Which faction?"
+        subtitle="Pick the army this decal pack is for."
+        onBack={() => withViewTransition(() => setPhase('start'))}
+        onPick={f => {
+          // Faction and DecalFaction share the same string literals; all 5 skin
+          // factions are valid DecalFaction members (decal-mod-templates.ts:32).
+          openDecalPack(newDecalPackProject('My Decal Pack', f as DecalFaction))
+        }}
       />
     )
   } else if (phase === 'saved-projects') {
@@ -685,6 +721,8 @@ export default function App() {
       {phase === 'editor' && installRoot && (
         <Editor
           root={installRoot}
+          initialFaction={chosenFaction ?? undefined}
+          initialProject={chosenFaction ? newProject('My Skin Pack', chosenFaction) : undefined}
           onDisconnect={() => withViewTransition(() => setPhase('start'))}
           onClosePack={() => withViewTransition(() => setPhase('start'))}
           visible={true}

@@ -104,6 +104,7 @@ import { PublishSection } from '@/components/PublishSection'
 import FactionRow from '@/components/atlas/FactionRow'
 import PartStepper from '@/components/atlas/PartStepper'
 import FactionPartMatrix from '@/components/atlas/FactionPartMatrix'
+import DecalPreviewViewport from '@/components/DecalPreviewViewport'
 import type { DecalFaction } from '@/lib/decal-mod-templates'
 import { FACTION_LABELS, FACTION_COLORS } from '@/lib/factions'
 import type { Faction } from '@/lib/vehicles'
@@ -154,6 +155,54 @@ const BLANK_PNG =
  */
 const BADGE_CELL_128 = { x: 0, y: 0, w: DECAL_PACK_SIZE, h: DECAL_PACK_SIZE } as const
 
+/**
+ * TC1 badge-cell placement in the 2048² insignia atlas (Slice 4 live preview).
+ * The decal-pack composite is blitted into this cell so `Viewport`'s
+ * `badgeDecalSource` → `uDecalTex` renders it through the engine's TEXCOORD1
+ * national-insignia pipeline exactly as `Editor.tsx` does for the skin editor.
+ * Cluster U∈[0.286,0.337]×V∈[0.039,0.086] → px {586,80,104,96} at 2048²
+ * (see `Editor.tsx:897-900` + `coh2-vehicle-decal-rendering.md`).
+ */
+const BADGE_ATLAS_SIZE = 2048
+const BADGE_ATLAS_CELL = { x: 586, y: 80, w: 104, h: 96 } as const
+/** Debounce window for the 3D badge upload so decal drags don't thrash the
+ *  CanvasTexture upload (per-frame). */
+const BADGE_PREVIEW_DEBOUNCE_MS = 200
+
+/**
+ * Rasterise a 128²-composite DataURL into a transparent 2048² wrapper canvas
+ * at the TC1 badge cell. Returns null on decode/context failure. Mirrors the
+ * LOCAL-pack path in `Editor.tsx` (which rasterises the first decal); here the
+ * source is already the full-cell composite, so it blits edge-to-edge.
+ */
+function rasteriseCompositeIntoBadgeCell(
+  compositeDataUrl: string,
+): Promise<HTMLCanvasElement | null> {
+  return new Promise(resolve => {
+    const img = new Image()
+    img.onload = () => {
+      const wrapper = document.createElement('canvas')
+      wrapper.width = wrapper.height = BADGE_ATLAS_SIZE
+      const ctx = wrapper.getContext('2d')
+      if (!ctx) {
+        resolve(null)
+        return
+      }
+      // Transparent everywhere except the badge cell — non-badge TC1 pixels
+      // stay alpha=0 so the shader leaves the rest of the hull untouched.
+      ctx.clearRect(0, 0, BADGE_ATLAS_SIZE, BADGE_ATLAS_SIZE)
+      ctx.drawImage(
+        img,
+        0, 0, img.width || DECAL_PACK_SIZE, img.height || DECAL_PACK_SIZE,
+        BADGE_ATLAS_CELL.x, BADGE_ATLAS_CELL.y, BADGE_ATLAS_CELL.w, BADGE_ATLAS_CELL.h,
+      )
+      resolve(wrapper)
+    }
+    img.onerror = () => resolve(null)
+    img.src = compositeDataUrl
+  })
+}
+
 /** Axis-aligned overlap area of two rects (0 when disjoint). */
 function rectOverlapArea(
   a: { x: number; y: number; w: number; h: number },
@@ -168,7 +217,7 @@ function rectOverlapArea(
   return w > 0 && h > 0 ? w * h : 0
 }
 
-export default function DecalPackEditor({ project: initialProject, onBack, installRoot: _installRoot }: Props) {
+export default function DecalPackEditor({ project: initialProject, onBack, installRoot }: Props) {
   const [project, setProject] = useState<Coh2DecalPackProject>(initialProject)
   const [activeTool, setActiveTool] = useState<DecalToolId>('select')
   /** Non-null when the batch-import picker hit the 32-file cap. */
@@ -374,6 +423,32 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- depend on the active part's layers + sourceImages + part index; cellDecals declared later in the file so can't be listed here
   }, [project.parts, project.decals, project.sourceImages, activePartIndex])
+
+  // ── S4: live 3D badge source (debounced) ─────────────────────────────────
+  // Derives a 2048² TC1-cell wrapper canvas from the active-cell composite
+  // (refPreviewDataUrl) and feeds it to the left-side DecalPreviewViewport as
+  // `badgeDecalSource`. Debounced so rapid decal drags don't thrash the
+  // CanvasTexture upload — the mesh updates within ~200ms, not per-frame.
+  const [badgeSource, setBadgeSource] = useState<HTMLCanvasElement | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    // All setState calls run inside the debounce timer (never synchronously in
+    // the effect body) so cleared/updated badge sources both flow through the
+    // same async path and never trigger a cascading render.
+    const timer = window.setTimeout(() => {
+      if (!refPreviewDataUrl) {
+        if (!cancelled) setBadgeSource(null)
+        return
+      }
+      void rasteriseCompositeIntoBadgeCell(refPreviewDataUrl).then(canvas => {
+        if (!cancelled) setBadgeSource(canvas)
+      })
+    }, BADGE_PREVIEW_DEBOUNCE_MS)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [refPreviewDataUrl])
 
   // ── Project mutation ─────────────────────────────────────────────────────
   // Thin wrapper: stamps modifiedAt and delegates to the shared engine.
@@ -1679,14 +1754,55 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
       }}
       {...pz.handlers}
     >
-      {/* Centre — zoomed 128² canvas of active decal */}
+      {/* ── S4: live 3D preview — LEFT half ─────────────────────────────────
+          A representative vehicle of the pack's target faction with the
+          current decal composite applied through the TC1 national-insignia
+          pipeline (badgeDecalSource → uDecalTex). Debounced. Occupies the
+          left half; the paint canvas moves to the right half below.
+          Its own OrbitControls capture pointer events, so the outer
+          pan-zoom handlers only drive the right-half canvas. */}
+      <div
+        data-testid="decal-3d-preview-pane"
+        // Stop React-synthetic wheel/pointer events from BUBBLING to the outer
+        // pan-zoom container so orbiting/zooming the 3D preview never zooms the
+        // right-half canvas. Bubble-phase (not capture) so the Viewport's own
+        // OrbitControls — which read the events first — keep working.
+        onWheel={e => e.stopPropagation()}
+        onPointerDown={e => e.stopPropagation()}
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: '50%',
+          overflow: 'hidden',
+          // Sits behind the floating chrome (home/title/panels z≥38) but the
+          // Viewport itself owns pointer events within this pane.
+          zIndex: 1,
+        }}
+      >
+        <DecalPreviewViewport
+          faction={project.targetFaction ?? activeFaction ?? 'german'}
+          installRoot={installRoot ?? null}
+          badgeSource={badgeSource}
+          fallbackThumbnail={refPreviewDataUrl}
+        />
+      </div>
+
+      {/* Centre — zoomed 128² canvas of active decal (RIGHT half) */}
       <ImageDropZone
         ref={dropZoneRef}
         onImport={onImport}
         style={
           {
             position: 'absolute',
-            inset: 0,
+            // S4: the canvas work-area now occupies the RIGHT half; the LEFT
+            // half is the live 3D preview pane (above). Centering + padding are
+            // unchanged so the 128² canvas stays centred within the right half.
+            left: '50%',
+            right: 0,
+            top: 0,
+            bottom: 0,
             // overflow:hidden clips the OOB red zone to the work area so it
             // never bleeds onto toolbars/sidebars.
             overflow: 'hidden',

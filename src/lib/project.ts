@@ -200,6 +200,8 @@ export interface Coh2SkinProject {
   workshopVisibility?: 0 | 1 | 2 | 3
   /** Per-vehicle state, keyed by vehicle id (live editing layer). */
   vehicles: Record<string, VehicleProject>
+  /** Faction chosen at creation (faction-first flow). Absent on legacy projects → derive from vehicles. */
+  faction?: Faction
   /** Per-faction defaults for the live editing layer. */
   factionDefaults: Partial<Record<Faction, FactionDefault | null>>
   /** Reference pack picked in the editor; null = none. */
@@ -335,7 +337,7 @@ function makeDefaultSlots(): ExportSlot[] {
 // Project factory
 // ---------------------------------------------------------------------------
 
-export function newProject(packName = 'My Skin Pack'): Coh2SkinProject {
+export function newProject(packName = 'My Skin Pack', faction?: Faction): Coh2SkinProject {
   return {
     magic: 'coh2-skin-project',
     version: 2,
@@ -350,6 +352,7 @@ export function newProject(packName = 'My Skin Pack'): Coh2SkinProject {
     refPackId: null,
     palette: { ...DEFAULT_PALETTE },
     lastVehicleId: null,
+    ...(faction ? { faction } : {}),
     modifiedAt: new Date().toISOString(),
     images: {},
     vehicleIcons: {},

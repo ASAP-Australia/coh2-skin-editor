@@ -87,3 +87,110 @@ to match FactionPanel's soft raised tile
 
 ## UNVERIFIED
 None — 14/14 states captured and read.
+
+---
+
+# PHASE-2 VERIFICATION PASS — 2026-07-24
+
+Rebuilt (`npm run build && npm run electron:compile`) and ran the FULL harness across ALL 18
+states (14 original + 4 new Phase-2: `faction-chooser-skin`, `faction-chooser-decal`,
+`texture-split`, `decal-3d-preview`) → `UI_CAPTURE=1 electron .`, real GPU (radv/Vulkan),
+1600×1000.
+
+## 🔴 P0 BLOCKER — app white-screens at boot; ZERO states could be verified
+
+**The entire app fails to render.** Every state's fresh page load throws, at module-eval time:
+
+```
+[renderer:ERR:Viewport-C-X_4swy.js:1] Uncaught TypeError: E is not a function
+```
+
+`start.png` is a **fully blank white page** (confirmed by reading the PNG — no chrome, no
+StartScreen, nothing). The harness then reports every subsequent state as
+"never reached StartScreen (CoH2 auto-detect likely failed → ConnectScreen)" — **this diagnosis
+is WRONG**: `detectCoh2Path()` works fine standalone (returns
+`/home/jflessenkemper/.steam/steam/steamapps/common/Company of Heroes 2`). The app never reaches
+*any* screen because React throws at the root during boot. Harness result: **0/18 states
+verifiable** (only `start.png` written, and it is blank white).
+
+### Root cause — circular ESM chunk dependency introduced by Phase-2 (build regression, NOT a pixel bug)
+
+Verified against the built bundle (unminified `--minify false --sourcemap` build gives the
+readable error: `require_jsx_runtime is not a function` at `Viewport-*.js:410`,
+`var import_jsx_runtime = require_jsx_runtime();` — a **top-level** statement, so it runs the
+instant the chunk evaluates).
+
+The `index-*.js` (main) chunk and the `Viewport-*.js` chunk import from **each other** — a hard
+ESM cycle between the two largest chunks:
+- `Viewport-C-X_4swy.js` imports `Xt as E` (the JSX-runtime factory `require_jsx_runtime`) **and**
+  vehicle helpers from `index--XDHkBBF.js`, then calls `z=E()` at top-level eval.
+- `index--XDHkBBF.js` imports back `{a as $e,i as et,r as tt,t as nt}from"./Viewport-C-X_4swy.js"`.
+- `Viewport-*.js` export-set: `export{A as a,j as i,Ne as n,we as r,nt as t}` — the symbols the
+  index chunk consumes → the cycle closes.
+
+Because of the cycle, when the Viewport chunk evaluates its top-level `E()` the `index` chunk's
+`Xt` (jsx-runtime factory) export is **not yet initialized** → `E` is `undefined` →
+`E is not a function` → root render throws → white screen.
+
+**Why NEW in Phase-2:** `src/components/DecalPreviewViewport.tsx` (added for Slice 4) is the
+**only static importer of `Viewport`** (`import Viewport from './Viewport'`, line 21). Before
+Phase-2, `Viewport` was imported **lazily only** (`App.tsx:49`
+`lazy(() => import('@/components/Viewport'))`), so it lived in a clean leaf chunk with no cycle.
+`DecalPreviewViewport` → `DecalPackEditor` pulls `Viewport` into the main-chunk import graph while
+`Viewport` still imports vehicle/util symbols that live in the main chunk → the chunker emits a
+circular pair.
+
+### Fix direction (for the fix round — NOT applied here)
+Break the `index ⇄ Viewport` cycle. Candidate approaches, in order of preference:
+1. **Force `Viewport` into its own chunk that does NOT depend on the main index chunk** — hoist the
+   shared symbols `Viewport` needs (`VEHICLES`/`defaultVehicleForFaction` from `src/lib/vehicles.ts`,
+   the decal-uv resolver, `require_jsx_runtime`) into a small leaf chunk both `index` and `Viewport`
+   import, via `build.rolldownOptions.output.manualChunks` (or `advancedChunks`) in `vite.config.ts`.
+2. **Make `DecalPreviewViewport` import `Viewport` lazily** (`lazy(() => import('./Viewport'))` +
+   `<Suspense>`), matching `App.tsx`, so `Viewport` stays a leaf chunk and no static edge from the
+   main graph is created. Lowest-risk, most localized.
+3. Ensure the JSX-runtime helper is emitted into a runtime chunk that is a pure leaf (no back-edge),
+   so it is always initialized before any consumer chunk evaluates.
+
+Repro: `npm run build && npm run electron:compile && UI_CAPTURE=1 UI_SCREENS=start electron .` →
+blank `start.png` + `E is not a function`. The unminified build
+(`npx vite build --minify false --sourcemap`) reproduces the SAME cycle with the readable name
+`require_jsx_runtime is not a function`, confirming it is the chunk graph, not the minifier.
+
+## Per-requirement verdict table (Phase-2 brief)
+
+All Phase-2 requirements are **BLOCKED / UNVERIFIABLE** — the app never renders past a blank white
+root, so no screen (new or old) could be inspected for pixels. This is a structural build failure
+upstream of every requirement, not a per-requirement failure.
+
+| # | Phase-2 requirement | Verdict | Evidence |
+|---|---------------------|---------|----------|
+| P2-1 | Faction chooser (lab01-styled) appears for **skin** creation | **BLOCKED** | `faction-chooser-skin` never reached — app white-screens at boot. Component source exists + is correct (`FactionChooserStep.tsx`, lab01 rows/emblems/back pill), but 0 pixels rendered. |
+| P2-2 | Faction chooser appears for **decal** creation | **BLOCKED** | `faction-chooser-decal` never reached — same boot crash. Source wired (`App.tsx` routes New Decal Pack → chooser). |
+| P2-3 | Vehicle selector **filtered to the chosen faction** | **BLOCKED** | `skin-editor` never rendered. Unverifiable. |
+| P2-4 | **Edit-vehicle affordance** appears ABOVE the selector on vehicle selection | **BLOCKED** | `EditVehicleAffordance.tsx` exists + reveal-on-selection logic correct (returns null when no vehicle), but never rendered. |
+| P2-5 | Texture editor = **live 3D left + canvas right + tools bottom + options above + back top-left** | **BLOCKED** | `texture-split` never reached (crash + the 3D chunk is the crashing chunk). Unverifiable. |
+| P2-6 | Decal editor = **live 3D vehicle w/ decal applied LEFT + canvas RIGHT** (retires #8) | **BLOCKED** | `decal-3d-preview` / `decal-editor` never rendered. `DecalPreviewViewport.tsx` is the very file whose static `Viewport` import *caused* the boot crash. Unverifiable — and note it depends on a live `installRoot` FileSystemDirectoryHandle; even absent the crash, confirm the 3D (vs thumbnail fallback) path in the fix round. |
+
+## Regression check on previously-fixed findings #1–#13
+
+**Cannot be performed this pass.** Findings #1–#13 all require reading rendered pixels of the skin
+editor panels / decal editor / faceplate editor / start screen. Because the app white-screens
+before any of those render, **none of #1–#13 could be re-confirmed as still-fixed**. No evidence of
+regression, but also **no evidence they held** — they are all effectively re-opened to UNVERIFIED
+until the P0 boot crash is fixed and the harness can drive the app again. (The pre-existing
+unresolved **#11-right** — ScenePanel `bg-white/95` active tile, `ScenePanel.tsx:55` — also remains
+outstanding and unverifiable.)
+
+## New visual issues found this pass
+**None at the pixel level** — the app renders zero pixels, so no new *visual* glitch could be
+observed. The single finding is the **P0 boot-crash build regression** documented above (circular
+`index ⇄ Viewport` chunk dependency from `DecalPreviewViewport.tsx`'s static `Viewport` import).
+
+## Harness note (secondary, low priority)
+`ui-capture.ts`'s failure message "never reached StartScreen (CoH2 auto-detect likely failed →
+ConnectScreen)" **mis-attributes** a renderer boot crash to install auto-detect. When
+`start.png` is blank white but `detectCoh2Path()` succeeds, the harness should surface the renderer
+console error (it logs `E is not a function`) rather than blaming ConnectScreen — otherwise the true
+cause is buried. Consider having `driveAndCapture` distinguish "blank/thrown root" from
+"ConnectScreen rendered".
