@@ -277,9 +277,22 @@ async function pickGermanFaction(
   return left ? 'picked' : 'stuck'
 }
 
-/** Load a fresh production page and wait for the renderer to paint. */
+/**
+ * Load a fresh production page and wait for the renderer to paint.
+ *
+ * IMPORTANT — storage is wiped first. A page reload alone does NOT reset
+ * localStorage, so every capture run used to leave its newly-created projects
+ * behind. After ~20 runs the accumulated projects changed which project (and
+ * therefore which vehicle) the editor opened on, and driving started failing
+ * with "vehicle menu never offered Tiger I" — on unmodified HEAD, i.e. a
+ * harness artefact masquerading as an app regression. Clearing localStorage
+ * per state makes captures deterministic and independent of run history.
+ */
 async function freshLoad(win: BrowserWindow): Promise<void> {
   const indexPath = path.join(__dirname, '..', 'dist', 'index.html')
+  try {
+    await win.webContents.session.clearStorageData({ storages: ['localstorage', 'indexdb'] })
+  } catch { /* first load: nothing to clear */ }
   await win.loadFile(indexPath)
   await inject(win.webContents)
   // Wait for React to commit past the 'probing' phase. StartScreen shows
@@ -475,7 +488,15 @@ async function driveAndCapture(
       // displayName "Tiger I"). Editor defaults to Brummbär, both german.
       const pickedTiger = await clickWhenReady(wc, 'Tiger I', 'starts', 30000)
       if (!pickedTiger) {
-        return { ok: false, note: 'vehicle menu never offered "Tiger I" (editor may not have reached the vehicle picker)' }
+        // Don't guess why — report what IS on screen, and keep the pixels.
+        const inv = await wc.executeJavaScript('window.__uiCap.inventory()', true).catch(() => [])
+        const txt = await wc.executeJavaScript('document.body.innerText.slice(0,400)', true).catch(() => '')
+        const png = await capture(win, `${state}-DEGRADED`, 800)
+        return {
+          ok: false,
+          note: `vehicle menu never offered "Tiger I". onscreen text: ${JSON.stringify(String(txt).replace(/\s+/g, ' ').slice(0, 200))} | affordances: ${JSON.stringify((inv as string[]).slice(0, 25))}`,
+          png,
+        }
       }
       // Wait for the 3D model to load. The Viewport signals readiness in
       // various ways; we just wait a generous window and settle on rAF.

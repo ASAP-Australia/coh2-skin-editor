@@ -215,9 +215,9 @@ export default function TemplateDecalPills({
     return () => { cancelled = true }
   }, [faction])
 
-  // Template inventory — order: Blank → Your Camos (installed + saved) → Stock Vehicles → Workshop.
-  // Installed packs and saved projects appear prominently BEFORE the long stock-vehicle list
-  // so the user's real camos are immediately visible when the menu opens.
+  // Template inventory — order: Blank → Installed packs → Steam Workshop → Your projects → Stock Vehicles.
+  // Real installed skins lead, because previewing them on the current vehicle is
+  // the purpose of this menu; the long stock list is last so it buries nothing.
   // Workshop/installed items are prefetched; recomputed on open so newly-saved packs appear.
   const templateOptions = useMemo<Option[]>(() => {
     if (openMenu !== 'template') return []
@@ -243,7 +243,6 @@ export default function TemplateDecalPills({
         : FACTION_ICON_SRC[faction] ?? null,
     }))
     const workshopPacks = workshopTemplateOptions ?? []
-    const yourCamos = [...installedPacks, ...saved]
 
     const stockVehicles = listStockSkins()
       .filter(s => s.factionId === faction) // R2: faction-filtered
@@ -257,22 +256,41 @@ export default function TemplateDecalPills({
 
     const result: Option[] = [{ id: 'blank', kind: 'blank', name: 'Blank canvas' }]
 
-    // Group: Your Camos / Installed — only show the separator when there is content.
-    if (yourCamos.length > 0) {
-      result.push({ id: '__group_your_camos__', name: 'Your Camos', isGroupHeader: true })
-      result.push(...yourCamos)
+    // Group order is deliberate: the point of this menu is "show me what a skin
+    // looks like ON THIS VEHICLE", so packs the user actually has installed come
+    // FIRST, then Steam Workshop subscriptions, then their own saved projects,
+    // and only then the long stock list.
+    //
+    // Previously "Installed packs" and "Your projects" were merged into one
+    // "Your Camos" group with Workshop last. That buried real skins: on this
+    // machine mods/skins/ holds 44 installed SGAs while the Steam workshop
+    // content dir has 1 item with 0 SGAs — so everything the user could
+    // actually preview sat unlabelled in a mixed list, below the fold.
+
+    // Group: Installed packs — real skins on disk (mods/skins/**), the ones
+    // most likely to be worth previewing on the current vehicle.
+    if (installedPacks.length > 0) {
+      result.push({ id: '__group_installed__', name: 'Installed packs', isGroupHeader: true })
+      result.push(...installedPacks)
     }
 
-    // Group: Stock Vehicles.
+    // Group: Workshop — Steam-subscribed items (steamapps/workshop/content/231430).
+    if (workshopPacks.length > 0) {
+      result.push({ id: '__group_workshop__', name: 'Steam Workshop', isGroupHeader: true })
+      result.push(...workshopPacks)
+    }
+
+    // Group: the user's own saved projects.
+    if (saved.length > 0) {
+      result.push({ id: '__group_your_projects__', name: 'Your projects', isGroupHeader: true })
+      result.push(...saved)
+    }
+
+    // Group: Stock Vehicles — long, faction-filtered; last so it never buries
+    // the groups above.
     if (stockVehicles.length > 0) {
       result.push({ id: '__group_stock__', name: 'Stock Vehicles', isGroupHeader: true })
       result.push(...stockVehicles)
-    }
-
-    // Group: Workshop.
-    if (workshopPacks.length > 0) {
-      result.push({ id: '__group_workshop__', name: 'Workshop', isGroupHeader: true })
-      result.push(...workshopPacks)
     }
 
     return result
