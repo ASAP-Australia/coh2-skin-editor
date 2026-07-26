@@ -23,6 +23,10 @@
  *   AUDIT_WIDTH=<n>       Capture width  (default 1024).
  *   AUDIT_HEIGHT=<n>      Capture height (default 768).
  *   VERIFY_ONLY=<id>      Restrict to a single vehicle id (debugging).
+ *   VERIFY_CAM_POS=x,y,z     Pin the camera to an explicit world pose, overriding
+ *                            the auto-framing. Needed for Layer C, where the
+ *                            editor must match the game's fixed RTS angle.
+ *   VERIFY_CAM_TARGET=x,y,z  Look-at point for the above (default 0,0.5,0).
  *   VERIFY_PER_ITEM_MS=<n> Per-item ready timeout (default 90000).
  *
  * DESIGN NOTES vs audit-capture-real.ts:
@@ -41,6 +45,9 @@ const AUDIT_WIDTH  = Number(process.env.AUDIT_WIDTH  ?? '1024')
 const AUDIT_HEIGHT = Number(process.env.AUDIT_HEIGHT ?? '768')
 const USE_DEV_SERVER = process.env.AUDIT_DEV === '1'
 const VERIFY_ONLY = process.env.VERIFY_ONLY
+/** Explicit camera pose, "x,y,z" world units. See camQuery below. */
+const VERIFY_CAM_POS = process.env.VERIFY_CAM_POS
+const VERIFY_CAM_TARGET = process.env.VERIFY_CAM_TARGET
 const VERIFY_FACTION = process.env.VERIFY_FACTION
 const PER_ITEM_MS = Number(process.env.VERIFY_PER_ITEM_MS ?? '90000')
 
@@ -163,7 +170,14 @@ export async function runVerifyVisualCapture(): Promise<void> {
 
   const onlyQuery = VERIFY_ONLY ? `&only=${encodeURIComponent(VERIFY_ONLY)}` : ''
   const factionQuery = VERIFY_FACTION ? `&verifyFaction=${encodeURIComponent(VERIFY_FACTION)}` : ''
-  const q = `${onlyQuery}${factionQuery}`
+  // Optional explicit camera pose, for framing a capture to match an external
+  // reference (Layer C: the game's RTS camera cannot rotate, so the editor is
+  // the side that has to move). Both are "x,y,z" in world units.
+  const camQuery =
+    (VERIFY_CAM_POS ? `&camPos=${encodeURIComponent(VERIFY_CAM_POS)}` : '') +
+    (VERIFY_CAM_TARGET ? `&camTarget=${encodeURIComponent(VERIFY_CAM_TARGET)}` : '')
+  const q = `${onlyQuery}${factionQuery}${camQuery}`
+  if (VERIFY_CAM_POS) console.log(`[verify-visual] Camera override: pos=${VERIFY_CAM_POS} target=${VERIFY_CAM_TARGET ?? '0,0.5,0'}`)
   const verifyUrl = USE_DEV_SERVER
     ? `http://localhost:5173/?audit=1&verify=1${q}`
     : (() => {

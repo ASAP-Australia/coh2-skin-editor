@@ -4211,7 +4211,13 @@ export default function Viewport({
         // computed from a CONSTANT reference radius (≈ half a King Tiger's
         // bounding-sphere diagonal, the largest vehicle), so the first vehicle
         // is consistently framed regardless of which one it is.
-        if (!cameraFramedRef.current) {
+        //
+        // An EXPLICIT `cameraInitial` wins over auto-framing. Without this the
+        // auto-frame silently clobbers the caller's pose on model load, so a
+        // supplied camera appears to have no effect at all — a top-down pose
+        // and no pose at all render byte-identically. Layer C needs the editor
+        // to match the game's fixed RTS angle, which is exactly this case.
+        if (!cameraFramedRef.current && !cameraInitialRef.current) {
           if (controlsRef.current) {
             controlsRef.current.target.copy(finalCenter)
             controlsRef.current.update()

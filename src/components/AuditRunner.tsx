@@ -64,6 +64,25 @@ const VERIFY_MODE = _auditParams.get('verify') === '1'
 // window batch instability. Empty = all factions in one run.
 const VERIFY_FACTION = _auditParams.get('verifyFaction') as Faction | null
 
+// ── Camera override ───────────────────────────────────────────────────────────
+// `?camPos=x,y,z&camTarget=x,y,z` pins the camera to an explicit world-space
+// pose, overriding both the decal-pass angle and the auto-framing recipe.
+//
+// WHY THIS EXISTS: Layer C compares an editor render against an in-game capture.
+// CoH2's RTS camera cannot be rotated, so the GAME's angle is fixed and the
+// EDITOR must be the side that moves. Without this, the editor renders a
+// front-left 3/4 while the game gives whatever the map dictates, and SSIM /
+// edge-IoU measure the framing mismatch rather than the paint — scoring BELOW
+// the unrelated-image baseline and reading as a texture defect that isn't there.
+const _parseVec3 = (raw: string | null): [number, number, number] | null => {
+  if (!raw) return null
+  const parts = raw.split(',').map(s => Number(s.trim()))
+  if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return null
+  return [parts[0], parts[1], parts[2]]
+}
+const CAM_POS_OVERRIDE = _parseVec3(_auditParams.get('camPos'))
+const CAM_TARGET_OVERRIDE = _parseVec3(_auditParams.get('camTarget')) ?? [0, 0.5, 0]
+
 // ── SHOWCASE mode ─────────────────────────────────────────────────────────────
 // `?audit=1&showcase=1` renders a curated proof set for ONE vehicle through the
 // REAL Viewport material — the same overlayCanvas (camo diffuse) + badgeDecalSource
@@ -673,9 +692,14 @@ export default function AuditRunner() {
   // and never re-framed). That +X-facing 3/4 view shows the right hull side
   // where the badge lands, and being size-aware it frames small utility trucks
   // and King Tigers consistently — better than a single hardcoded pose.
-  const cameraInitial = (item?.mode === 'decal')
-    ? { position: [4.0, 2.5, -2.0] as [number, number, number], target: [0, 0.5, 0] as [number, number, number] }
-    : undefined
+  //
+  // An explicit ?camPos= overrides BOTH of the above, so a capture can be
+  // framed to match an external reference (see CAM_POS_OVERRIDE above).
+  const cameraInitial = CAM_POS_OVERRIDE
+    ? { position: CAM_POS_OVERRIDE, target: CAM_TARGET_OVERRIDE as [number, number, number] }
+    : (item?.mode === 'decal')
+      ? { position: [4.0, 2.5, -2.0] as [number, number, number], target: [0, 0.5, 0] as [number, number, number] }
+      : undefined
 
   if (installError) {
     return (
