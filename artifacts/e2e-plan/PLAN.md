@@ -339,6 +339,22 @@ Decision (b) is resolved analytically. Two independent lines of evidence show tr
 
 > Remaining honest caveat: on **merged-mesh** vehicles the road **wheels** are part of the single body material, so submesh-level masking cannot exclude them — camo will paint the wheels. That is a structural limitation of per-submesh masking, not a bug in this fix, and arguably correct (real road wheels are usually painted hull colour).
 
+## 2f. ✅ LAYER STATUS — offline half COMPLETE (2026-07-26)
+
+| layer | proves | status | evidence |
+|---|---|---|---|
+| **A** — texture bytes | editor bytes survive encode/pack | ✅ **61/61 PASS** | `scripts/verify-layer-a.mts`, `layerA-results.json` |
+| **B** — armor protection | camo never touches tracks/fittings | ✅ **61/61 PASS** | `scripts/verify-layer-b.mts`, `layerB-results.json` — mean armor erased **0.159%**, max 7.80% |
+| **E** — app correctness | UI renders, no glitches | ✅ **18/18 screens** | `artifacts/redesign-v2/ui-verify/` |
+| **C** — editor vs game render | structural match | ⏳ needs game | |
+| **D** — in-game ground truth | renders in CoH2 | ⏳ needs game | |
+
+**Layer E audit (18 states, 1600×972, real GPU):** zero blank renders; **zero surviving old-blue accent** (0 pixels across all 18 — the gold migration is complete); gold present where expected; no contrast or overlap glitches. Visual review of start / faction-chooser / skin-camo-panel / decal-3d-preview / faceplate-editor found no defects — the earlier fixes (opaque panels, no rail overlap, collapsed empty LAYERS/PROPERTIES, nav rail, faction-first flow, 3D-left splits) all hold.
+
+Two of my own visual impressions were checked and **refuted** by sampling: the faceplate title pill is neutral grey `(38,38,40)`, not the blue gradient I thought I saw; and the form/chooser screens I suspected were duplicates (from similar file sizes) are genuinely distinct.
+
+**One cosmetic finding:** `texture-editor` and `texture-split` capture byte-identically — expected, since post-Phase-2 the split *is* the texture editor. Redundant harness state, not a bug; drop one when convenient.
+
 ## 3. Execution order (on approval)
 
 | Phase | Needs machine free? | Content |
