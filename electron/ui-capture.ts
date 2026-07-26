@@ -73,6 +73,8 @@ const ALL_SCREENS = [
   'skin-camo-panel',
   'skin-decals-panel',
   'skin-scene-panel',
+  'skin-template-pill',
+  'skin-decalpack-pill',
   'texture-editor',
   'texture-split',
   'decal-editor',
@@ -450,6 +452,8 @@ async function driveAndCapture(
     case 'skin-camo-panel':
     case 'skin-decals-panel':
     case 'skin-scene-panel':
+    case 'skin-template-pill':
+    case 'skin-decalpack-pill':
     case 'texture-editor':
     case 'texture-split': {
       if (!(await clickWhenReady(wc, 'New Skin Pack', 'includes'))) {
@@ -494,6 +498,17 @@ async function driveAndCapture(
         }
         const png = await capture(win, state, 1500)
         return { ok: true, note: 'Camo panel open', png }
+      }
+      // Skin-pack / decal-pack preview selectors (TemplateDecalPills) — the
+      // "see what a workshop skin or decal looks like on THIS vehicle" flow,
+      // including the This-vehicle / All-vehicles apply scope.
+      if (state === 'skin-template-pill' || state === 'skin-decalpack-pill') {
+        const label = state === 'skin-template-pill' ? 'Template' : 'Decal pack'
+        if (!(await clickWhenReady(wc, label, 'starts', 20000))) {
+          return { ok: false, note: `could not open the "${label}" pill` }
+        }
+        const png = await capture(win, state, 2500)
+        return { ok: true, note: `${label} selector open (workshop list + apply scope)`, png }
       }
       if (state === 'skin-decals-panel') {
         if (!(await clickWhenReady(wc, 'Decals panel', 'starts'))) {

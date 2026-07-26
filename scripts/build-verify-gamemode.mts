@@ -200,10 +200,17 @@ local GRID_COLS    = 5           -- 5 x 2 = 10 cells
 -- 100% certain across maps, so we spawn THREE hero copies in a row, each facing a
 -- DIFFERENT direction (world +X, world -X, and toward the camera), guaranteeing at
 -- least one presents its insignia-bearing hull side squarely to the fixed camera.
+-- GEN13b (2026-07-26) -- TIGER FIRST, and the reason matters.
+-- The global-override SGA replaces exactly ONE vanilla vehicle diffuse:
+--   art/armies/german/vehicles/tiger/tiger_dif.rgt
+-- With panther first, the photo heroes spawned as PANTHERS: vanilla, no camo,
+-- so an otherwise-correct capture proved nothing. Confirmed in-game 2026-07-26
+-- (on-screen "PHOTO HERO n=3 x=-136 z=100" -- spawn worked, wrong vehicle).
+-- The hero blueprint MUST match whatever the override actually covers.
 local HERO_SBP_CANDIDATES = {
-   "panther_squad_mp",    -- Panther: long flat side skirts = clean insignia [verified]
+   "tiger_squad_mp",      -- Tiger I: THE vehicle the override replaces [verified]
+   "panther_squad_mp",    -- Panther: long flat side skirts [verified] (fallback)
    "panzer_iv_squad_mp",  -- Panzer IV: flat schuerzen side [verified] (fallback)
-   "tiger_squad_mp",      -- Tiger I: broad flat hull side [verified] (fallback)
 }
 local HERO_OFFSET_X   = 40   -- metres RIGHT of the grid origin (well clear of the grid)
 local HERO_OFFSET_Z   = -25  -- metres toward camera-home from origin (in front of grid)
