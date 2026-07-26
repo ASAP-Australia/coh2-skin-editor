@@ -19,9 +19,11 @@ import { ChevronUp, Package, Sticker } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import {
   cloneSkinProjectFromTemplate,
+  effectiveTemplateFor,
   listAllSkinProjects,
   parseStockTemplateId,
   persistActive,
+  templateBakeTargets,
   type Coh2SkinProject,
 } from '@/lib/project'
 import type { TemplateKind } from './TemplatePicker'
@@ -86,7 +88,7 @@ export default function TemplateDecalPills({
 }: Props) {
   const [openMenu, setOpenMenu] = useState<null | 'template' | 'decal'>(null)
   // 0 = "This vehicle", 1 = "All vehicles"
-  const [templateScope, setTemplateScope] = useState<0 | 1>(1)
+  const [templateScope, setTemplateScope] = useState<0 | 1>(project.templateScope === 'vehicle' ? 0 : 1)
   const [decalScope, setDecalScope] = useState<0 | 1>(project.decalScope === 'vehicle' ? 0 : 1)
   // true while the async diffuse extraction is in progress for the last apply
   const [diffuseLoading, setDiffuseLoading] = useState(false)
@@ -423,7 +425,9 @@ export default function TemplateDecalPills({
     ]
   }, [openMenu, workshopDecalOptions, packIconUrls, faction])
 
-  const templateName = project.template?.name ?? 'Blank canvas'
+  // Only name a template that actually applies to the vehicle on screen — a
+  // 'This vehicle'-scoped template is invisible from every other vehicle.
+  const templateName = effectiveTemplateFor(project, currentVehicleId)?.name ?? 'Blank canvas'
   const decalName = project.decalPackRef?.name ?? 'No decal pack'
 
   // ── Async diffuse-bake helpers ──────────────────────────────────────────────
@@ -481,36 +485,53 @@ export default function TemplateDecalPills({
     setOpenMenu(null)
     // Skip group headers.
     if (opt.isGroupHeader) return
-    if (opt.id === project.template?.id) return
+    const scope: 'vehicle' | 'all' = templateScope === 0 ? 'vehicle' : 'all'
+    // Re-picking the same template is a no-op ONLY when the scope is also
+    // unchanged — switching "This vehicle" ⇄ "All vehicles" on the current
+    // template is a real request that must re-apply.
+    const sameScope =
+      (project.templateScope ?? 'all') === scope &&
+      (scope !== 'vehicle' || project.templateScopeVehicleId === currentVehicleId)
+    if (opt.id === project.template?.id && sameScope) return
     const kind = opt.kind ?? 'blank'
 
     // Installed skin pack: record the template reference AND asynchronously bake
-    // the installed SGA's diffuse for the current vehicle (same path layout as
-    // workshop packs). Respects templateScope: "This vehicle" patches only the
-    // current vehicle slot; "All vehicles" replaces the whole project template
-    // reference (diffuse is baked for the current vehicle only — other vehicles
-    // are lazily populated on demand when the user switches to them).
+    // the installed SGA's diffuse (same path layout as workshop packs).
+    // Installed packs are SGAs on disk, not cloneable projects, so
+    // cloneSkinProjectFromTemplate cannot serve the "All vehicles" case —
+    // instead each target vehicle's diffuse is resolved out of the SGA directly.
     if (opt.id.startsWith('installed:')) {
-      const targetFaction = vehicleFaction(currentVehicleId)
-      const bakeTarget = currentVehicleId
       const next: Coh2SkinProject = {
         ...project,
         template: { id: opt.id, kind: 'blank', name: opt.name },
+        templateScope: scope,
+        templateScopeVehicleId: scope === 'vehicle' ? currentVehicleId : undefined,
       }
       setProject(next)
       persistActive(next)
 
+      // "This vehicle" bakes one slot; "All vehicles" bakes every vehicle the
+      // pack's faction covers. Vehicles the pack has no texture for are left
+      // untouched (rather than nulled), so they keep whatever they had.
+      const bakeTargets = templateBakeTargets(scope, currentVehicleId, faction)
+
       // Fire-and-forget diffuse bake.
       setDiffuseLoading(true)
-      void fetchInstalledDiffuse(opt.hint, targetFaction, bakeTarget).then(dataUrl => {
+      void Promise.all(
+        bakeTargets.map(async id => ({
+          id,
+          dataUrl: await fetchInstalledDiffuse(opt.hint, vehicleFaction(id), id),
+        })),
+      ).then(results => {
         setDiffuseLoading(false)
-        if (!dataUrl) return
-        const existing = next.vehicles[bakeTarget] ?? { id: bakeTarget, tac: null, name: null, decals: [] }
-        const veh = { ...structuredClone(existing), customDiffuseUrl: dataUrl }
-        const updated: Coh2SkinProject = {
-          ...next,
-          vehicles: { ...next.vehicles, [bakeTarget]: veh },
+        const hits = results.filter(r => r.dataUrl)
+        if (!hits.length) return
+        const vehicles = { ...next.vehicles }
+        for (const { id, dataUrl } of hits) {
+          const existing = vehicles[id] ?? { id, tac: null, name: null, decals: [] }
+          vehicles[id] = { ...structuredClone(existing), customDiffuseUrl: dataUrl }
         }
+        const updated: Coh2SkinProject = { ...next, vehicles }
         persistActive(updated)
         setProject(updated)
       }).catch(() => setDiffuseLoading(false))
@@ -544,6 +565,8 @@ export default function TemplateDecalPills({
               [currentVehicleId]: vehicleCopy,
             },
             template: { id: opt.id, kind, name: opt.name },
+            templateScope: 'vehicle',
+            templateScopeVehicleId: currentVehicleId,
           }
           setProject(next)
           persistActive(next)
@@ -585,7 +608,10 @@ export default function TemplateDecalPills({
 
     // "All vehicles" scope (default) — existing whole-project replace behaviour.
     if (kind === 'stock' || kind === 'saved' || kind === 'workshop') {
-      const clone = cloneSkinProjectFromTemplate({ id: opt.id, kind, name: opt.name })
+      const cloned = cloneSkinProjectFromTemplate({ id: opt.id, kind, name: opt.name })
+      const clone: Coh2SkinProject | null = cloned
+        ? { ...cloned, templateScope: 'all', templateScopeVehicleId: undefined }
+        : null
       if (clone) {
         setProject(clone)
         persistActive(clone)
@@ -631,6 +657,8 @@ export default function TemplateDecalPills({
     const next: Coh2SkinProject = {
       ...project,
       template: { id: opt.id, kind, name: opt.name },
+      templateScope: scope,
+      templateScopeVehicleId: scope === 'vehicle' ? currentVehicleId : undefined,
     }
     setProject(next)
     persistActive(next)

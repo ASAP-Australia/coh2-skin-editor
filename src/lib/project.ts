@@ -176,6 +176,14 @@ export interface Coh2SkinProject {
    *  mirrors TemplatePicker's TemplateKind. Undefined on legacy projects =
    *  treated as a blank canvas. */
   template?: ProjectTemplateRef
+  /** Template application scope chosen via the bottom-bar template pill.
+   *  'vehicle' = the template was applied only to `templateScopeVehicleId`;
+   *  'all' (default when undefined) = applied project-wide. Mirrors
+   *  `decalScope`. Legacy projects have neither field and are treated as
+   *  'all', preserving pre-scope behaviour. */
+  templateScope?: 'vehicle' | 'all'
+  /** When templateScope === 'vehicle', the vehicle id the template is pinned to. */
+  templateScopeVehicleId?: string
   /** Quick-pick reference to a decal pack the user associated with this skin
    *  pack via the bottom-bar decal-pack pill. Decal packs ship as a SEPARATE
    *  CoH2 mod, so this is an association/quick-access record (not merged into
@@ -513,6 +521,48 @@ export function effectiveCustomDiffuseUrl(
   const v = p.vehicles[vehicleId]
   if (v?.customDiffuseUrl !== undefined && v.customDiffuseUrl !== null) return v.customDiffuseUrl
   return p.factionDefaults[faction]?.customDiffuseUrl ?? null
+}
+
+/**
+ * Return the template reference that actually applies to `vehicleId`, or null.
+ *
+ * A template applied with 'This vehicle' scope is pinned to a single vehicle,
+ * so every OTHER vehicle must report no template — otherwise the pill would
+ * name a pack that was never baked onto the vehicle on screen. Mirrors the
+ * `decalScope` / `decalScopeVehicleId` gating used for decal packs.
+ *
+ * Legacy projects carry no `templateScope`; they are treated as 'all', which
+ * is exactly the pre-scope behaviour.
+ */
+export function effectiveTemplateFor(
+  p: Coh2SkinProject,
+  vehicleId: string,
+): ProjectTemplateRef | null {
+  if (!p.template) return null
+  // Graceful, matching the decal gate: a 'vehicle' scope with no pinned id is
+  // meaningless, so fall back to showing the template rather than hiding a
+  // template that really is applied.
+  if (p.templateScope === 'vehicle' && p.templateScopeVehicleId && p.templateScopeVehicleId !== vehicleId) {
+    return null
+  }
+  return p.template
+}
+
+/**
+ * Which vehicle slots a template apply should bake into.
+ *
+ * 'vehicle' → just the vehicle on screen. 'all' → every vehicle belonging to
+ * `faction`. Used by the installed-skin-pack path, which cannot go through
+ * cloneSkinProjectFromTemplate (installed packs are SGAs on disk, not saved
+ * projects) and so must resolve each vehicle's diffuse out of the SGA itself.
+ */
+export function templateBakeTargets(
+  scope: 'vehicle' | 'all',
+  currentVehicleId: string,
+  faction: Faction,
+): string[] {
+  if (scope === 'vehicle') return [currentVehicleId]
+  return VEHICLES.filter(v => v.faction === faction).map(v => v.id)
 }
 
 /** Return the effective main decal id for a vehicle. */
