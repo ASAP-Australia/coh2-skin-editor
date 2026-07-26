@@ -1,0 +1,48 @@
+{
+ "results": [
+  {
+   "id": "tiger",
+   "faction": "german",
+   "status": "FAIL",
+   "meshes": 75,
+   "excludedCount": 54,
+   "hasMask": true,
+   "coveragePct": 92.539,
+   "leaks": 649,
+   "unmapped": []
+  },
+  {
+   "id": "halftrack",
+   "faction": "german",
+   "status": "FAIL",
+   "meshes": 5,
+   "excludedCount": 4,
+   "hasMask": true,
+   "coveragePct": 98.662,
+   "leaks": 1433,
+   "unmapped": []
+  },
+  {
+   "id": "halftrack",
+   "faction": "soviet",
+   "status": "FAIL",
+   "meshes": 4,
+   "excludedCount": 3,
+   "hasMask": true,
+   "coveragePct": 97.446,
+   "leaks": 3941,
+   "unmapped": []
+  },
+  {
+   "id": "churchill",
+   "faction": "british",
+   "status": "FAIL",
+   "meshes": 101,
+   "excludedCount": 58,
+   "hasMask": true,
+   "coveragePct": 95.098,
+   "leaks": 2752,
+   "unmapped": []
+  }
+ ]
+}

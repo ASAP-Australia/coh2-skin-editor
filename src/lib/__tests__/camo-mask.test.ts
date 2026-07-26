@@ -130,15 +130,17 @@ describe('buildCamoExclusionMask', () => {
   it('has >0 coverage over the excluded island and 0 over armor', () => {
     const SIZE = 256
     // Armor hull covers the top half (stored y in [0.5,1] → atlas rows [0,128)).
-    // Tracks cover the bottom half (stored y in [0,0.5] → atlas rows [128,256)).
+    // Track strip: stored y in [0,0.15] → atlas rows [217,256). Kept under
+    // MAX_FITTING_ATLAS_FRACTION (20%) — an island spanning half the atlas is
+    // what rule 4 now rejects as misclassified body geometry.
     const meshes = [
       rectMesh('geo_Hull', null, 0, 0.5, 1, 1),
-      rectMesh('geo_tread_left', null, 0, 0, 1, 0.5),
+      rectMesh('geo_tread_left', null, 0, 0, 1, 0.15),
     ]
     const mask = buildCamoExclusionMask(meshes, undefined, undefined, SIZE, 0)!
     expect(mask).not.toBeNull()
-    // Track region (bottom of atlas, py≈200) → opaque (excluded).
-    expect(alphaAt(mask, 128, 200)).toBeGreaterThan(0)
+    // Track region (bottom strip, py≈240) → opaque (excluded).
+    expect(alphaAt(mask, 128, 240)).toBeGreaterThan(0)
     // Armor region (top of atlas, py≈40) → transparent (kept).
     expect(alphaAt(mask, 128, 40)).toBe(0)
   })
@@ -164,12 +166,107 @@ describe('buildCamoExclusionMask', () => {
 // Compose semantics — camo then vanilla-restore leaves tracks vanilla.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// REGRESSION — the property that actually matters, and that was never pinned.
+//
+// A shipped P0 (2026-07-26) erased 88.7% of ARMOR camo on average across all
+// 61 vehicles — 55 of them above 50%, several at 100% — while this very suite
+// stayed green, because every test only asserted the mask did *something*.
+// These tests pin ARMOR PROTECTION, not mask existence.
+// See artifacts/e2e-plan/PLAN.md §2d and wiki coh2-camo-exclusion-mask.
+// ---------------------------------------------------------------------------
+
+describe('REGRESSION: the mask must never erase armor', () => {
+  const SIZE = 256
+  /** Fraction of the armor island that the mask covers (0 = perfect). */
+  function armorErasedFraction(
+    meshes: RgmMesh[],
+    armor: RgmMesh[],
+    vehicleId?: string,
+    faction?: Parameters<typeof buildCamoExclusionMask>[2],
+  ): number {
+    const mask = buildCamoExclusionMask(meshes, vehicleId, faction, SIZE, 0)
+    if (!mask) return 0 // nothing masked ⇒ no armor erased
+    const md = mask.getContext('2d')!.getImageData(0, 0, SIZE, SIZE).data
+    // rasterise armor alone for the reference island
+    const ac = document.createElement('canvas')
+    ac.width = ac.height = SIZE
+    const actx = ac.getContext('2d')!
+    actx.fillStyle = '#fff'
+    for (const m of armor) {
+      const uv = m.geometry.getAttribute('uv')!.array as ArrayLike<number>
+      const idx = m.geometry.getIndex()!.array as ArrayLike<number>
+      for (let t = 0; t + 2 < idx.length; t += 3) {
+        actx.beginPath()
+        for (let k = 0; k < 3; k++) {
+          const i = idx[t + k]
+          const x = uv[i * 2] * SIZE, y = (1 - uv[i * 2 + 1]) * SIZE
+          k === 0 ? actx.moveTo(x, y) : actx.lineTo(x, y)
+        }
+        actx.closePath(); actx.fill()
+      }
+    }
+    const ad = actx.getImageData(0, 0, SIZE, SIZE).data
+    let armorPx = 0, erased = 0
+    for (let i = 3; i < ad.length; i += 4) {
+      if (ad[i] < 250) continue
+      armorPx++
+      if (md[i] >= 250) erased++
+    }
+    return armorPx ? erased / armorPx : 0
+  }
+
+  it('WRECK submeshes that reuse the hull UVs must NOT erase armor', () => {
+    // This is the exact shape of the shipped bug: wreck geometry reuses the
+    // intact hull's UV layout, so masking `wreck` masked the hull itself.
+    const hull = rectMesh('geo_Hull', null, 0, 0.2, 1, 1)
+    const meshes = [
+      hull,
+      rectMesh('Wrecked_Hull', null, 0, 0.2, 1, 1),   // SAME UVs as the hull
+      rectMesh('Crushed_Mesh_01', null, 0, 0.2, 1, 1), // ditto
+    ]
+    expect(armorErasedFraction(meshes, [hull])).toBeLessThan(0.01)
+  })
+
+  it('TILING track UVs (outside [0,1]) must NOT erase armor', () => {
+    // Treads sample their own texture (<vehicle>_tread_dif.rgt / shared
+    // treads library) and legitimately carry UVs far outside [0,1].
+    const hull = rectMesh('geo_Hull', null, 0, 0.2, 1, 1)
+    const meshes = [hull, rectMesh('geo_tread_left', null, 0, -1.5, 1, 2.5)]
+    expect(armorErasedFraction(meshes, [hull])).toBeLessThan(0.01)
+  })
+
+  it('an "equipment" island spanning the atlas is misclassified body geometry', () => {
+    // churchill/geo_hullgun_01+02 each erased 38.2% of armor this way.
+    // MUST pass the real vehicle context: `geo_hullgun_01` is classified
+    // `equipment` by CAMO_VEHICLE_MAP, not by the regex patterns — without
+    // vehicleId this test exercises the fallback and passes even when the bug
+    // is present (verified: it did).
+    const hull = rectMesh('geo_Hull', null, 0, 0.2, 1, 1)
+    const meshes = [hull, rectMesh('geo_hullgun_01', null, 0, 0, 1, 1)]
+    expect(camoClassForMesh(meshes[1], 'churchill', 'british')).toBe('equipment')
+    expect(armorErasedFraction(meshes, [hull], 'churchill', 'british')).toBeLessThan(0.01)
+  })
+
+  it('a genuine small fitting IS still masked (fix must not disable the feature)', () => {
+    const hull = rectMesh('geo_Hull', null, 0, 0.3, 1, 1)
+    const meshes = [hull, rectMesh('geo_Wheel_L01', null, 0.1, 0.02, 0.4, 0.12)]
+    const mask = buildCamoExclusionMask(meshes, undefined, undefined, SIZE, 0)
+    expect(mask).not.toBeNull()
+    expect(alphaAt(mask!, Math.round(0.25 * SIZE), Math.round((1 - 0.07) * SIZE))).toBeGreaterThan(0)
+  })
+})
+
 describe('mask compose — excluded region stays vanilla', () => {
   it('restores vanilla over the excluded region after a camo overlay', () => {
     const SIZE = 128
     const meshes = [
       rectMesh('geo_Hull', null, 0, 0.5, 1, 1),      // top-half atlas = armor
-      rectMesh('geo_tread_left', null, 0, 0, 1, 0.5), // bottom-half = tracks
+      // A REALISTIC track island: a strip covering ~15% of the atlas.
+      // It must stay under MAX_FITTING_ATLAS_FRACTION (20%) — a "fitting"
+      // spanning half the atlas is exactly what rule 4 now rejects as
+      // misclassified body geometry (see camo-mask.ts masksMainDiffuse).
+      rectMesh('geo_tread_left', null, 0, 0, 1, 0.15),
     ]
     const mask = buildCamoExclusionMask(meshes, undefined, undefined, SIZE, 0)!
 
@@ -199,8 +296,8 @@ describe('mask compose — excluded region stays vanilla', () => {
     pctx.globalCompositeOperation = 'source-over'
     octx.drawImage(patch, 0, 0)
 
-    // Track region (bottom atlas, py≈100) = vanilla grey (100,100,100).
-    const track = octx.getImageData(64, 100, 1, 1).data
+    // Track region (bottom strip, py≈120 of 128) = vanilla grey (100,100,100).
+    const track = octx.getImageData(64, 120, 1, 1).data
     expect(track[0]).toBe(100)
     expect(track[1]).toBe(100)
     expect(track[2]).toBe(100)

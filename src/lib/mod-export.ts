@@ -121,6 +121,13 @@ export function textureBaseNamesFor(vehicleId: string): string[] {
     sdkfz_222:           ['sdkfz221', 'sdkfz_222'],
     panther_ausf_g:      ['panther', 'panther_ausf_g'],
     halftrack:           ['halftrack', 'halftrack_sdkfz_251'],
+    // Relic's '_page' base-texture convention. Found 2026-07-24 by the Layer A
+    // verifier, which could not resolve a vanilla _dif for either vehicle.
+    // This table also feeds the EXPORT pipeline, so before this fix neither
+    // vehicle could be skinned at all (verified paths in
+    // artifacts/e2e-plan/all-dif-paths.txt).
+    sherman_m4a3:        ['sherman_page', 'sherman_m4a3'],
+    aec_armoured_car:    ['aec_armouredcar_page', 'aec_armoured_car'],
     // Folder-alias vehicles: their basename matches the real folder name, not vSpec.id
     centaur:             ['centaur_aa'],
     t_34_85:             ['t_34_85'],       // basename is t_34_85, folder is t34_85

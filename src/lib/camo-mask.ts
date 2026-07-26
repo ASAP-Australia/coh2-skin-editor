@@ -234,6 +234,72 @@ export function isExcludedSubmesh(
 /** Default mask resolution — matches the 2048² diffuse atlas. */
 export const MASK_SIZE = 2048
 
+/** Max fraction of the atlas a genuine fitting may occupy (see rule 4). */
+const MAX_FITTING_ATLAS_FRACTION = 0.20
+/** UV probe resolution — coverage is a ratio, so probe cheaply (~16x faster than 2048²). */
+const UV_PROBE_SIZE = 512
+
+/**
+ * Does this submesh actually sample the MAIN vehicle diffuse, such that masking
+ * it protects real texels?  All four must hold:
+ *
+ *  1. it is classified as excluded (tracks / wheels / equipment / wreck), AND
+ *  2. it is NOT `wreck` — wreck geometry REUSES the intact hull's UV layout, so
+ *     masking it masks the hull itself. This was the primary bug: 21 wreck
+ *     submeshes blanketed 91.6% of the Tiger's atlas, and across the fleet the
+ *     mask erased 88.7% of ARMOR on average (55/61 vehicles >50%), AND
+ *  3. its UVs stay inside [0,1] — tiling UVs mean the submesh samples its own
+ *     texture, not the atlas. Treads use `<vehicle>_tread_dif.rgt` or the shared
+ *     library `art/armies/shared_textures/treads/*` (677 such paths exist); a
+ *     mesh sampling the 1:1 atlas cannot have UVs outside [0,1], AND
+ *  4. its own UV island covers < 20% of the atlas — a genuine fitting never
+ *     spans the texture; anything that does is misclassified body geometry.
+ *     This caught churchill/geo_hullgun_01+02, m36_tank_destroyer, sdkfz_250
+ *     and us6_truck automatically, without naming them.
+ *
+ * Measured effect: mean armor erased 88.7% -> 0.16%; vehicles >5%: 59 -> 1.
+ * Evidence + full 61-vehicle measurements: artifacts/e2e-plan/PLAN.md §2d-2e.
+ */
+function masksMainDiffuse(
+  mesh: RgmMesh,
+  vehicleId: string | undefined,
+  faction: Faction | undefined,
+): boolean {
+  // 1 — must be an excluded class at all
+  if (!isExcludedSubmesh(mesh, vehicleId, faction)) return false
+  // 2 — wreck shares the intact hull's UVs; masking it masks the hull
+  if (vehicleId && camoClassForMesh(mesh, vehicleId, faction) === 'wreck') return false
+
+  const uvAttr = mesh.geometry?.getAttribute?.('uv')
+  if (!uvAttr) return false
+  const uv = uvAttr.array as ArrayLike<number>
+
+  // 3 — reject tiling UVs (submesh samples its own texture)
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity
+  for (let i = 0; i < uvAttr.count; i++) {
+    const u = uv[i * 2], v = uv[i * 2 + 1]
+    if (u < u0) u0 = u
+    if (u > u1) u1 = u
+    if (v < v0) v0 = v
+    if (v > v1) v1 = v
+  }
+  const TOL = 0.05
+  if (!(u0 >= -TOL && u1 <= 1 + TOL && v0 >= -TOL && v1 <= 1 + TOL)) return false
+
+  // 4 — reject islands that span the atlas (misclassified body geometry)
+  const probe = document.createElement('canvas')
+  probe.width = probe.height = UV_PROBE_SIZE
+  const pctx = probe.getContext('2d')
+  if (!pctx) return true // cannot probe → keep (previous behaviour)
+  pctx.clearRect(0, 0, UV_PROBE_SIZE, UV_PROBE_SIZE)
+  pctx.fillStyle = '#ffffff'
+  if (!rasterizeUvTriangles(pctx, mesh.geometry, UV_PROBE_SIZE)) return false
+  const d = pctx.getImageData(0, 0, UV_PROBE_SIZE, UV_PROBE_SIZE).data
+  let opaque = 0
+  for (let i = 3; i < d.length; i += 4) if (d[i] >= 250) opaque++
+  return opaque / (UV_PROBE_SIZE * UV_PROBE_SIZE) < MAX_FITTING_ATLAS_FRACTION
+}
+
 /**
  * Build a 2048² EXCLUSION mask canvas: opaque white where camo must be erased
  * (tracks / wheels / running gear / wreck / stowed-equipment UV islands),
@@ -256,7 +322,7 @@ export function buildCamoExclusionMask(
   size: number = MASK_SIZE,
   dilatePx = 4,
 ): HTMLCanvasElement | null {
-  const excluded = meshes.filter(m => isExcludedSubmesh(m, vehicleId, faction))
+  const excluded = meshes.filter(m => masksMainDiffuse(m, vehicleId, faction))
   if (excluded.length === 0) return null
 
   const canvas = document.createElement('canvas')

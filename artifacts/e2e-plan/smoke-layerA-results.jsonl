@@ -1,0 +1,5 @@
+{"id":"tiger","mean":0.16024520104077383,"p50":0,"p99":3,"p999":6,"max":9,"over24":0,"over24Interior":0,"interiorPct":0,"w":2048,"fourCC":"DXT1"}
+{"id":"king_tiger_sdkfz_182","mean":0.15196425517114193,"p50":0,"p99":5,"p999":6,"max":9,"over24":0,"over24Interior":0,"interiorPct":0,"w":2048,"fourCC":"DXT1"}
+{"id":"is2m_heavy_tank","mean":0.28971366297541684,"p50":0,"p99":6,"p999":9,"max":17,"over24":0,"over24Interior":0,"interiorPct":0,"w":2048,"fourCC":"DXT1"}
+{"id":"m26_pershing","mean":0.2135729158007088,"p50":0,"p99":5,"p999":6,"max":17,"over24":0,"over24Interior":0,"interiorPct":0,"w":2048,"fourCC":"DXT1"}
+{"id":"churchill","mean":0.738377770706784,"p50":0,"p99":6,"p999":8,"max":66,"over24":1206,"over24Interior":1199,"interiorPct":99.4195688225539,"w":2048,"fourCC":"DXT1"}

@@ -1,0 +1,429 @@
+[
+ {
+  "id": "tiger",
+  "faction": "german",
+  "before": 92.3,
+  "after": 1.4,
+  "maskPct": 8.89
+ },
+ {
+  "id": "elefant",
+  "faction": "german",
+  "before": 98.5,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "brummbar",
+  "faction": "german",
+  "before": 97.3,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "stug_iii",
+  "faction": "german",
+  "before": 93.7,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "ostwind_flak_panzer",
+  "faction": "german",
+  "before": 99.4,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "panzerwerfer",
+  "faction": "german",
+  "before": 100,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "halftrack",
+  "faction": "german",
+  "before": 99.9,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "sdkfz_250",
+  "faction": "german",
+  "before": 100,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "sdkfz_222",
+  "faction": "german",
+  "before": 47.9,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "opel_blitz",
+  "faction": "german",
+  "before": 64.7,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "king_tiger_sdkfz_182",
+  "faction": "west_german",
+  "before": 98,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "jagdtiger",
+  "faction": "west_german",
+  "before": 98.2,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "sturmtiger",
+  "faction": "west_german",
+  "before": 96.6,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "panther_ausf_g",
+  "faction": "west_german",
+  "before": 99.4,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "jagdpanzer_iv_sdkfz_162",
+  "faction": "west_german",
+  "before": 97.9,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "panzer_iv_sdkfz_ausf_i",
+  "faction": "west_german",
+  "before": 97.8,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "hetzer",
+  "faction": "west_german",
+  "before": 98.8,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "puma_sdkfz_234",
+  "faction": "west_german",
+  "before": 53.3,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "panzer_ii_luchs_sdkfz_123",
+  "faction": "west_german",
+  "before": 96.2,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "kubelwagen",
+  "faction": "west_german",
+  "before": 41.1,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "halftrack_sdkfz_251",
+  "faction": "west_german",
+  "before": 97.1,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "halftrack_sdkfz_251_flak",
+  "faction": "west_german",
+  "before": 96.8,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "halftrack_sdkfz_251_infrared",
+  "faction": "west_german",
+  "before": 96.5,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "is2m_heavy_tank",
+  "faction": "soviet",
+  "before": 98.9,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "isu152",
+  "faction": "soviet",
+  "before": 98.6,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "kv1_heavy_tank",
+  "faction": "soviet",
+  "before": 98.4,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "kv2_heavy_tank",
+  "faction": "soviet",
+  "before": 98.3,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "t34_76",
+  "faction": "soviet",
+  "before": 99,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "t_34_85",
+  "faction": "soviet",
+  "before": 97.4,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "t70m_light_tank",
+  "faction": "soviet",
+  "before": 95.5,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "su85",
+  "faction": "soviet",
+  "before": 97.1,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "su-76m",
+  "faction": "soviet",
+  "before": 99.1,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m3a1_scout_car",
+  "faction": "soviet",
+  "before": 50.8,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "halftrack",
+  "faction": "soviet",
+  "before": 97.8,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "us6_truck",
+  "faction": "soviet",
+  "before": 82.1,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m26_pershing",
+  "faction": "aef",
+  "before": 94.9,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m4a3e8_sherman_easy_8",
+  "faction": "aef",
+  "before": 96.3,
+  "after": 0.3,
+  "maskPct": 3.03
+ },
+ {
+  "id": "m4a3_sherman_76mm",
+  "faction": "aef",
+  "before": 98.4,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m4a1_sherman_calliope",
+  "faction": "aef",
+  "before": 97.5,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m10_tank_destroyer",
+  "faction": "aef",
+  "before": 98,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m36_tank_destroyer",
+  "faction": "aef",
+  "before": 100,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m5a1_stuart",
+  "faction": "aef",
+  "before": 98,
+  "after": 0,
+  "maskPct": 4.47
+ },
+ {
+  "id": "m8_greyhound",
+  "faction": "aef",
+  "before": 61.6,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m7b1_priest",
+  "faction": "aef",
+  "before": 98.5,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m3_halftrack",
+  "faction": "aef",
+  "before": 96.4,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m15a1_aa_halftrack",
+  "faction": "aef",
+  "before": 93.3,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m8a1_hmc",
+  "faction": "aef",
+  "before": 97.7,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m20_utility_car",
+  "faction": "aef",
+  "before": 29.8,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "m21_mortar_halftrack",
+  "faction": "aef",
+  "before": 94.3,
+  "after": 7.8,
+  "maskPct": 7.11
+ },
+ {
+  "id": "dodge_wc51",
+  "faction": "aef",
+  "before": 45.3,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "dodge_wc54_ambulance",
+  "faction": "aef",
+  "before": 32.3,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "sherman_m4a3",
+  "faction": "aef",
+  "before": 99.7,
+  "after": 0.2,
+  "maskPct": 2.69
+ },
+ {
+  "id": "churchill",
+  "faction": "british",
+  "before": 94.9,
+  "after": 0,
+  "maskPct": 2.06
+ },
+ {
+  "id": "comet",
+  "faction": "british",
+  "before": 96.9,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "cromwell",
+  "faction": "british",
+  "before": 93.9,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "centaur",
+  "faction": "british",
+  "before": 96.1,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "sherman_firefly",
+  "faction": "british",
+  "before": 98.1,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "valentine",
+  "faction": "british",
+  "before": 99.8,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "sexton",
+  "faction": "british",
+  "before": 99.6,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "aec_armoured_car",
+  "faction": "british",
+  "before": 22.4,
+  "after": 0,
+  "maskPct": 0
+ },
+ {
+  "id": "bren_carrier",
+  "faction": "british",
+  "before": 100,
+  "after": 0,
+  "maskPct": 0
+ }
+]
