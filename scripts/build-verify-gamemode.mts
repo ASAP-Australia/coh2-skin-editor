@@ -140,7 +140,7 @@ dependencies =
 // still leaves the grid + camera usable.
 // ---------------------------------------------------------------------------
 const SCAR_TEXT = `-- ============================================================================
--- ASAP Verify -- in-game skin/decal verification gamemode  (GEN12)
+-- ASAP Verify -- in-game skin/decal verification gamemode  (GEN13)
 -- Spawns a grid of player-1 German vehicles, reveals FOW, frames + cycles the
 -- camera so an external harness can screenshot the equipped skin/decal on every
 -- vehicle class with zero input.
@@ -219,8 +219,20 @@ local HERO_HOLD_DELAY = 3    -- seconds after setup before the camera locks on t
 -- so at least one hull SIDE (where the balkenkreuz is baked, per TEXCOORD1) squares
 -- to CoH2's fixed camera. Reuses HERO_SBP_CANDIDATES (real, verified blueprints).
 -- Three cells at asap.origin + (PHOTO_OFFSET_X, Z) for Z in PHOTO_OFFSETS_Z:
-local PHOTO_OFFSET_X   = 14           -- metres +X of the grid origin (open ground near the grid)
-local PHOTO_OFFSETS_Z  = { -10, 0, 10 } -- three cells along world Z: hero 1 / 2(middle) / 3
+-- GEN13 (2026-07-26) -- STOP FIGHTING THE CAMERA.
+-- Five separate approaches to MOVE the camera onto a distant hero have failed:
+-- SCAR camera tours (fights manual control), wheel zoom (drifts off target),
+-- minimap jump (mapping is not 1:1), portrait double-click (hits abilities),
+-- and the -dev console (confirmed present in the process cmdline, but no
+-- console appears on any key combo -- see wiki coh2-harness-driving).
+-- INVERSION: instead of moving the camera to the tank, spawn the tank where the
+-- camera ALREADY IS. At match start CoH2 centres the view on the player's
+-- starting position, which is exactly asap.origin. Spawning ~6 m off origin
+-- puts the heroes in frame with ZERO camera movement required; the Gen9 pin
+-- then only has to refine framing rather than find the subject.
+-- +6 X clears the HQ footprint; ±6 Z spaces three hulls without overlap.
+local PHOTO_OFFSET_X   = 6            -- metres +X of origin: clear the HQ, stay under the default camera
+local PHOTO_OFFSETS_Z  = { -6, 0, 6 } -- three cells along world Z: hero 1 / 2(middle) / 3
 local PHOTO_CAM_HEIGHT = 14           -- GEN10/12: low so the middle tank fills the frame
 local PHOTO_CAM_DECLIN = 22           -- GEN10/12: near-horizontal -> look at the SIDE, not the top
 
@@ -696,7 +708,7 @@ function ASAPVerify_Setup()
    --     near the grid (origin +14, z={-10,0,+10}), each facing a different way, so a
    --     screenshot frames the middle hero's hull-side balkenkreuz with the trio close.
    safe(function() ASAPVerify_SpawnPhotoHero() end)
-   safe(function() PrintOnScreen("GEN12 TRIPLE PHOTO HERO") end)
+   safe(function() PrintOnScreen("GEN13 HEROES AT CAMERA") end)
 
    -- 6) Brief wide-grid establishing shot (deferred 1.5 s so units settle).
    safe(function() Rule_AddOneShot(ASAPVerify_FrameCamera, 1.5, 1000) end)
