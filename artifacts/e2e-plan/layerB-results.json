@@ -1,47 +1,614 @@
 {
+ "gate": 0.15,
  "results": [
   {
    "id": "tiger",
    "faction": "german",
-   "status": "FAIL",
+   "status": "PASS",
    "meshes": 75,
-   "excludedCount": 54,
-   "hasMask": true,
-   "coveragePct": 92.539,
-   "leaks": 649,
+   "armorErasedPct": 1.443,
+   "armorErasedDilatedPct": 1.717,
+   "maskPct": 10.522,
+   "unmapped": []
+  },
+  {
+   "id": "elefant",
+   "faction": "german",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "brummbar",
+   "faction": "german",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "stug_iii",
+   "faction": "german",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "ostwind_flak_panzer",
+   "faction": "german",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "panzerwerfer",
+   "faction": "german",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
    "unmapped": []
   },
   {
    "id": "halftrack",
    "faction": "german",
-   "status": "FAIL",
+   "status": "PASS",
    "meshes": 5,
-   "excludedCount": 4,
-   "hasMask": true,
-   "coveragePct": 98.662,
-   "leaks": 1433,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "sdkfz_250",
+   "faction": "german",
+   "status": "PASS",
+   "meshes": 6,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "sdkfz_222",
+   "faction": "german",
+   "status": "PASS",
+   "meshes": 2,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "opel_blitz",
+   "faction": "german",
+   "status": "PASS",
+   "meshes": 2,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "king_tiger_sdkfz_182",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "jagdtiger",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "sturmtiger",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "panther_ausf_g",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "jagdpanzer_iv_sdkfz_162",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "panzer_iv_sdkfz_ausf_i",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "hetzer",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "puma_sdkfz_234",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 2,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "panzer_ii_luchs_sdkfz_123",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "kubelwagen",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 2,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "halftrack_sdkfz_251",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "halftrack_sdkfz_251_flak",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "halftrack_sdkfz_251_infrared",
+   "faction": "west_german",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "is2m_heavy_tank",
+   "faction": "soviet",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "isu152",
+   "faction": "soviet",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "kv1_heavy_tank",
+   "faction": "soviet",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "kv2_heavy_tank",
+   "faction": "soviet",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "t34_76",
+   "faction": "soviet",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "t_34_85",
+   "faction": "soviet",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "t70m_light_tank",
+   "faction": "soviet",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "su85",
+   "faction": "soviet",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "su-76m",
+   "faction": "soviet",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m3a1_scout_car",
+   "faction": "soviet",
+   "status": "PASS",
+   "meshes": 2,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
    "unmapped": []
   },
   {
    "id": "halftrack",
    "faction": "soviet",
-   "status": "FAIL",
+   "status": "PASS",
    "meshes": 4,
-   "excludedCount": 3,
-   "hasMask": true,
-   "coveragePct": 97.446,
-   "leaks": 3941,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "us6_truck",
+   "faction": "soviet",
+   "status": "PASS",
+   "meshes": 3,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m26_pershing",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m4a3e8_sherman_easy_8",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 65,
+   "armorErasedPct": 0.317,
+   "armorErasedDilatedPct": 0.485,
+   "maskPct": 3.889,
+   "unmapped": []
+  },
+  {
+   "id": "m4a3_sherman_76mm",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m4a1_sherman_calliope",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m10_tank_destroyer",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m36_tank_destroyer",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 6,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m5a1_stuart",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 59,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0.01,
+   "maskPct": 5.812,
+   "unmapped": []
+  },
+  {
+   "id": "m8_greyhound",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 2,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m7b1_priest",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m3_halftrack",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m15a1_aa_halftrack",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m8a1_hmc",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m20_utility_car",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 2,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "m21_mortar_halftrack",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 7.799,
+   "armorErasedDilatedPct": 8.635,
+   "maskPct": 7.884,
+   "unmapped": []
+  },
+  {
+   "id": "dodge_wc51",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 2,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "dodge_wc54_ambulance",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 2,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "sherman_m4a3",
+   "faction": "aef",
+   "status": "PASS",
+   "meshes": 88,
+   "armorErasedPct": 0.159,
+   "armorErasedDilatedPct": 0.173,
+   "maskPct": 3.446,
    "unmapped": []
   },
   {
    "id": "churchill",
    "faction": "british",
-   "status": "FAIL",
+   "status": "PASS",
    "meshes": 101,
-   "excludedCount": 58,
-   "hasMask": true,
-   "coveragePct": 95.098,
-   "leaks": 2752,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0.001,
+   "maskPct": 3.047,
+   "unmapped": []
+  },
+  {
+   "id": "comet",
+   "faction": "british",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "cromwell",
+   "faction": "british",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "centaur",
+   "faction": "british",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "sherman_firefly",
+   "faction": "british",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "valentine",
+   "faction": "british",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "sexton",
+   "faction": "british",
+   "status": "PASS",
+   "meshes": 5,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "aec_armoured_car",
+   "faction": "british",
+   "status": "PASS",
+   "meshes": 2,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
+   "unmapped": []
+  },
+  {
+   "id": "bren_carrier",
+   "faction": "british",
+   "status": "PASS",
+   "meshes": 4,
+   "armorErasedPct": 0,
+   "armorErasedDilatedPct": 0,
+   "maskPct": 0,
    "unmapped": []
   }
  ]
