@@ -663,9 +663,27 @@ function createWindow() {
   ipcMain.handle('steam:workshop:get-mine', async () => {
     return await getMyWorkshopItems()
   })
-  ipcMain.handle('steam:workshop:delete', async (_e, workshopId: string) => {
-    return await deleteWorkshopItem(workshopId)
-  })
+  // Deleting a published Workshop item is IRREVERSIBLE and remote — it removes
+  // the listing from the user's Steam account, and nothing here can undo it.
+  // The channel was reachable from the renderer with nothing but an id, and had
+  // ZERO callers in src/, i.e. an unguarded destructive operation exposed for
+  // no current consumer.
+  //
+  // Requires an explicit confirmation token that must match the id being
+  // deleted, so an accidental or malformed invocation cannot destroy a listing:
+  // a caller has to state, specifically, which item it means.
+  ipcMain.handle(
+    'steam:workshop:delete',
+    async (_e, workshopId: string, confirmToken?: string) => {
+      if (confirmToken !== `DELETE ${workshopId}`) {
+        throw new Error(
+          `[workshop:delete] refused — irreversible remote deletion requires an explicit confirmation token. ` +
+            `Pass exactly "DELETE ${workshopId}" as the second argument to confirm.`,
+        )
+      }
+      return await deleteWorkshopItem(workshopId)
+    },
+  )
 
   // ── Workshop content staging dir ────────────────────────────────────
   // Creates a fresh temporary directory for staging Workshop content before

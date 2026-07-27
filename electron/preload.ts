@@ -335,8 +335,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ): Promise<UpdateWorkshopResult> =>
         ipcRenderer.invoke('steam:workshop:update', workshopId, input),
       getMine: (): Promise<MyWorkshopItem[]> => ipcRenderer.invoke('steam:workshop:get-mine'),
-      delete: (workshopId: string): Promise<DeleteWorkshopResult> =>
-        ipcRenderer.invoke('steam:workshop:delete', workshopId),
+      /**
+       * Delete a published Workshop item. IRREVERSIBLE and remote.
+       *
+       * `confirmToken` must be exactly `DELETE <workshopId>`. The main process
+       * rejects anything else, so an accidental call — or one with a mismatched
+       * id — cannot destroy a listing.
+       */
+      delete: (workshopId: string, confirmToken: string): Promise<DeleteWorkshopResult> =>
+        ipcRenderer.invoke('steam:workshop:delete', workshopId, confirmToken),
     },
   },
 })
