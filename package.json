@@ -33,7 +33,10 @@
     "knip": "knip",
     "lockfile:lint": "lockfile-lint",
     "bench": "vitest bench --run",
-    "mutate": "stryker run"
+    "mutate": "stryker run",
+    "ui:capture": "npm run build && npm run electron:compile && UI_CAPTURE=1 electron .",
+    "ui:visual": "npx tsx --tsconfig tsconfig.node.json scripts/verify-ui-visual.mts",
+    "ui:baseline": "npx tsx --tsconfig tsconfig.node.json scripts/verify-ui-visual.mts --update"
   },
   "size-limit": [
     {
