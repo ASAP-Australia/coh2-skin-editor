@@ -11,7 +11,7 @@ import {
   Fog,
   Group,
   Mesh,
-  CylinderGeometry,
+  BoxGeometry,
   PlaneGeometry,
   SphereGeometry,
   MeshStandardMaterial,
@@ -1764,7 +1764,8 @@ export default function Viewport({
   // Grass-textured ground slab
   //
   // Replaces the former CoH2 map / heightmap approach with a small "podium"
-  // slab (BoxGeometry 10×0.2×10) wrapped with a CoH2 grass diffuse RGT
+  // square terrain patch (BoxGeometry, side = 2 x SLAB_BUILT_RADIUS) wrapped
+  // with a CoH2 grass diffuse RGT
   // from ArtEnvironment.sga.  The slab top sits exactly at world Y=0 so
   // the vehicle (also at Y≈0) rests on it naturally.
   //
@@ -1832,9 +1833,16 @@ export default function Viewport({
     // real RGT grass + CC0 dirt asynchronously and hot-swap them into the
     // live materials when ready. Result: the pad is always present instantly.
     //
-    // Circular plinth. CylinderGeometry group order is: 0 = lateral side,
-    // 1 = top cap, 2 = bottom cap. The top cap gets the grass texture; the
-    // curved side + bottom get tiled dirt.
+    // SQUARE terrain patch (was a circular CylinderGeometry plinth). A disc
+    // reads as a museum display podium; a square slab reads as a piece of
+    // ground cut out of a battlefield, which is what this is meant to be.
+    //
+    // BoxGeometry group order is one material per face:
+    //   0 = +X, 1 = -X, 2 = +Y (top), 3 = -Y (bottom), 4 = +Z, 5 = -Z
+    // so the top face takes the terrain texture and the four sides + bottom
+    // take the dirt cross-section. (The old CylinderGeometry order was
+    // [side, top, bottom] — only 3 entries. Nothing else in this file indexes
+    // into the array, so the change is local.)
     //
     // The geometry is AUTHORED at SLAB_BUILT_RADIUS and then rescaled in X/Z
     // per vehicle by slabResizeRef (installed below) so the pad hugs each
@@ -1845,7 +1853,10 @@ export default function Viewport({
     // served the model.
     const SLAB_RADIUS = SLAB_BUILT_RADIUS
     const SLAB_HEIGHT = 0.2
-    const slabGeo = new CylinderGeometry(SLAB_RADIUS, SLAB_RADIUS, SLAB_HEIGHT, 64)
+    // Side length = the old diameter, so the patch covers at least as much
+    // ground as the disc did and the per-vehicle X/Z rescale below is
+    // unchanged (it scales the MESH, not the authored geometry).
+    const slabGeo = new BoxGeometry(SLAB_RADIUS * 2, SLAB_HEIGHT, SLAB_RADIUS * 2)
 
     // Procedural fallback grass top — no SGA dependency, builds in <1ms.
     const fallbackTop = createGroundTexture()
@@ -1874,8 +1885,10 @@ export default function Viewport({
       roughness: 1.0,
       metalness: 0,
     })
-    // CylinderGeometry group order: 0 = side, 1 = top cap, 2 = bottom cap.
-    const slabMaterials: MeshStandardMaterial[] = [slabMatEdge, slabMatTop, slabMatBot]
+    // BoxGeometry group order: +X, -X, +Y(top), -Y(bottom), +Z, -Z.
+    const slabMaterials: MeshStandardMaterial[] = [
+      slabMatEdge, slabMatEdge, slabMatTop, slabMatBot, slabMatEdge, slabMatEdge,
+    ]
 
     const slab = new Mesh(slabGeo, slabMaterials)
     slab.position.y = -0.1
@@ -1893,8 +1906,8 @@ export default function Viewport({
     // ── Per-vehicle pad resize ────────────────────────────────────────────
     // The slab geometry is authored at SLAB_RADIUS; we scale the MESH in X/Z
     // so the pad hugs each vehicle's footprint. `topUvRepeat` tracks the grass
-    // top-cap UV repeat that keeps texel density constant as the pad grows —
-    // the CylinderGeometry top cap maps UV 0..1 across its diameter, so world
+    // top-face UV repeat that keeps texel density constant as the pad grows —
+    // the BoxGeometry top face maps UV 0..1 across its full width, so world
     // metres per UV grows linearly with the mesh scale; setting repeat = scale
     // holds the grass patch size fixed on the ground. Held here (captured by
     // the season-swap + async hot-swap below) so every map that lands on the
