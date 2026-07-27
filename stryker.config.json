@@ -1,0 +1,71 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": [
+    "Mutation testing — the only mechanical answer to 'can this test actually fail?'.",
+    "",
+    "WHY: a regression test in this repo once passed BOTH before and after the bug was",
+    "reintroduced, because it lacked the context that triggered it. Nothing in a normal",
+    "toolchain detects that. Stryker rewrites production code one mutant at a time and",
+    "re-runs the tests; a SURVIVING mutant is a change to shipped behaviour that no test",
+    "objected to — i.e. a test that cannot fail.",
+    "",
+    "SCOPE: deliberately narrow. These are the files where byte-correctness is",
+    "load-bearing — if a bit is wrong here, CoH2 rejects or misrenders the output, and no",
+    "amount of UI testing catches it. Pointing Stryker at all 126 test files would take",
+    "hours and drown the signal.",
+    "",
+    "coverageAnalysis 'perTest' is what makes this affordable: Stryker runs only the tests",
+    "that actually cover the mutated line, instead of the full 41 s suite per mutant."
+  ],
+  "_ignoreComment": [
+    "Stryker copies the project into a sandbox per test-runner process. Without these",
+    "exclusions it walks 52,774 files and dies on training/.venv/lib64 — a SYMLINKED",
+    "DIRECTORY, which its copyfile call cannot handle (EISDIR).",
+    "artifacts/ is ~1.8 GB and release/ holds 150 MB AppImages; copying either four times",
+    "over is pure waste. None of this is needed to run the codec tests."
+  ],
+  "ignorePatterns": [
+    "training",
+    "artifacts",
+    "release",
+    "dist",
+    "dist-electron",
+    "out",
+    "native",
+    ".git",
+    ".stryker-tmp",
+    "e2e",
+    "playwright-report",
+    "test-results",
+    "**/*.sga",
+    "**/*.dds",
+    "**/*.AppImage"
+  ],
+  "packageManager": "npm",
+  "testRunner": "vitest",
+  "reporters": [
+    "html",
+    "clear-text",
+    "progress"
+  ],
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "src/lib/bc-encode.ts",
+    "src/lib/bc-decode.ts"
+  ],
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": null
+  },
+  "timeoutMS": 60000,
+  "concurrency": 4,
+  "htmlReporter": {
+    "fileName": "artifacts/stryker/mutation-report.html"
+  },
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": true,
+  "vitest": {
+    "configFile": "vitest.stryker.config.ts"
+  }
+}

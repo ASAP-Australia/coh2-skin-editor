@@ -32,7 +32,8 @@
     "e2e": "playwright test",
     "knip": "knip",
     "lockfile:lint": "lockfile-lint",
-    "bench": "vitest bench --run"
+    "bench": "vitest bench --run",
+    "mutate": "stryker run"
   },
   "size-limit": [
     {
@@ -116,6 +117,8 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@playwright/test": "^1.60.0",
     "@size-limit/file": "^12.1.0",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@tailwindcss/vite": "^4.2.4",
     "@types/node": "^24.12.2",
     "@types/pako": "^2.0.4",
