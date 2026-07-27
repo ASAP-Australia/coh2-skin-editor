@@ -80,7 +80,7 @@ import {
   type Decal,
 } from '@/lib/decal-pack-project'
 import { rasteriseDecal, decodeSourceImage } from '@/lib/decal-pack-export'
-import { scheduleLiveSync, useLiveSync } from '@/lib/live-sync'
+import { liveSyncTooltip, scheduleLiveSync, useLiveSync } from '@/lib/live-sync'
 import { writeClipboard, readClipboard } from '@/lib/editor-clipboard'
 import { INSIGNIA_LIBRARY, type InsigniaEntry } from '@/lib/insignia-library'
 import HexColorInput from '@/components/editor-primitives/HexColorInput'
@@ -341,9 +341,9 @@ export default function DecalPackEditor({ project: initialProject, onBack, insta
   const [packNameEditOpen, setPackNameEditOpen] = useState(false)
   // ── Live Sync state (for title pill inline icon) ───────────────────────
   const sync = useLiveSync()
-  const liveSyncTitle = sync.enabled
-    ? `Click to rename — Live Sync: ${sync.reason}`
-    : 'Click to rename — Live Sync is off'
+  // Includes the equip step once synced — "Synced" alone reads as "done", but
+  // CoH2 will not show a skin until it is EQUIPPED (see EQUIP_HINT).
+  const liveSyncTitle = liveSyncTooltip(sync.enabled, sync.reason, sync.state)
   const liveSyncAriaLabel = sync.enabled
     ? `Pack name — click to rename. Live Sync: ${sync.reason}`
     : 'Pack name — click to rename. Live Sync is off'

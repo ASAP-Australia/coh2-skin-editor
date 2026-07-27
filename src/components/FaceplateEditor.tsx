@@ -41,7 +41,7 @@ import { Stage, Layer, Image as KonvaImage, Text as KonvaText, Rect, Ellipse, Tr
 import Konva from 'konva'
 import type { Filter as KonvaFilter } from 'konva/lib/Node'
 import { useHistoryEngine } from '@/lib/editor-history'
-import { scheduleLiveSync, useLiveSync } from '@/lib/live-sync'
+import { liveSyncTooltip, scheduleLiveSync, useLiveSync } from '@/lib/live-sync'
 import {
   type Coh2FaceplateProject,
   type FaceplateLayer,
@@ -266,9 +266,9 @@ export default function FaceplateEditor({ project: initialProject, onBack }: Pro
   const [packNameEditOpen, setPackNameEditOpen] = useState(false)
   // ── Live Sync state (for title pill inline icon) ───────────────────────
   const sync = useLiveSync()
-  const liveSyncTitle = sync.enabled
-    ? `Click to rename — Live Sync: ${sync.reason}`
-    : 'Click to rename — Live Sync is off'
+  // Includes the equip step once synced — "Synced" alone reads as "done", but
+  // CoH2 will not show a skin until it is EQUIPPED (see EQUIP_HINT).
+  const liveSyncTitle = liveSyncTooltip(sync.enabled, sync.reason, sync.state)
   const liveSyncAriaLabel = sync.enabled
     ? `Project name — click to rename. Live Sync: ${sync.reason}`
     : 'Project name — click to rename. Live Sync is off'

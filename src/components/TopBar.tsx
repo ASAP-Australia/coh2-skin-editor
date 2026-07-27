@@ -60,7 +60,7 @@ import EditorTitlePill from '@/components/editor-primitives/EditorTitlePill'
 import { SlotIconGrid } from '@/components/SlotIconGrid'
 import { EditorHomeButton } from '@/components/editor-primitives'
 import { EDITOR_ACCENT } from '@/components/editor-primitives/tokens'
-import { useLiveSync } from '@/lib/live-sync'
+import { liveSyncTooltip, useLiveSync } from '@/lib/live-sync'
 
 type PanelId = 'view' | 'decals' | 'reference' | 'export' | 'parts' | 'camo' | 'scene' | 'brush'
 
@@ -164,9 +164,9 @@ export default function TopBar(p: Props) {
 
   // ── Centered title pill state ─────────────────────────────────────────
   const sync = useLiveSync()
-  const liveSyncTitle = sync.enabled
-    ? `Click to rename — Live Sync: ${sync.reason}`
-    : 'Click to rename — Live Sync is off'
+  // Includes the equip step once synced — "Synced" alone reads as "done", but
+  // CoH2 will not show a skin until it is EQUIPPED (see EQUIP_HINT).
+  const liveSyncTitle = liveSyncTooltip(sync.enabled, sync.reason, sync.state)
   const liveSyncAriaLabel = sync.enabled
     ? `Pack name — click to rename. Live Sync: ${sync.reason}`
     : 'Pack name — click to rename. Live Sync is off'

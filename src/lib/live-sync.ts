@@ -129,6 +129,38 @@ function freshnessLabel(syncedAt: number): string {
   return `Synced ${mins} min ago`
 }
 
+/**
+ * The step Live Sync CANNOT do for you.
+ *
+ * "Synced" means the pack has been written into the CoH2 mods folder — that is
+ * genuinely all this app can automate. CoH2 will NOT show a skin just because
+ * it is installed: it must also be EQUIPPED, and the equipped loadout lives
+ * server-side in an encrypted blob, so nothing local can set it.
+ *
+ * Verified 2026-07-27: a skin built by this app was installed into
+ * mods/skins/ and a match was started. The pack is byte-structurally identical
+ * to third-party skins the engine renders (same
+ * art/armies/<faction>/vehicles/<id>/skins/<modGuid>_<season>/ layout), yet the
+ * vehicles rendered in their default camo — because nothing had equipped it.
+ *
+ * Without this hint a user reasonably concludes the app is broken, so it is
+ * surfaced wherever sync status is shown.
+ */
+export const EQUIP_HINT =
+  'Installed — to see it in game, equip it in CoH2: main menu → your player card → weapons-case icon → drag the skin onto a vehicle slot. Custom skins only render in Custom Games, not Automatch.'
+
+/** Tooltip for the pack-name pill, including the equip step once synced. */
+export function liveSyncTooltip(
+  enabled: boolean,
+  reason: string,
+  state: LiveSyncState,
+  prefix = 'Click to rename',
+): string {
+  if (!enabled) return `${prefix} — Live Sync is off`
+  const base = `${prefix} — Live Sync: ${reason}`
+  return state === 'synced' ? `${base}\n\n${EQUIP_HINT}` : base
+}
+
 // ─── Manager ──────────────────────────────────────────────────────────────────
 
 class LiveSyncManager {

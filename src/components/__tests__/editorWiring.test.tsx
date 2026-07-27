@@ -48,6 +48,14 @@ vi.mock('@/lib/live-sync', () => ({
     },
   }),
   _resetLiveSyncManagerForTest: vi.fn(),
+  // The editors call this for the pack-name pill tooltip. This factory REPLACES
+  // the whole module, so any export the components use must be listed here or
+  // it arrives as `undefined` and the component throws on render.
+  EQUIP_HINT: 'equip hint',
+  liveSyncTooltip: (enabled: boolean, reason: string, state: string, prefix = 'Click to rename') =>
+    enabled
+      ? `${prefix} — Live Sync: ${reason}${state === 'synced' ? '\n\nequip hint' : ''}`
+      : `${prefix} — Live Sync is off`,
 }))
 
 // composeFaceplatePng lives at the bottom of FaceplateEditor.tsx — it's not
