@@ -11,7 +11,18 @@ export default defineConfig({
     // with "Vitest cannot be imported in a CommonJS module using require()".
     // The source-of-truth electron tests live in `electron/__tests__/` and
     // are not affected.
-    exclude: ['**/node_modules/**', '**/dist/**', 'dist-electron/**', 'e2e/**'],
+    // `.stryker-tmp/**` is essential: Stryker copies the whole project into
+    // sandbox dirs, test files included. Without this, `npm test` discovers
+    // those copies and runs MUTATED code — the suite fails with confusing
+    // errors for the entire duration of a mutation run, and the failures are
+    // not real.
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      'dist-electron/**',
+      'e2e/**',
+      '.stryker-tmp/**',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

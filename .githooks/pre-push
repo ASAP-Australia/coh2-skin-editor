@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Pre-push gate.
+#
+# TWO PARTS, AND THEY COVER DIFFERENT THINGS. Getting this wrong produced a
+# green-forever gate on the first attempt, so it is spelled out:
+#
+#   1. UNIT TESTS  — the only part that gates src/. This is the real code gate.
+#
+#   2. ANALYTICAL LAYERS — scripts/verify-unwrap-analytical.mts and
+#      verify-faceplate.mts import NOTHING from src/. They are self-contained:
+#      they re-implement parsing and read the real CoH2 archives. They validate
+#      our UNDERSTANDING OF THE GAME'S DATA, not this application's code. A
+#      regression in src/lib/rgm.ts does not move them at all — verified by
+#      deliberately flipping the v-coordinate convention and watching them pass.
+#      Valuable, but never mistake them for a gate on your own changes.
+#
+# WHY LOCAL AND NOT GITHUB ACTIONS: part 2 calls process.exit(2) when it cannot
+# find the game's Archives folder, and a hosted runner has no CoH2 — such a job
+# could never pass. This is the last point where the game is still available.
+#
+# The visual sweep (30–45 min, spawns hidden Electron) stays on-request:
+# `npm run verify:visual`.
+#
+# Install once:  git config core.hooksPath .githooks
+# Emergency bypass:  git push --no-verify
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 0
+
+fail=0
+
+# ── Part 1: the real code gate ───────────────────────────────────────────────
+printf '[pre-push] unit tests (gates src/) … '
+if out=$(npm test 2>&1); then
+  echo "PASS  ($(printf '%s' "$out" | grep -oE 'Tests +[0-9]+ passed' | tail -1))"
+else
+  echo "FAIL"
+  printf '%s\n' "$out" | grep -E "FAIL|✕|×|AssertionError|Tests " | head -20
+  fail=1
+fi
+
+# ── Part 2: game-data understanding ──────────────────────────────────────────
+if ls "$HOME"/.local/share/Steam/steamapps/common/"Company of Heroes 2"/CoH2/Archives/ArtHigh.sga \
+     "$HOME"/.steam/steam/steamapps/common/"Company of Heroes 2"/CoH2/Archives/ArtHigh.sga >/dev/null 2>&1; then
+  run_analytical() { # run_analytical <label> <script>
+    printf '[pre-push] %s … ' "$1"
+    if out=$(npx tsx --tsconfig tsconfig.node.json "$2" 2>&1); then
+      echo "PASS"
+    else
+      echo "FAIL"
+      printf '%s\n' "$out" | tail -25
+      fail=1
+    fi
+  }
+  run_analytical "unwrap analytical (game data)" scripts/verify-unwrap-analytical.mts
+  run_analytical "faceplate round-trip         " scripts/verify-faceplate.mts
+else
+  echo "[pre-push] CoH2 install not found — skipping analytical layers (not a failure)."
+fi
+
+if [ "$fail" -ne 0 ]; then
+  cat <<'MSG'
+
+[pre-push] BLOCKED.
+
+  re-run tests:  npm test
+  re-run layers: npx tsx --tsconfig tsconfig.node.json scripts/verify-unwrap-analytical.mts
+  report:        artifacts/verify-unwrap/analytical-report.md
+  bypass:        git push --no-verify   (only if you know why it is failing)
+MSG
+  exit 1
+fi
+
+echo "[pre-push] green."
+exit 0
