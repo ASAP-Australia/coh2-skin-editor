@@ -183,13 +183,21 @@ function gitShortSha(): string {
     return 'unknown'
   }
 }
+// Only SOURCE changes count as dirty. Verification runs routinely rewrite
+// things under artifacts/ (capture manifests, renders, extracted scenarios),
+// and out/ holds generated packs — if those counted, every build would be
+// marked dirty forever and the flag would carry no information at all.
+// Pathspec exclusions need the literal ':(exclude)' form to survive execSync
+// without a shell interpreting the '!'.
 function gitDirty(): boolean {
   try {
-    return (
-      execSync('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] })
-        .toString()
-        .trim().length > 0
+    const out = execSync(
+      'git status --porcelain -- ":(exclude)artifacts" ":(exclude)out" ":(exclude)release" ":(exclude)dist"',
+      { stdio: ['ignore', 'pipe', 'ignore'] },
     )
+      .toString()
+      .trim()
+    return out.length > 0
   } catch {
     return false
   }
