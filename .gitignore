@@ -65,3 +65,10 @@ tools/templates/*.sga
 tools/templates/signed/
 public/keys/*.sga
 public/keys/manifest.json
+
+# Steam client config snapshots. These contain AuthData / CloudKey / SharedAuth
+# / PersonaName — credential material and personal data. Seven copies were
+# committed during harness work and were caught only when auditing a push to
+# this PUBLIC repo. Never track them.
+**/localconfig.vdf
+**/localconfig.vdf.bak*
