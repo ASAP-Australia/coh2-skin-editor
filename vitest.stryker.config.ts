@@ -25,6 +25,7 @@ export default defineConfig({
     environment: 'jsdom',
     include: [
       'src/lib/__tests__/bc-encode.test.ts',
+      'src/lib/__tests__/bc-roundtrip.test.ts',
       'src/lib/__tests__/icon-atlas-composite.test.ts',
     ],
     exclude: ['**/node_modules/**', '**/dist/**', 'dist-electron/**', 'e2e/**', 'electron/**'],
