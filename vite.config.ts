@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
 import fs from 'node:fs'
+import { execSync } from 'node:child_process'
 import type { Plugin, Connect } from 'vite'
 import type { ServerResponse } from 'node:http'
 
@@ -158,9 +159,54 @@ function coh2BridgePlugin(): Plugin {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Build stamp
+// ---------------------------------------------------------------------------
+//
+// The user tests the DEPLOYED AppImage, not the dev build, so any change that
+// is not rebuilt and installed is invisible to them — and there was no way to
+// tell a stale binary from a current one by looking at it. The bug-report
+// template (.github/ISSUE_TEMPLATE/bug.yml) already asks for a version as a
+// REQUIRED field, which the app never displayed anywhere.
+//
+// Stamping the commit into the binary makes staleness self-evident: it shows
+// in the window title, so it is captured in every screenshot forever.
+//
+// git may be absent in a packaged/CI context, so both lookups degrade to
+// 'unknown' rather than failing the build.
+function gitShortSha(): string {
+  try {
+    return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim()
+  } catch {
+    return 'unknown'
+  }
+}
+function gitDirty(): boolean {
+  try {
+    return (
+      execSync('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString()
+        .trim().length > 0
+    )
+  } catch {
+    return false
+  }
+}
+
+const BUILD_SHA = gitShortSha() + (gitDirty() ? '-dirty' : '')
+const BUILD_TIME = new Date().toISOString()
+
 export default defineConfig({
   plugins: [coh2BridgePlugin(), react(), tailwindcss()],
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
+  // Statically replaced at build time; available as globals in dev.
+  // Values must be JSON-serialisable strings — https://vite.dev/config/shared-options
+  define: {
+    __BUILD_SHA__: JSON.stringify(BUILD_SHA),
+    __BUILD_TIME__: JSON.stringify(BUILD_TIME),
+  },
   // Assets load from file:// URLs in the Electron AppImage — base must be
   // relative (`./`) so /assets/foo.js doesn't try to resolve at FS root.
   // v1.0 is desktop-only (Steam Workshop publishing requires Electron's
